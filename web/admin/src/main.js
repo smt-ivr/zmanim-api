@@ -121,6 +121,7 @@ function App() {
           </div>`}
       </nav>
       <div class="sidebar-foot">
+        <a href="../" class="nav-link" target="_blank" rel="noopener"><${Icon} name="external" /><span>לאתר הציבורי</span></a>
         <a href="#/profile" class=${cx('nav-link', path === '/profile' && 'active')}><${Icon} name="user" /><span>${user.name}</span></a>
         <div class="row gap-sm">
           <${Button} kind="ghost" small icon=${dark ? 'sun' : 'moon'} title=${dark ? 'מצב בהיר' : 'מצב כהה'}
@@ -137,4 +138,7 @@ function App() {
   </div>`;
 }
 
-render(html`<${App} />`, document.getElementById('app'));
+// Remove the static "loading" placeholder first (it also disarms the load-error watchdog in index.html).
+const root = document.getElementById('app');
+root.textContent = '';
+render(html`<${App} />`, root);

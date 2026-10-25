@@ -1,7 +1,8 @@
 // The only module that knows about HTTP. Everything else calls api.get/post/...
-// Default: the API sits next to this page (works at the domain root and under a prefix like /zmanim/).
-const pageDir = location.pathname.replace(/[^/]*$/, '');
-const BASE = (window.ZMANIM_CONFIG?.apiBase || location.origin + pageDir).replace(/\/$/, '') + '/api';
+// Default: the admin lives in <site>/admin/ and the API in <site>/api (site = domain root or a prefix like /zmanim/).
+export const SITE_ROOT = location.origin + location.pathname.replace(/admin\/[^]*$/, '').replace(/[^/]*$/, '');
+export const API_ROOT = (window.ZMANIM_CONFIG?.apiBase || SITE_ROOT).replace(/\/$/, '');
+const BASE = API_ROOT + '/api';
 const TOKEN_KEY = 'zmanim.token';
 
 let token = null;

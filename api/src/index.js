@@ -104,6 +104,7 @@ export default {
     const { path, redirect } = stripBase(env, url);
     if (redirect) return Response.redirect(redirect, 301);
 
+    if (path === '/admin') return Response.redirect(`${url.origin}${(env.BASE_PATH || '').replace(/\/$/, '')}/admin/${url.search}`, 301);
     if (!path.startsWith('/api/') && path !== '/api') {
       if (!env.ASSETS) return new Response('Not found', { status: 404 });
       const assetUrl = new URL(url);

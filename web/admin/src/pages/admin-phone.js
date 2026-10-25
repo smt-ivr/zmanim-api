@@ -1,5 +1,5 @@
 // Settings for the Yemot HaMashiach phone extension: the api_link to paste into ext.ini.
-import { api } from '../api.js';
+import { API_ROOT, api } from '../api.js';
 import { html } from '../lib.js';
 import { Badge, Button, ErrorBox, Spinner, confirm, toast, toastError, useLoad } from '../ui.js';
 
@@ -9,9 +9,7 @@ export function PhonePanel() {
   if (error && !data) return html`<${ErrorBox} error=${error} onRetry=${reload} />`;
 
   // The API sits next to this page, so the link is built from the address the admin is using now.
-  const pageDir = location.pathname.replace(/[^/]*$/, '');
-  const apiBase = (window.ZMANIM_CONFIG?.apiBase || location.origin + pageDir).replace(/\/$/, '');
-  const link = `${apiBase}${data.path}?key=${data.key}`;
+  const link = `${API_ROOT}${data.path}?key=${data.key}`;
   const ini = `type=api\napi_link=${link}\napi_hangup_send=yes`;
 
   const copy = async (value) => {

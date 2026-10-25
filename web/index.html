@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="זמני מניינים בבתי הכנסת, לפי אזור, תפילה ויום">
+  <title>זמני מניינים</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23234a9c'/%3E%3Cpath d='M16 7v9l6 4' stroke='white' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="site.css">
+  <script type="importmap">
+    { "imports": {
+        "preact": "./vendor/preact.js",
+        "preact/hooks": "./vendor/preact-hooks.js",
+        "htm": "./vendor/htm.js"
+    } }
+  </script>
+  <script src="config.js"></script>
+</head>
+<body>
+  <div id="app"><div class="boot">טוען…</div></div>
+  <script>
+    (function () {
+      function show(msg) {
+        var el = document.getElementById('app');
+        if (el && el.querySelector('.boot')) el.innerHTML = '<div class="boot"><b>שגיאה בטעינת האתר</b><small dir="ltr">' + String(msg).replace(/</g, '&lt;') + '</small></div>';
+      }
+      window.addEventListener('error', function (e) { show(e.message || 'error'); }, true);
+      window.addEventListener('unhandledrejection', function (e) { show(e.reason && e.reason.message || e.reason); });
+      setTimeout(function () { show('הטעינה לוקחת יותר מדי זמן. נסו לרענן, או לעדכן את הדפדפן'); }, 12000);
+    })();
+  </script>
+  <script type="module" src="src/app.js"></script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 # זמני מניינים (גרסה 3)
 
-מערכת לניהול זמני מניינים בבתי כנסת: API על Cloudflare Workers + D1, וממשק ניהול בעברית.
+מערכת זמני מניינים בבתי כנסת: אתר ציבורי לכל המתפללים (`smti.uk/zmanim/`), ממשק ניהול (`smti.uk/zmanim/admin/`), שלוחת טלפון בימות המשיח, ו-API על Cloudflare Workers + D1.
 
 ## שני תפקידים בלבד
 
@@ -69,8 +69,9 @@ api/                     ה-API (Cloudflare Worker)
   src/routes/            auth · workspace (מנהל בית כנסת) · admin · public
   migrations/            סכימת D1
   test/                  בדיקות אינטגרציה (node:test, מסד בזיכרון)
-admin/                   ממשק הניהול: קבצים סטטיים בלי שלב build (Preact + htm, בתוך vendor/)
-  config.js              כתובת ה-API (ריק = אותו דומיין)
+web/                     האתר הציבורי (index.html, src/app.js, site.css): זמנים לפי אזור, תפילה ויום
+  config.js              מספר הטלפון שמוצג באתר (043132030) וכתובת ה-API
+  admin/                 ממשק הניהול: קבצים סטטיים בלי שלב build (Preact + htm, בתוך vendor/)
 scripts/preview.mjs      הרצה מקומית בלי wrangler
 docs/API.md              כל ה-endpoints
 ```
@@ -97,8 +98,8 @@ npm run dev                    # wrangler dev עם D1 מקומי
 
 כרגע ה-Worker מגיש גם את ה-API (בנתיבים `/api/*`) וגם את התיקייה `admin/`. כדי להעביר את הממשק לפרויקט נפרד:
 
-1. מעתיקים את `admin/` לפרויקט חדש. כל אחסון סטטי מתאים: Pages, Worker עם assets או Netlify.
-2. ב-`admin/config.js` מגדירים את `apiBase` לכתובת ה-API.
+1. מעתיקים את `web/admin/` (או את `web/`) לפרויקט חדש. כל אחסון סטטי מתאים: Pages, Worker עם assets או Netlify.
+2. ב-`config.js` מגדירים את `apiBase` לכתובת ה-API.
 3. ב-`wrangler.toml` של ה-API מוחקים את הבלוק `[assets]`, ואפשר גם להגדיר את `ALLOWED_ORIGINS` לדומיין של הממשק.
 
 ## אבטחה

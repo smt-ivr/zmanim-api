@@ -2,11 +2,10 @@ name = "zmanim"
 main = "api/src/index.js"
 compatibility_date = "2026-10-01"
 
-# The admin UI is plain static files in ./admin. It is served by this same Worker for now,
-# but it only talks to the API over HTTP, so it can be moved to its own project at any time
-# (see README: "Separating the admin UI").
+# Static files in ./web: the public site at the root, the admin UI in /admin/.
+# Both only talk to the API over HTTP, so either can move to its own project.
 [assets]
-directory = "./admin"
+directory = "./web"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
 run_worker_first = true   # the Worker strips BASE_PATH before looking up a file
