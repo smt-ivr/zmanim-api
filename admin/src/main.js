@@ -5,7 +5,7 @@ import { AdminCatalog } from './pages/admin-catalog.js';
 import { AdminDashboard } from './pages/admin-dashboard.js';
 import { AdminSynagogues } from './pages/admin-synagogues.js';
 import { AdminUsers } from './pages/admin-users.js';
-import { Login, Setup } from './pages/login.js';
+import { Login } from './pages/login.js';
 import { Profile } from './pages/profile.js';
 import { SynagoguePicker, Workspace } from './pages/workspace.js';
 import { Button, Icon, Spinner, toast } from './ui.js';
@@ -41,14 +41,13 @@ const isDark = () =>
 // ------------------------------------------------------------------ app
 function App() {
   const path = useRoute();
-  const [session, setSession] = useState({ status: hasToken() ? 'loading' : 'anon' }); // loading | anon | setup | ready
+  const [session, setSession] = useState({ status: hasToken() ? 'loading' : 'anon' }); // loading | anon | ready
   const [menuOpen, setMenuOpen] = useState(false);
   const [dark, setDark] = useState(isDark());
 
   async function boot() {
     if (!hasToken()) {
-      const setup = await api.get('/setup').catch(() => ({ needed: false }));
-      setSession({ status: setup.needed ? 'setup' : 'anon', setupEnabled: setup.enabled });
+      setSession({ status: 'anon' });
       return;
     }
     try {
@@ -77,7 +76,6 @@ function App() {
   const refreshMe = () => api.get('/me').then((me) => setSession((s) => ({ ...s, ...me })));
 
   if (session.status === 'loading') return html`<div class="boot"><${Spinner} /></div>`;
-  if (session.status === 'setup') return html`<${Setup} enabled=${session.setupEnabled} onDone=${signedIn} />`;
   if (session.status === 'anon') return html`<${Login} onDone=${signedIn} />`;
 
   const { user, synagogues } = session;

@@ -81,24 +81,15 @@ docs/API.md              כל ה-endpoints
 
 מסד הנתונים `zmanim` כבר קיים, המיגרציות 0001 ו-0002 כבר הוחלו עליו, וה-id שלו כבר כתוב ב-`wrangler.toml`. מיגרציה חדשה מריצים עם `npx wrangler d1 migrations apply zmanim --remote`, כי הבנייה ב-Cloudflare מריצה רק `wrangler deploy`.
 
-1. **סוד להתקנה הראשונית.** זה חד-פעמי, ומונע ממישהו אחר "לתפוס" את המערכת לפניכם:
-   ```bash
-   npx wrangler secret put SETUP_KEY
-   ```
-   או בדשבורד של ה-Worker: Settings ← Variables and Secrets ← Add ← Secret.
-2. **פריסה:**
-   ```bash
-   npm install
-   npm run deploy      # מריץ מיגרציות חדשות (אם יש) ואז wrangler deploy
-   ```
-3. **יצירת המנהל הראשון.** פותחים את כתובת ה-Worker בדפדפן. מופיע מסך "התקנה ראשונית": מזינים את ה-SETUP_KEY, שם, מייל וסיסמה. המסך הזה עובד רק כל עוד אין אף משתמש במערכת.
-4. **בתוך המערכת:** יוצרים משתמשים מסוג "מנהל בית כנסת", יוצרים בתי כנסת, ומשייכים כל מנהל לבית הכנסת שלו.
+1. **פריסה:** כל דחיפה ל-`main` נבנית ונפרסת אוטומטית ב-Cloudflare (Worker בשם `zmanim`).
+2. **כניסה:** האתר נמצא ב-`https://smti.uk/zmanim/`. שם המשתמש הוא מייל או טלפון, ויחד איתו סיסמה. מנהל העל הראשון כבר מוגדר במסד הנתונים.
+3. **בתוך המערכת:** יוצרים משתמשים (לכל משתמש חובה שם, מייל, טלפון וסיסמה), יוצרים בתי כנסת, ומשייכים כל מנהל לבית הכנסת שלו.
 
 ## פיתוח
 
 ```bash
 npm test                       # 31 בדיקות (API + סימולציית שיחות ימות המשיח), ללא רשת
-node scripts/preview.mjs       # http://localhost:8787/zmanim/, מסד בזיכרון, מפתח התקנה: preview
+node scripts/preview.mjs       # http://localhost:8787/zmanim/, מסד בזיכרון, כניסה: 0500000000 / preview
 npm run dev                    # wrangler dev עם D1 מקומי
 ```
 

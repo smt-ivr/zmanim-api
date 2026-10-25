@@ -76,10 +76,10 @@ function UserModal({ user, me, synagogues, onClose, onSaved }) {
     ${({ values: v, set, errors }) => html`
       <div class="grid-2">
         <${Field} label="שם מלא" error=${errors.name}><${Input} value=${v.name} onInput=${set('name')} required /><//>
-        <${Field} label="טלפון (לניהול בשלוחה)" error=${errors.phone} hint="מתקשר מהמספר הזה = מזוהה בשלוחה"><${Input} dir="ltr" type="tel" value=${v.phone} onInput=${set('phone')} /><//>
+        <${Field} label="טלפון" error=${errors.phone} hint="לכניסה, ולניהול בשלוחת הטלפון מהמספר הזה"><${Input} dir="ltr" type="tel" value=${v.phone} onInput=${set('phone')} required /><//>
       </div>
-      <${Field} label="מייל (לכניסה לאתר)" error=${errors.email} hint="אפשר להשאיר ריק למשתמש שמנהל רק בטלפון"><${Input} type="email" dir="ltr" value=${v.email} onInput=${set('email')} /><//>
-      <${Field} label=${isNew || !user.has_password ? 'סיסמה לאתר' : 'סיסמה חדשה'} error=${errors.password} hint=${isNew || !user.has_password ? '8 תווים לפחות. נדרשת רק אם הוזן מייל' : 'השאירו ריק כדי לא לשנות. שינוי מנתק את המשתמש מכל המכשירים'}>
+      <${Field} label="מייל" error=${errors.email} hint="אפשר להיכנס עם המייל או עם הטלפון"><${Input} type="email" dir="ltr" value=${v.email} onInput=${set('email')} required /><//>
+      <${Field} label=${isNew || !user.has_password ? 'סיסמה' : 'סיסמה חדשה'} error=${errors.password} hint=${isNew || !user.has_password ? '4 תווים לפחות. מסרו אותה למשתמש' : 'השאירו ריק כדי לא לשנות. שינוי מנתק את המשתמש מכל המכשירים'}>
         <div class="input-group">
           <${Input} dir="ltr" value=${v.password} onInput=${set('password')} autocomplete="new-password" />
           <${Button} kind="ghost" icon="key" title="יצירת סיסמה" onClick=${() => set('password')(randomPassword())} />

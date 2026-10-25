@@ -61,7 +61,7 @@ export function fields(body, { partial = false } = {}) {
     },
     password(key, opts = {}) {
       return api._field(key, opts, (v) =>
-        typeof v === 'string' && v.length >= 8 && v.length <= 200 ? v : { error: 'סיסמה של 8 תווים לפחות' }
+        typeof v === 'string' && v.length >= 4 && v.length <= 200 ? v : { error: 'סיסמה של 4 תווים לפחות' }
       );
     },
     int(key, opts = {}) {

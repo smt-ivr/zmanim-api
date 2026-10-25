@@ -47,7 +47,7 @@ export function Profile({ user, onChanged }) {
       <div class="grid-2">
         <${Field} label="סיסמה נוכחית" error=${errors.current_password}>
           <${Input} type="password" dir="ltr" autocomplete="current-password" value=${pw.current_password} onInput=${(v) => setPw({ ...pw, current_password: v })} /><//>
-        <${Field} label="סיסמה חדשה" hint="8 תווים לפחות" error=${errors.new_password}>
+        <${Field} label="סיסמה חדשה" hint="4 תווים לפחות" error=${errors.new_password}>
           <${Input} type="password" dir="ltr" autocomplete="new-password" value=${pw.new_password} onInput=${(v) => setPw({ ...pw, new_password: v })} /><//>
       </div>
       <div class="row end"><${Button} kind="primary" type="submit" loading=${busy === 'pw'}>עדכון סיסמה<//></div>

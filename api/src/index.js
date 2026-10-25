@@ -22,8 +22,6 @@ export const router = new Router()
   .get('/ivr', handleIvr, PUBLIC)
   .post('/ivr', handleIvr, PUBLIC)
   // session
-  .get('/setup', auth.getSetup, PUBLIC)
-  .post('/setup', auth.postSetup, PUBLIC)
   .post('/auth/login', auth.postLogin, PUBLIC)
   .post('/auth/logout', auth.postLogout)
   .get('/me', auth.getMe)

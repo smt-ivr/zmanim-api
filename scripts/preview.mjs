@@ -1,10 +1,12 @@
 // Local preview without wrangler: serves ./admin and runs the API on an in-memory database.
-//   node scripts/preview.mjs [port]      then open http://localhost:8787/zmanim/  (setup key: "preview")
+//   node scripts/preview.mjs [port]      then open http://localhost:8787/zmanim/
+// Demo admin: 0500000000 (or admin@example.com) / password: preview
 // Data is lost when the process stops. For a real local D1 use `npm run dev`.
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { hashPassword } from '../api/src/auth.js';
 import worker from '../api/src/index.js';
 import { D1Shim } from '../api/test/d1-shim.mjs';
 
@@ -25,7 +27,9 @@ const ASSETS = {
   },
 };
 
-const env = { DB: new D1Shim(), ASSETS, SETUP_KEY: 'preview', BASE_PATH: '/zmanim' };
+const env = { DB: new D1Shim(), ASSETS, BASE_PATH: '/zmanim' };
+await env.DB.prepare(`INSERT INTO users (name, email, phone, password_hash, role) VALUES ('מנהל הדגמה', 'admin@example.com', '0500000000', ?, 'admin')`)
+  .bind(await hashPassword('preview')).run();
 
 createServer(async (req, res) => {
   const chunks = [];
@@ -38,4 +42,4 @@ createServer(async (req, res) => {
   const response = await worker.fetch(request, env);
   res.writeHead(response.status, Object.fromEntries(response.headers));
   res.end(Buffer.from(await response.arrayBuffer()));
-}).listen(port, () => console.log(`preview on http://localhost:${port}  (setup key: preview)`));
+}).listen(port, () => console.log(`preview on http://localhost:${port}/zmanim/  (login 0500000000 / preview)`));

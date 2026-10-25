@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, test } from 'node:test';
 import worker from '../src/index.js';
+import { hashPassword } from '../src/auth.js';
 import { D1Shim } from './d1-shim.mjs';
 
-const SETUP_KEY = 'test-setup-key';
 let env;
+let phoneSeq = 0;
+const nextPhone = () => `05${String(20000000 + ++phoneSeq)}`;
 
 function call(method, path, { token, body, ip = '1.1.1.1' } = {}) {
   const headers = { 'CF-Connecting-IP': ip };
@@ -15,13 +17,15 @@ function call(method, path, { token, body, ip = '1.1.1.1' } = {}) {
 }
 
 async function setupAdmin() {
-  const r = await call('POST', '/setup', { body: { setup_key: SETUP_KEY, name: 'מנהל', email: 'Admin@x.com', password: 'admin-pass-1' } });
-  assert.equal(r.status, 201);
+  await env.DB.prepare(`INSERT INTO users (name, email, phone, password_hash, role) VALUES ('מנהל', 'admin@x.com', '0583206823', ?, 'admin')`)
+    .bind(await hashPassword('admin-pass-1')).run();
+  const r = await call('POST', '/auth/login', { body: { login: 'Admin@x.com', password: 'admin-pass-1' } });
+  assert.equal(r.status, 200);
   return r.body.token;
 }
 
 async function createManager(admin, email, synagogue_ids) {
-  const r = await call('POST', '/admin/users', { token: admin, body: { name: 'גבאי', email, password: 'manager-pass', role: 'manager', synagogue_ids } });
+  const r = await call('POST', '/admin/users', { token: admin, body: { name: 'גבאי', email, phone: nextPhone(), password: 'manager-pass', role: 'manager', synagogue_ids } });
   assert.equal(r.status, 201, JSON.stringify(r.body));
   const login = await call('POST', '/auth/login', { body: { email, password: 'manager-pass' } });
   assert.equal(login.status, 200);
@@ -31,41 +35,44 @@ async function createManager(admin, email, synagogue_ids) {
 const newSynagogue = async (admin, body = {}) => (await call('POST', '/admin/synagogues', { token: admin, body: { name: 'בית כנסת', ...body } })).body;
 
 beforeEach(() => {
-  env = { DB: new D1Shim(), SETUP_KEY };
+  env = { DB: new D1Shim() };
 });
 
 describe('setup & auth', () => {
-  test('setup works once, needs the key, then logs in', async () => {
-    assert.deepEqual((await call('GET', '/setup')).body, { needed: true, enabled: true });
-    const bad = await call('POST', '/setup', { body: { setup_key: 'nope', name: 'a', email: 'a@a.com', password: '12345678' } });
-    assert.equal(bad.status, 403);
-    const token = await setupAdmin();
-    const me = await call('GET', '/me', { token });
+  test('login with e-mail or phone (any format)', async () => {
+    await setupAdmin();
+    for (const login of ['admin@x.com', '0583206823', '058-320-6823', '+972583206823']) {
+      const r = await call('POST', '/auth/login', { body: { login, password: 'admin-pass-1' } });
+      assert.equal(r.status, 200, login);
+      assert.equal(r.body.user.name, 'מנהל');
+    }
+    const me = await call('GET', '/me', { token: (await call('POST', '/auth/login', { body: { login: '0583206823', password: 'admin-pass-1' } })).body.token });
     assert.equal(me.body.user.role, 'admin');
-    assert.equal(me.body.user.email, 'admin@x.com');
-    const again = await call('POST', '/setup', { body: { setup_key: SETUP_KEY, name: 'b', email: 'b@b.com', password: '12345678' } });
-    assert.equal(again.status, 409);
+    assert.equal((await call('GET', '/setup')).status, 404);
   });
 
-  test('setup disabled without SETUP_KEY', async () => {
-    delete env.SETUP_KEY;
-    const r = await call('POST', '/setup', { body: { setup_key: 'x', name: 'a', email: 'a@a.com', password: '12345678' } });
-    assert.equal(r.status, 403);
+  test('users need e-mail, phone and password', async () => {
+    const admin = await setupAdmin();
+    const r = await call('POST', '/admin/users', { token: admin, body: { name: 'x', role: 'manager' } });
+    assert.equal(r.status, 422);
+    assert.ok(r.body.error.fields.email && r.body.error.fields.phone && r.body.error.fields.password);
+    const dupPhone = await call('POST', '/admin/users', { token: admin, body: { name: 'x', email: 'n@x.com', phone: '0583206823', password: '1234', role: 'manager' } });
+    assert.equal(dupPhone.body.error.fields.phone, 'הטלפון כבר רשום במערכת');
   });
 
   test('wrong password -> 401, lock after 5 failures, no token -> 401', async () => {
     await setupAdmin();
     for (let i = 0; i < 5; i++) {
-      assert.equal((await call('POST', '/auth/login', { body: { email: 'admin@x.com', password: 'wrong-pass' } })).status, 401);
+      assert.equal((await call('POST', '/auth/login', { body: { login: 'admin@x.com', password: 'wrong-pass' } })).status, 401);
     }
-    const locked = await call('POST', '/auth/login', { body: { email: 'admin@x.com', password: 'admin-pass-1' } });
+    const locked = await call('POST', '/auth/login', { body: { login: 'admin@x.com', password: 'admin-pass-1' } });
     assert.equal(locked.status, 429);
     assert.equal((await call('GET', '/me')).status, 401);
   });
 
   test('logout kills the token; password change kills other sessions', async () => {
     const t1 = await setupAdmin();
-    const t2 = (await call('POST', '/auth/login', { body: { email: 'admin@x.com', password: 'admin-pass-1' } })).body.token;
+    const t2 = (await call('POST', '/auth/login', { body: { login: '0583206823', password: 'admin-pass-1' } })).body.token;
     const r = await call('PUT', '/me/password', { token: t1, body: { current_password: 'admin-pass-1', new_password: 'new-pass-123' } });
     assert.equal(r.status, 204);
     assert.equal((await call('GET', '/me', { token: t2 })).status, 401);
@@ -75,9 +82,9 @@ describe('setup & auth', () => {
   });
 
   test('validation errors list every bad field', async () => {
-    const r = await call('POST', '/auth/login', { body: { email: 'nope' } });
+    const r = await call('POST', '/auth/login', { body: {} });
     assert.equal(r.status, 422);
-    assert.ok(r.body.error.fields.email);
+    assert.ok(r.body.error.fields.login);
     assert.ok(r.body.error.fields.password);
   });
 });
@@ -213,7 +220,7 @@ describe('admin', () => {
     const me = (await call('GET', '/me', { token: admin })).body.user;
     const s = await newSynagogue(admin);
     const m = await createManager(admin, 'g@x.com', [s.id]);
-    const dup = await call('POST', '/admin/users', { token: admin, body: { name: 'x', email: 'G@x.com', password: '12345678', role: 'manager' } });
+    const dup = await call('POST', '/admin/users', { token: admin, body: { name: 'x', email: 'G@x.com', phone: nextPhone(), password: '12345678', role: 'manager' } });
     assert.equal(dup.status, 422);
     assert.equal((await call('PATCH', `/admin/users/${me.id}`, { token: admin, body: { role: 'manager' } })).status, 403);
     assert.equal((await call('DELETE', `/admin/users/${me.id}`, { token: admin })).status, 403);

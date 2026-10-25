@@ -158,41 +158,35 @@ export async function listUsers({ env }) {
   return json(rows.map((u) => ({ ...publicUser(u), synagogues: JSON.parse(u.synagogues_json || '[]') })));
 }
 
-// A user logs in on the web (email + password), by phone (caller ID), or both.
+// Every user has e-mail, phone and password. Login on the web: e-mail or phone + password.
+// The phone is also the caller ID for managing by phone.
 function parseUser(body, partial) {
   return fields(body, { partial })
     .str('name', { required: true, max: 80 })
-    .email('email', { nullable: true })
-    .phone('phone')
+    .email('email', { required: true })
+    .phone('phone', { required: true, nullable: false })
     .oneOf('role', ['admin', 'manager'], { required: true })
     .bool('is_active', { default: true })
-    .password('password', { nullable: true })
+    .password('password', { required: !partial })
     .ids('synagogue_ids', { default: [] })
     .done();
 }
 
-/** Checks the login methods the user will have after the change. */
-async function checkLogins(env, final, exceptId = 0) {
+async function checkUnique(env, d, exceptId = 0) {
   const errors = {};
-  if (!final.email && !final.phone) errors.phone = 'יש להזין מייל או טלפון';
-  if (final.email && !final.hasPassword) errors.password = 'כניסה באתר דורשת סיסמה';
-  if (final.email && (await first(env, `SELECT id FROM users WHERE email = ? AND id != ?`, final.email, exceptId))) {
-    errors.email = 'המייל כבר רשום במערכת';
-  }
-  if (final.phone && (await first(env, `SELECT id FROM users WHERE phone = ? AND id != ?`, final.phone, exceptId))) {
-    errors.phone = 'הטלפון כבר רשום במערכת';
-  }
+  if (d.email && (await first(env, `SELECT id FROM users WHERE email = ? AND id != ?`, d.email, exceptId))) errors.email = 'המייל כבר רשום במערכת';
+  if (d.phone && (await first(env, `SELECT id FROM users WHERE phone = ? AND id != ?`, d.phone, exceptId))) errors.phone = 'הטלפון כבר רשום במערכת';
   if (Object.keys(errors).length) throw invalid(errors);
 }
 
 export async function createUser({ env, request }) {
   const d = parseUser(await readJson(request), false);
-  await checkLogins(env, { email: d.email, phone: d.phone, hasPassword: Boolean(d.password) });
+  await checkUnique(env, d);
   await assertIdsExist(env, 'synagogues', d.synagogue_ids, 'synagogue_ids');
   const res = await run(
     env,
     `INSERT INTO users (name, email, phone, role, is_active, password_hash) VALUES (?, ?, ?, ?, ?, ?)`,
-    d.name, d.email ?? null, d.phone ?? null, d.role, d.is_active ? 1 : 0, d.password ? await hashPassword(d.password) : null
+    d.name, d.email, d.phone, d.role, d.is_active ? 1 : 0, await hashPassword(d.password)
   );
   const uid = res.meta.last_row_id;
   if (d.role === 'manager' && d.synagogue_ids.length) {
@@ -210,19 +204,13 @@ export async function patchUser({ env, actor, params, request }) {
   if (uid === actor.id && ((d.role && d.role !== 'admin') || d.is_active === false)) {
     throw forbidden('לא ניתן להוריד הרשאות או להשבית את עצמך');
   }
-  const finalEmail = d.email !== undefined ? d.email : current.email;
-  await checkLogins(env, {
-    email: finalEmail,
-    phone: d.phone !== undefined ? d.phone : current.phone,
-    hasPassword: Boolean(d.password || current.password_hash),
-  }, uid);
+  await checkUnique(env, d, uid);
   if (d.synagogue_ids) await assertIdsExist(env, 'synagogues', d.synagogue_ids, 'synagogue_ids');
 
   const role = d.role ?? current.role;
   const data = { ...d, updated_at: nowIso() };
   if (d.password) data.password_hash = await hashPassword(d.password);
   const set = setClause(data, ['name', 'email', 'phone', 'role', 'is_active', 'password_hash', 'updated_at']);
-  if (!finalEmail) set.sql += ', password_hash = NULL'; // no e-mail = no web login
   const statements = [q(env, `UPDATE users SET ${set.sql} WHERE id = ?`, ...set.params, uid)];
   if (role === 'admin') statements.push(q(env, `DELETE FROM synagogue_managers WHERE user_id = ?`, uid));
   else if (d.synagogue_ids) statements.push(...replaceLinks(env, 'synagogue_managers', 'user_id', uid, 'synagogue_id', d.synagogue_ids));

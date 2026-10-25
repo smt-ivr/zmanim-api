@@ -1,5 +1,6 @@
 import { all, first, nowIso, nowSec, run } from './db.js';
 import { forbidden, notFound, tooMany, unauthorized } from './http.js';
+import { normalizePhone } from './validate.js';
 
 const enc = new TextEncoder();
 
@@ -66,18 +67,23 @@ export async function recordFailure(env, key, { max, window, lock }) {
 }
 
 // ------------------------------------------------------------------ sessions
-export async function login(env, request, email, password) {
+/** `identifier` is an e-mail or a phone number. */
+export async function login(env, request, identifier, password) {
   const ip = request.headers.get('CF-Connecting-IP') || 'local';
-  const keys = { email: `email:${email}`, ip: `ip:${ip}` };
+  const phone = normalizePhone(identifier);
+  const id = phone || String(identifier).trim().toLowerCase();
+  const keys = { email: `login:${id}`, ip: `ip:${ip}` };
   await checkLock(env, keys.ip);
   await checkLock(env, keys.email);
 
-  const user = await first(env, `SELECT * FROM users WHERE email = ?`, email);
+  const user = phone
+    ? await first(env, `SELECT * FROM users WHERE phone = ?`, phone)
+    : await first(env, `SELECT * FROM users WHERE email = ?`, id);
   const ok = await verifyPassword(password, user?.password_hash || DUMMY_HASH);
   if (!user || !user.password_hash || !ok || !user.is_active) {
     await recordFailure(env, keys.email, LIMITS.email);
     await recordFailure(env, keys.ip, LIMITS.ip);
-    throw unauthorized(user && ok ? 'המשתמש מושבת. פנו למנהל המערכת' : 'מייל או סיסמה שגויים');
+    throw unauthorized(user && ok ? 'המשתמש מושבת. פנו למנהל המערכת' : 'שם משתמש או סיסמה שגויים');
   }
   await run(env, `DELETE FROM login_attempts WHERE key = ?`, keys.email);
   await cleanup(env); // housekeeping piggybacks on logins (no cron on the free plan)

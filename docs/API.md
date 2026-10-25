@@ -62,9 +62,7 @@ All routes also work under `BASE_PATH` (`/zmanim/api/...`).
 
 | | |
 |---|---|
-| `GET /setup` | `{ needed, enabled }`: is first-run setup available |
-| `POST /setup` | `{ setup_key, name, email, password }` → creates the first admin, returns like login. Only while there are no users and `SETUP_KEY` is set |
-| `POST /auth/login` | `{ email, password }` → `{ token, expires_at, user }` |
+| `POST /auth/login` | `{ login, password }` (`login` = e-mail or phone, any format) → `{ token, expires_at, user }` |
 | `POST /auth/logout` | Ends this session |
 | `GET /me` | `{ user, synagogues: [{ id, name, area_name }] }`: the synagogues this user can open |
 | `PATCH /me` | `{ name?, phone? }` |
@@ -97,7 +95,7 @@ All routes also work under `BASE_PATH` (`/zmanim/api/...`).
 | `POST /admin/synagogues` | `{ name, area_id?, address?, phone?, notes?, is_active?, can_edit_info?, max_locations?, max_minyanim?, restrict_prayers?, allowed_prayer_ids?, manager_ids? }` |
 | `GET / PATCH / DELETE /admin/synagogues/:id` | PATCH takes any subset of the above; DELETE removes locations and minyanim too |
 | `GET /admin/users` | All users with their synagogues |
-| `POST /admin/users` | `{ name, email, password, role: admin\|manager, phone?, is_active?, synagogue_ids? }` |
+| `POST /admin/users` | `{ name, email, phone, password, role: admin\|manager, is_active?, synagogue_ids? }`: e-mail, phone and password are required |
 | `PATCH /admin/users/:id` | Any subset; a new `password` or `is_active: false` signs the user out everywhere. You cannot demote, deactivate or delete yourself |
 | `DELETE /admin/users/:id` | |
 | `GET /admin/catalog/:kind` | `kind` = `prayers` · `anchors` · `seasons` · `areas`; rows include `used` |

@@ -4,8 +4,11 @@ import { conflict, forbidden, invalid, json, noContent, readJson } from '../http
 import { fields } from '../validate.js';
 
 export async function postLogin({ env, request }) {
-  const d = fields(await readJson(request)).email('email', { required: true }).str('password', { required: true, max: 200 }).done();
-  return json(await login(env, request, d.email, d.password));
+  // "login" = e-mail or phone ("email" accepted too, for older clients)
+  const body = await readJson(request);
+  const d = fields({ login: body.login ?? body.email, password: body.password })
+    .str('login', { required: true, max: 200 }).str('password', { required: true, max: 200 }).done();
+  return json(await login(env, request, d.login, d.password));
 }
 
 export async function postLogout({ env, actor }) {
@@ -43,34 +46,4 @@ export async function putPassword({ env, actor, request }) {
   await run(env, `UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?`, await hashPassword(d.new_password), nowIso(), actor.id);
   await revokeSessions(env, actor.id, actor.session_id);
   return noContent();
-}
-
-// ------------------------------------------------------------------ first-run setup
-// Creates the first admin. Works only while there are no users AND the SETUP_KEY secret is set and matches.
-
-export async function getSetup({ env }) {
-  // "Needed" until someone can log in to the web UI (phone-only admins do not count).
-  const row = await first(env, `SELECT COUNT(*) AS n FROM users WHERE password_hash IS NOT NULL`);
-  return json({ needed: row.n === 0, enabled: Boolean(env.SETUP_KEY) });
-}
-
-export async function postSetup({ env, request }) {
-  if (!env.SETUP_KEY) throw forbidden('ההתקנה הראשונית כבויה. יש להגדיר את הסוד SETUP_KEY ב-Worker');
-  const d = fields(await readJson(request))
-    .str('setup_key', { required: true, max: 200 })
-    .str('name', { required: true, max: 80 })
-    .email('email', { required: true })
-    .password('password', { required: true })
-    .done();
-  if (d.setup_key !== env.SETUP_KEY) throw forbidden('מפתח ההתקנה שגוי');
-  const hash = await hashPassword(d.password);
-  // Atomic "only if empty": a concurrent second request inserts nothing.
-  const res = await run(
-    env,
-    `INSERT INTO users (name, email, password_hash, role) SELECT ?, ?, ?, 'admin'
-     WHERE NOT EXISTS (SELECT 1 FROM users WHERE password_hash IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM users WHERE email = ?)`,
-    d.name, d.email, hash, d.email
-  );
-  if (!res.meta.changes) throw conflict('המערכת כבר הותקנה');
-  return json(await login(env, request, d.email, d.password), 201);
 }
