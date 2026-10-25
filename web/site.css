@@ -159,3 +159,4 @@ a.row:hover { background: var(--surface-2); }
   .row { gap: 12px; padding: 12px; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+.notice { background: var(--accent); color: #241b06; text-align: center; padding: 8px 16px; font-weight: 700; font-size: 15px; }

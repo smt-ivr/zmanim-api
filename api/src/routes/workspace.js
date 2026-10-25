@@ -32,12 +32,27 @@ export async function synagogueSettings(env, s) {
     ? (await all(env, `SELECT prayer_id FROM synagogue_prayers WHERE synagogue_id = ?`, s.id)).map((r) => r.prayer_id)
     : null;
   return {
-    can_edit_info: s.can_edit_info === 1,
+    editable_fields: parseFields(s.editable_fields),
     max_locations: s.max_locations,
     max_minyanim: s.max_minyanim,
     restrict_prayers: s.restrict_prayers === 1,
     allowed_prayer_ids: allowed,
   };
+}
+
+/** Synagogue details a manager may be allowed to edit (the admin picks per synagogue; default none). */
+export const INFO_FIELDS = ['name', 'area_id', 'address', 'phone', 'notes'];
+export function parseFields(json) {
+  try { const v = JSON.parse(json || '[]'); return Array.isArray(v) ? v.filter((f) => INFO_FIELDS.includes(f)) : []; } catch { return []; }
+}
+
+/** Anchors with the prayers they may be used for (empty list = all prayers). */
+export async function anchorsWithPrayers(env) {
+  const [anchors, links] = await Promise.all([
+    all(env, `SELECT id, name FROM anchors ORDER BY sort, id`),
+    all(env, `SELECT anchor_id, prayer_id FROM anchor_prayers`),
+  ]);
+  return anchors.map((a) => ({ ...a, prayer_ids: links.filter((l) => l.anchor_id === a.id).map((l) => l.prayer_id) }));
 }
 
 const listLocations = (env, sid) =>
@@ -71,7 +86,7 @@ export async function get({ env, actor, params }) {
     listMinyanim(env, s.id),
     all(env, `SELECT id, name, earliest, latest FROM prayers ORDER BY sort, id`),
     all(env, `SELECT id, name, is_default FROM seasons ORDER BY sort, id`),
-    all(env, `SELECT id, name FROM anchors ORDER BY sort, id`),
+    anchorsWithPrayers(env),
     all(env, `SELECT id, name FROM areas ORDER BY sort, name`),
     all(env, `SELECT u.id, u.name FROM synagogue_managers sm JOIN users u ON u.id = sm.user_id WHERE sm.synagogue_id = ? ORDER BY u.name`, s.id),
   ]);
@@ -92,17 +107,22 @@ export async function get({ env, actor, params }) {
   });
 }
 
-/** PATCH /synagogues/:sid — public details. Managers need can_edit_info. */
+/** PATCH /synagogues/:sid — public details. Managers may change only the fields the admin opened. */
 export async function patch({ env, actor, params, request }) {
   const s = await loadSynagogue(env, actor, params.sid);
-  if (actor.role !== 'admin' && !s.can_edit_info) throw forbidden('מנהל המערכת לא אפשר עריכת פרטי בית הכנסת');
   const d = fields(await readJson(request), { partial: true })
     .str('name', { required: true, max: 120 })
-    .int('area_id', { nullable: true, min: 1 })
+    .int('area_id', { required: true, min: 1 })
     .str('address', { max: 200 })
     .str('phone', { max: 30 })
     .str('notes', { max: 1000 })
     .done();
+  if (actor.role !== 'admin') {
+    const open = parseFields(s.editable_fields);
+    // Unchanged values are fine (the form sends everything); only real changes need permission.
+    const changed = Object.keys(d).filter((k) => d[k] !== s[k]);
+    if (changed.some((k) => !open.includes(k))) throw forbidden('כדי לשנות פרטים אלה, פנו למנהל המערכת');
+  }
   if (d.area_id && !(await first(env, `SELECT id FROM areas WHERE id = ?`, d.area_id))) throw notFound('האזור לא קיים');
   const set = setClause(d, ['name', 'area_id', 'address', 'phone', 'notes']);
   if (set.keys.length) await run(env, `UPDATE synagogues SET ${set.sql}, updated_at = ? WHERE id = ?`, ...set.params, nowIso(), s.id);

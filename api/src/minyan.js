@@ -1,6 +1,7 @@
 // Minyan rules shared by the manager workspace and the public endpoints.
 import { all, first } from './db.js';
 import { invalid } from './http.js';
+import { SHABBAT_BIT, getSettings } from './settings.js';
 
 export const DAY_NAMES = ['א׳', 'ב׳', 'ג׳', 'ד׳', 'ה׳', 'ו׳', 'שבת'];
 export const ALL_DAYS = 127;
@@ -80,7 +81,7 @@ export async function listMinyanim(env, synagogueId, { activeOnly = false } = {}
  */
 export async function validateMinyan(env, synagogue, m) {
   const errors = {};
-  const [prayer, location, season, anchor, allowed] = await Promise.all([
+  const [prayer, location, season, anchor, allowed, settings, anchorPrayers] = await Promise.all([
     first(env, `SELECT * FROM prayers WHERE id = ?`, m.prayer_id),
     m.location_id ? first(env, `SELECT * FROM locations WHERE id = ?`, m.location_id) : null,
     m.season_id ? first(env, `SELECT id FROM seasons WHERE id = ?`, m.season_id) : null,
@@ -88,6 +89,8 @@ export async function validateMinyan(env, synagogue, m) {
     synagogue.restrict_prayers
       ? first(env, `SELECT 1 AS ok FROM synagogue_prayers WHERE synagogue_id = ? AND prayer_id = ?`, synagogue.id, m.prayer_id)
       : { ok: 1 },
+    getSettings(env),
+    m.time_kind === 'relative' && m.anchor_id ? all(env, `SELECT prayer_id FROM anchor_prayers WHERE anchor_id = ?`, m.anchor_id) : [],
   ]);
 
   if (!prayer) errors.prayer_id = 'סוג התפילה לא קיים';
@@ -95,6 +98,7 @@ export async function validateMinyan(env, synagogue, m) {
   if (m.location_id && (!location || location.synagogue_id !== synagogue.id)) errors.location_id = 'המיקום לא שייך לבית הכנסת';
   if (m.season_id && !season) errors.season_id = 'העונה לא קיימת';
   if (!m.days || m.days < 1 || m.days > ALL_DAYS) errors.days = 'יש לבחור לפחות יום אחד';
+  else if (!settings.shabbat_enabled && (m.days & ~SHABBAT_BIT) === 0) errors.days = 'זמני שבת מושבתים כרגע, יש לבחור יום חול'; 
 
   const row = { ...m };
   if (m.time_kind === 'fixed') {
@@ -106,6 +110,9 @@ export async function validateMinyan(env, synagogue, m) {
   } else {
     if (!m.anchor_id) errors.anchor_id = 'יש לבחור זמן ייחוס';
     else if (!anchor) errors.anchor_id = 'זמן הייחוס לא קיים';
+    else if (anchorPrayers.length && !anchorPrayers.some((r) => r.prayer_id === m.prayer_id)) {
+      errors.anchor_id = 'זמן ייחוס זה אינו מותר לתפילה שנבחרה';
+    }
     if (m.offset_minutes === null || m.offset_minutes === undefined) errors.offset_minutes = 'יש להזין מספר דקות';
     row.time = null;
   }

@@ -32,10 +32,12 @@ async function createManager(admin, email, synagogue_ids) {
   return { id: r.body.id, token: login.body.token };
 }
 
-const newSynagogue = async (admin, body = {}) => (await call('POST', '/admin/synagogues', { token: admin, body: { name: 'בית כנסת', ...body } })).body;
+const newSynagogue = async (admin, body = {}) => (await call('POST', '/admin/synagogues', { token: admin, body: { name: 'בית כנסת', area_id: 1, ...body } })).body;
+const setSetting = (key, value) => env.DB.prepare(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).bind(key, value).run();
 
-beforeEach(() => {
+beforeEach(async () => {
   env = { DB: new D1Shim() };
+  await env.DB.prepare(`INSERT INTO areas (name) VALUES ('מרכז')`).run();
 });
 
 describe('setup & auth', () => {
@@ -111,12 +113,28 @@ describe('manager scope', () => {
     assert.equal((await call('GET', '/admin/users', { token: m.token })).status, 403);
   });
 
-  test('can_edit_info=false blocks manager edits of details', async () => {
+  test('details are locked by default; the admin opens chosen fields', async () => {
     const admin = await setupAdmin();
-    const s = await newSynagogue(admin, { can_edit_info: false });
+    const s = await newSynagogue(admin);
+    assert.deepEqual(s.settings.editable_fields, []);
     const m = await createManager(admin, 'g@x.com', [s.id]);
-    assert.equal((await call('PATCH', `/synagogues/${s.id}`, { token: m.token, body: { address: 'רחוב' } })).status, 403);
+    const locked = await call('PATCH', `/synagogues/${s.id}`, { token: m.token, body: { address: 'רחוב' } });
+    assert.equal(locked.status, 403);
+    assert.match(locked.body.error.message, /פנו למנהל המערכת/);
     assert.equal((await call('PATCH', `/synagogues/${s.id}`, { token: admin, body: { address: 'רחוב' } })).body.synagogue.address, 'רחוב');
+
+    await call('PATCH', `/admin/synagogues/${s.id}`, { token: admin, body: { editable_fields: ['address', 'phone'] } });
+    const ok = await call('PATCH', `/synagogues/${s.id}`, { token: m.token, body: { name: s.name, address: 'רחוב 2', phone: '02' } });
+    assert.equal(ok.status, 200, 'unchanged name + open fields');
+    assert.equal((await call('PATCH', `/synagogues/${s.id}`, { token: m.token, body: { name: 'שם אחר' } })).status, 403);
+    assert.equal((await call('PATCH', `/synagogues/${s.id}`, { token: admin, body: { area_id: null } })).status, 422);
+  });
+
+  test('every synagogue needs an area', async () => {
+    const admin = await setupAdmin();
+    const r = await call('POST', '/admin/synagogues', { token: admin, body: { name: 'בלי אזור' } });
+    assert.equal(r.status, 422);
+    assert.ok(r.body.error.fields.area_id);
   });
 
   test('limits on locations and minyanim', async () => {
@@ -245,14 +263,14 @@ describe('admin', () => {
 
   test('catalog CRUD, single default season, in-use protection', async () => {
     const admin = await setupAdmin();
-    const area = await call('POST', '/admin/catalog/areas', { token: admin, body: { name: 'מרכז' } });
+    const area = await call('POST', '/admin/catalog/areas', { token: admin, body: { name: 'צפון' } });
     assert.equal(area.status, 201);
-    assert.equal((await call('POST', '/admin/catalog/areas', { token: admin, body: { name: 'מרכז' } })).status, 422);
+    assert.equal((await call('POST', '/admin/catalog/areas', { token: admin, body: { name: 'צפון' } })).status, 422);
     await call('POST', '/admin/catalog/seasons', { token: admin, body: { name: 'בין הזמנים', is_default: true } });
     const seasons = (await call('GET', '/admin/catalog/seasons', { token: admin })).body;
     assert.deepEqual(seasons.filter((x) => x.is_default).map((x) => x.name), ['בין הזמנים']);
     const s = await newSynagogue(admin, { area_id: area.body.id });
-    assert.equal(s.area_name, 'מרכז');
+    assert.equal(s.area_name, 'צפון');
     const del = await call('DELETE', `/admin/catalog/areas/${area.body.id}`, { token: admin });
     assert.equal(del.status, 409);
     assert.equal((await call('GET', '/admin/catalog/nope', { token: admin })).status, 404);
@@ -273,6 +291,9 @@ describe('public', () => {
     const s = await newSynagogue(admin, { name: 'פעיל' });
     const hidden = await newSynagogue(admin, { name: 'מוסתר', is_active: false });
     const p = (sid, body) => call('POST', `/synagogues/${sid}/minyanim`, { token: admin, body: { prayer_id: 1, time_kind: 'fixed', time: '07:00', ...body } });
+    // Shabbat is off by default: a Shabbat-only minyan is refused
+    assert.equal((await p(s.id, { days: 0b1000000 })).status, 422);
+    await setSetting('shabbat_enabled', '1');
     await p(s.id, { days: 0b1000000 }); // shabbat only
     await p(s.id, { days: 0b0011111, time: '06:30' });
     await p(s.id, { is_active: false });
@@ -286,6 +307,15 @@ describe('public', () => {
     assert.deepEqual((await call('GET', '/public/synagogues')).body.map((x) => x.name), ['פעיל']);
     assert.equal((await call('GET', `/public/synagogues/${hidden.id}`)).status, 404);
     assert.equal((await call('GET', '/public/minyanim?day=9')).status, 400);
+
+    // Turning Shabbat off hides Shabbat days from the public
+    await setSetting('shabbat_enabled', '0');
+    assert.deepEqual((await call('GET', '/public/minyanim')).body.map((m) => m.days_label), ['א׳-ה׳']);
+    assert.equal((await call('GET', '/public/catalog')).body.site.shabbat_enabled, false);
+    // Closing the site
+    await setSetting('public_site_enabled', '0');
+    assert.equal((await call('GET', '/public/minyanim')).status, 503);
+    assert.equal((await call('GET', '/public/catalog')).body.site.enabled, false);
   });
 
   test('unknown path 404, wrong method 405, CORS preflight', async () => {
@@ -294,5 +324,85 @@ describe('public', () => {
     const res = await worker.fetch(new Request('https://x.test/api/me', { method: 'OPTIONS', headers: { Origin: 'https://a.com' } }), env);
     assert.equal(res.status, 204);
     assert.equal(res.headers.get('Access-Control-Allow-Origin'), '*');
+  });
+});
+
+describe('super admin, profile, messages, control', () => {
+  async function superAndAdmin() {
+    const superToken = await setupAdmin();
+    await env.DB.prepare(`UPDATE users SET is_super = 1 WHERE email = 'admin@x.com'`).run();
+    await call('POST', '/admin/users', { token: superToken, body: { name: 'מנהל שני', email: 'b@x.com', phone: nextPhone(), password: 'second-pass', role: 'admin' } });
+    const other = (await call('POST', '/auth/login', { body: { login: 'b@x.com', password: 'second-pass' } })).body.token;
+    const superId = (await call('GET', '/me', { token: superToken })).body.user.id;
+    return { superToken, other, superId };
+  }
+
+  test('other admins cannot edit or delete the super admin; hidden super is invisible to them', async () => {
+    const { superToken, other, superId } = await superAndAdmin();
+    assert.equal((await call('PATCH', `/admin/users/${superId}`, { token: other, body: { name: 'x' } })).status, 404);
+    assert.equal((await call('DELETE', `/admin/users/${superId}`, { token: other })).status, 404);
+    assert.ok((await call('GET', '/admin/users', { token: other })).body.some((u) => u.id === superId));
+    await call('PATCH', '/me', { token: superToken, body: { is_hidden: true } });
+    assert.ok(!(await call('GET', '/admin/users', { token: other })).body.some((u) => u.id === superId));
+    assert.ok((await call('GET', '/admin/users', { token: superToken })).body.some((u) => u.id === superId));
+    assert.equal((await call('PATCH', '/me', { token: other, body: { is_hidden: true } })).status, 403);
+    assert.equal((await call('GET', '/admin/control', { token: other })).status, 403);
+  });
+
+  test('users change only e-mail and password, unless blocked; login history', async () => {
+    const admin = await setupAdmin();
+    const s = await newSynagogue(admin);
+    const m = await createManager(admin, 'g@x.com', [s.id]);
+    let r = await call('PATCH', '/me', { token: m.token, body: { email: 'new@x.com', name: 'שם חדש' } });
+    assert.equal(r.body.user.email, 'new@x.com');
+    assert.equal(r.body.user.name, 'גבאי'); // name is ignored
+    await call('PATCH', `/admin/users/${m.id}`, { token: admin, body: { can_edit_email: false, can_edit_password: false } });
+    assert.equal((await call('PATCH', '/me', { token: m.token, body: { email: 'z@x.com' } })).status, 403);
+    assert.equal((await call('PUT', '/me/password', { token: m.token, body: { current_password: 'manager-pass', new_password: '12345' } })).status, 403);
+    const logins = await call('GET', '/me/logins', { token: m.token });
+    assert.equal(logins.body[0].channel, 'web');
+  });
+
+  test('phone password needs the real, numeric password', async () => {
+    const admin = await setupAdmin();
+    assert.equal((await call('PUT', '/me/phone-password', { token: admin, body: { enabled: true, password: 'admin-pass-1' } })).body.error.fields.password.includes('ספרות'), true);
+    await call('PUT', '/me/password', { token: admin, body: { current_password: 'admin-pass-1', new_password: '1631' } });
+    const r = await call('PUT', '/me/phone-password', { token: admin, body: { enabled: true, password: '1631' } });
+    assert.equal(r.body.user.phone_requires_password, true);
+    const bad = await call('PUT', '/me/password', { token: admin, body: { current_password: '1631', new_password: 'letters-pw' } });
+    assert.equal(bad.status, 422);
+  });
+
+  test('messages to developers: only the super admin reads them; can be blocked per user or globally', async () => {
+    const { superToken, other } = await superAndAdmin();
+    assert.equal((await call('POST', '/me/feedback', { token: other, body: { body: 'בקשה לשיפור' } })).status, 201);
+    const inbox = await call('GET', '/admin/feedback', { token: superToken });
+    assert.equal(inbox.body[0].body, 'בקשה לשיפור');
+    assert.equal((await call('GET', '/admin/feedback', { token: other })).status, 403);
+    await call('PATCH', `/admin/feedback/${inbox.body[0].id}`, { token: superToken, body: { is_read: true } });
+    const otherId = inbox.body[0].user_id;
+    await call('PATCH', `/admin/users/${otherId}`, { token: superToken, body: { can_message: false } });
+    assert.equal((await call('POST', '/me/feedback', { token: other, body: { body: 'שוב' } })).status, 403);
+    await call('PATCH', `/admin/users/${otherId}`, { token: superToken, body: { can_message: true } });
+    await call('PATCH', '/admin/control', { token: superToken, body: { feedback_enabled: false } });
+    const mine = await call('GET', '/me/feedback', { token: other });
+    assert.equal(mine.body.blocked, 'השירות לפניות סגור כרגע');
+  });
+
+  test('control settings round-trip; anchors limited to prayers', async () => {
+    const { superToken } = await superAndAdmin();
+    const r = await call('PATCH', '/admin/control', { token: superToken, body: { shabbat_enabled: true, site_notice: 'שבת שלום', listen_phone: '043132030' } });
+    assert.equal(r.body.shabbat_enabled, true);
+    assert.equal(r.body.site_notice, 'שבת שלום');
+    assert.equal((await call('GET', '/me', { token: superToken })).body.system.shabbat_enabled, true);
+
+    // anchor "sunset" (2) only for mincha (2)
+    const a = await call('PATCH', '/admin/catalog/anchors/2', { token: superToken, body: { prayer_ids: [2] } });
+    assert.deepEqual(a.body.prayer_ids, [2]);
+    const s = await newSynagogue(superToken);
+    const bad = await call('POST', `/synagogues/${s.id}/minyanim`, { token: superToken, body: { prayer_id: 1, time_kind: 'relative', anchor_id: 2, offset_minutes: 0 } });
+    assert.match(bad.body.error.fields.anchor_id, /אינו מותר/);
+    const ws = await call('GET', `/synagogues/${s.id}`, { token: superToken });
+    assert.deepEqual(ws.body.catalog.anchors.find((x) => x.id === 2).prayer_ids, [2]);
   });
 });

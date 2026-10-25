@@ -58,9 +58,9 @@ export function AdminSynagogues({ onChanged }) {
             <td>${s.managers.length ? s.managers.map((m) => m.name).join(', ') : html`<${Badge} tone="warn">ללא מנהל<//>`}</td>
             <td dir="ltr" class="start"><span class="num">${s.minyanim_count}</span><span class="muted"> / ${s.settings.max_minyanim}</span></td>
             <td class="small">
-              ${!s.settings.can_edit_info && html`<${Badge}>פרטים נעולים<//> `}
+              ${s.settings.editable_fields.length > 0 && html`<${Badge} tone="info">עריכת ${s.settings.editable_fields.length} פרטים<//> `}
               ${s.settings.restrict_prayers && html`<${Badge}>תפילות מוגבלות<//>`}
-              ${s.settings.can_edit_info && !s.settings.restrict_prayers && html`<span class="muted">רגיל</span>`}
+              ${!s.settings.editable_fields.length && !s.settings.restrict_prayers && html`<span class="muted">ברירת מחדל</span>`}
             </td>
             <td class="actions">
               <${Button} kind="ghost" small icon="external" title="כניסה לבית הכנסת" onClick=${() => (location.hash = `/s/${s.id}`)} />
@@ -79,9 +79,9 @@ function SynagogueModal({ synagogue, data, onClose, onSaved }) {
   const isNew = !synagogue;
   const st = synagogue?.settings;
   const initial = {
-    name: synagogue?.name ?? '', area_id: synagogue?.area_id ?? null, address: synagogue?.address ?? '', phone: synagogue?.phone ?? '',
+    name: synagogue?.name ?? '', area_id: synagogue?.area_id ?? data.areas[0]?.id ?? null, address: synagogue?.address ?? '', phone: synagogue?.phone ?? '',
     notes: synagogue?.notes ?? '', is_active: synagogue?.is_active ?? true,
-    can_edit_info: st?.can_edit_info ?? true, max_locations: st?.max_locations ?? 5, max_minyanim: st?.max_minyanim ?? 50,
+    editable_fields: st?.editable_fields ?? [], max_locations: st?.max_locations ?? 5, max_minyanim: st?.max_minyanim ?? 50,
     restrict_prayers: st?.restrict_prayers ?? false, allowed_prayer_ids: st?.allowed_prayer_ids ?? data.prayers.map((p) => p.id),
     manager_ids: synagogue?.managers.map((m) => m.id) ?? [],
   };
@@ -101,7 +101,7 @@ function SynagogueModal({ synagogue, data, onClose, onSaved }) {
           <${Field} label="שם" error=${errors.name}><${Input} value=${v.name} onInput=${set('name')} required /><//>
           <div class="grid-2">
             <${Field} label="אזור" error=${errors.area_id}>
-              <${Select} value=${v.area_id} onChange=${set('area_id')} placeholder="ללא אזור" options=${data.areas.map((a) => ({ value: a.id, label: a.name }))} /><//>
+              <${Select} value=${v.area_id} onChange=${set('area_id')} placeholder=${data.areas.length ? undefined : 'הגדירו קודם אזורים'} options=${data.areas.map((a) => ({ value: a.id, label: a.name }))} required /><//>
             <${Field} label="טלפון" error=${errors.phone}><${Input} dir="ltr" value=${v.phone} onInput=${set('phone')} /><//>
           </div>
           <${Field} label="כתובת" error=${errors.address}><${Input} value=${v.address} onInput=${set('address')} /><//>
@@ -113,7 +113,9 @@ function SynagogueModal({ synagogue, data, onClose, onSaved }) {
           <${Field} group label="מנהלים" error=${errors.manager_ids} hint=${managers.length ? '' : 'אין עדיין משתמשים מסוג מנהל בית כנסת. צרו אותם בעמוד המשתמשים'}>
             <${CheckList} searchable options=${managers.map((u) => ({ value: u.id, label: u.name, sub: u.email }))} value=${v.manager_ids} onChange=${set('manager_ids')} empty="אין מנהלים" /><//>
           <h4>מה מותר למנהל</h4>
-          <${Toggle} checked=${v.can_edit_info} onChange=${set('can_edit_info')} label="עריכת פרטי בית הכנסת" hint="שם, כתובת, טלפון והערות" />
+          <${Field} group label="פרטים שהמנהל יכול לערוך" hint="כל השאר נעול. ברירת מחדל: הכל נעול">
+            <${CheckList} options=${[['name', 'שם'], ['area_id', 'אזור'], ['address', 'כתובת'], ['phone', 'טלפון'], ['notes', 'הערות']].map(([value, label]) => ({ value, label }))}
+              value=${v.editable_fields} onChange=${set('editable_fields')} /><//>
           <div class="grid-2">
             <${Field} label="מקסימום מניינים" error=${errors.max_minyanim}><${Input} type="number" min="0" max="1000" dir="ltr" value=${v.max_minyanim} onInput=${set('max_minyanim')} /><//>
             <${Field} label="מקסימום מיקומים" error=${errors.max_locations}><${Input} type="number" min="0" max="100" dir="ltr" value=${v.max_locations} onInput=${set('max_locations')} /><//>

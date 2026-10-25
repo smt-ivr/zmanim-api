@@ -3,7 +3,7 @@ import { hashPassword, publicUser, revokeSessions } from '../auth.js';
 import { all, batch, first, marks, nowIso, q, run, setClause } from '../db.js';
 import { conflict, forbidden, invalid, json, noContent, notFound, readJson } from '../http.js';
 import { fields, id } from '../validate.js';
-import { synagogueInfo, synagogueSettings } from './workspace.js';
+import { INFO_FIELDS, parseFields, synagogueInfo, synagogueSettings } from './workspace.js';
 
 // ------------------------------------------------------------------ helpers
 async function assertIdsExist(env, table, ids, field) {
@@ -39,12 +39,12 @@ export async function stats({ env }) {
 function parseSynagogue(body, partial) {
   return fields(body, { partial })
     .str('name', { required: true, max: 120 })
-    .int('area_id', { nullable: true, min: 1 })
+    .int('area_id', { required: true, min: 1 })
     .str('address', { max: 200 })
     .str('phone', { max: 30 })
     .str('notes', { max: 1000 })
     .bool('is_active', { default: true })
-    .bool('can_edit_info', { default: true })
+    .subset('editable_fields', INFO_FIELDS, { default: [] })
     .int('max_locations', { min: 0, max: 100, default: 5 })
     .int('max_minyanim', { min: 0, max: 1000, default: 50 })
     .bool('restrict_prayers', { default: false })
@@ -53,7 +53,8 @@ function parseSynagogue(body, partial) {
     .done();
 }
 
-const SYN_COLUMNS = ['name', 'area_id', 'address', 'phone', 'notes', 'is_active', 'can_edit_info', 'max_locations', 'max_minyanim', 'restrict_prayers'];
+const SYN_COLUMNS = ['name', 'area_id', 'address', 'phone', 'notes', 'is_active', 'editable_fields', 'max_locations', 'max_minyanim', 'restrict_prayers'];
+const SYN_TRANSFORM = { editable_fields: (v) => JSON.stringify(v) };
 
 async function validateLinks(env, d) {
   await assertIdsExist(env, 'areas', d.area_id ? [d.area_id] : [], 'area_id');
@@ -87,7 +88,7 @@ export async function listSynagogues({ env }) {
     rows.map((s) => ({
       ...synagogueInfo(s),
       settings: {
-        can_edit_info: s.can_edit_info === 1,
+        editable_fields: parseFields(s.editable_fields),
         max_locations: s.max_locations,
         max_minyanim: s.max_minyanim,
         restrict_prayers: s.restrict_prayers === 1,
@@ -107,7 +108,7 @@ export async function getSynagogue({ env, params }) {
 export async function createSynagogue({ env, request }) {
   const d = parseSynagogue(await readJson(request), false);
   await validateLinks(env, d);
-  const set = setClause(d, SYN_COLUMNS);
+  const set = setClause(d, SYN_COLUMNS, SYN_TRANSFORM);
   const res = await run(env, `INSERT INTO synagogues (${set.keys.join(', ')}) VALUES (${marks(set.keys.length)})`, ...set.params);
   const sid = res.meta.last_row_id;
   await batch(env, [
@@ -123,7 +124,7 @@ export async function patchSynagogue({ env, params, request }) {
   if (!current) throw notFound('בית הכנסת לא נמצא');
   const d = parseSynagogue(await readJson(request), true);
   await validateLinks(env, d);
-  const set = setClause(d, SYN_COLUMNS);
+  const set = setClause(d, SYN_COLUMNS, SYN_TRANSFORM);
   const statements = [];
   if (set.keys.length) statements.push(q(env, `UPDATE synagogues SET ${set.sql}, updated_at = ? WHERE id = ?`, ...set.params, nowIso(), sid));
   if (d.allowed_prayer_ids) statements.push(...replaceLinks(env, 'synagogue_prayers', 'synagogue_id', sid, 'prayer_id', d.allowed_prayer_ids));
@@ -148,12 +149,17 @@ async function adminUser(env, uid) {
   return { ...publicUser(u), synagogues };
 }
 
-export async function listUsers({ env }) {
+/** The super admin is untouchable by other admins, and invisible to them while hidden. */
+function guardSuper(actor, target) {
+  if (target.is_super && !actor.is_super) throw notFound('המשתמש לא נמצא');
+}
+
+export async function listUsers({ env, actor }) {
   const rows = await all(
     env,
     `SELECT u.*, (SELECT json_group_array(json_object('id', s.id, 'name', s.name))
                     FROM synagogue_managers sm JOIN synagogues s ON s.id = sm.synagogue_id WHERE sm.user_id = u.id) AS synagogues_json
-     FROM users u ORDER BY u.role, u.name`
+     FROM users u ${actor.is_super ? '' : 'WHERE NOT (u.is_super = 1 AND u.is_hidden = 1)'} ORDER BY u.is_super DESC, u.role, u.name`
   );
   return json(rows.map((u) => ({ ...publicUser(u), synagogues: JSON.parse(u.synagogues_json || '[]') })));
 }
@@ -169,6 +175,9 @@ function parseUser(body, partial) {
     .bool('is_active', { default: true })
     .password('password', { required: !partial })
     .ids('synagogue_ids', { default: [] })
+    .bool('can_edit_email', { default: true })
+    .bool('can_edit_password', { default: true })
+    .bool('can_message', { default: true })
     .done();
 }
 
@@ -185,8 +194,8 @@ export async function createUser({ env, request }) {
   await assertIdsExist(env, 'synagogues', d.synagogue_ids, 'synagogue_ids');
   const res = await run(
     env,
-    `INSERT INTO users (name, email, phone, role, is_active, password_hash) VALUES (?, ?, ?, ?, ?, ?)`,
-    d.name, d.email, d.phone, d.role, d.is_active ? 1 : 0, await hashPassword(d.password)
+    `INSERT INTO users (name, email, phone, role, is_active, password_hash, can_edit_email, can_edit_password, can_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    d.name, d.email, d.phone, d.role, d.is_active ? 1 : 0, await hashPassword(d.password), d.can_edit_email ? 1 : 0, d.can_edit_password ? 1 : 0, d.can_message ? 1 : 0
   );
   const uid = res.meta.last_row_id;
   if (d.role === 'manager' && d.synagogue_ids.length) {
@@ -199,7 +208,9 @@ export async function patchUser({ env, actor, params, request }) {
   const uid = id(params.id);
   const current = await first(env, `SELECT * FROM users WHERE id = ?`, uid);
   if (!current) throw notFound('המשתמש לא נמצא');
+  guardSuper(actor, current);
   const d = parseUser(await readJson(request), true);
+  if (current.is_super && d.role && d.role !== 'admin') throw forbidden('מנהל העל נשאר מנהל מערכת');
 
   if (uid === actor.id && ((d.role && d.role !== 'admin') || d.is_active === false)) {
     throw forbidden('לא ניתן להוריד הרשאות או להשבית את עצמך');
@@ -210,7 +221,7 @@ export async function patchUser({ env, actor, params, request }) {
   const role = d.role ?? current.role;
   const data = { ...d, updated_at: nowIso() };
   if (d.password) data.password_hash = await hashPassword(d.password);
-  const set = setClause(data, ['name', 'email', 'phone', 'role', 'is_active', 'password_hash', 'updated_at']);
+  const set = setClause(data, ['name', 'email', 'phone', 'role', 'is_active', 'password_hash', 'can_edit_email', 'can_edit_password', 'can_message', 'updated_at']);
   const statements = [q(env, `UPDATE users SET ${set.sql} WHERE id = ?`, ...set.params, uid)];
   if (role === 'admin') statements.push(q(env, `DELETE FROM synagogue_managers WHERE user_id = ?`, uid));
   else if (d.synagogue_ids) statements.push(...replaceLinks(env, 'synagogue_managers', 'user_id', uid, 'synagogue_id', d.synagogue_ids));
@@ -224,6 +235,10 @@ export async function patchUser({ env, actor, params, request }) {
 export async function deleteUser({ env, actor, params }) {
   const uid = id(params.id);
   if (uid === actor.id) throw forbidden('לא ניתן למחוק את עצמך');
+  const target = await first(env, `SELECT * FROM users WHERE id = ?`, uid);
+  if (!target) throw notFound('המשתמש לא נמצא');
+  guardSuper(actor, target);
+  if (target.is_super) throw forbidden('לא ניתן למחוק את מנהל העל');
   const res = await run(env, `DELETE FROM users WHERE id = ?`, uid);
   if (!res.meta.changes) throw notFound('המשתמש לא נמצא');
   return noContent();
@@ -260,8 +275,10 @@ const CATALOG = {
   anchors: {
     table: 'anchors',
     usedBy: `SELECT COUNT(*) AS n FROM minyanim WHERE anchor_id = ?`,
-    parse: (b, partial) => fields(b, { partial }).str('name', { required: true, max: 60 }).int('sort', { default: 0 }).done(),
+    // prayer_ids: which prayers may use this anchor ([] = all)
+    parse: (b, partial) => fields(b, { partial }).str('name', { required: true, max: 60 }).int('sort', { default: 0 }).ids('prayer_ids', { default: [] }).done(),
     columns: ['name', 'sort'],
+    links: { table: 'anchor_prayers', owner: 'anchor_id', other: 'prayer_id', field: 'prayer_ids' },
   },
 };
 
@@ -276,8 +293,22 @@ export const serializeCatalogRow = (row) => ('is_default' in row ? { ...row, is_
 export async function listCatalog({ env, params }) {
   const def = catalogDef(params.kind);
   const rows = await all(env, `SELECT t.*, (${def.usedBy.replace('= ?', '= t.id')}) AS used FROM ${def.table} t ORDER BY t.sort, t.id`);
-  return json(rows.map(serializeCatalogRow));
+  return json(await withLinks(env, def, rows.map(serializeCatalogRow)));
 }
+
+async function withLinks(env, def, rows) {
+  if (!def.links) return rows;
+  const links = await all(env, `SELECT ${def.links.owner} AS o, ${def.links.other} AS x FROM ${def.links.table}`);
+  return rows.map((r) => ({ ...r, [def.links.field]: links.filter((l) => l.o === r.id).map((l) => l.x) }));
+}
+
+async function saveLinks(env, def, d, rowId) {
+  if (!def.links || !d[def.links.field]) return;
+  await assertIdsExist(env, 'prayers', d[def.links.field], def.links.field);
+  await batch(env, replaceLinks(env, def.links.table, def.links.owner, rowId, def.links.other, d[def.links.field]));
+}
+
+const catalogRow = async (env, def, rowId) => (await withLinks(env, def, [serializeCatalogRow(await first(env, `SELECT * FROM ${def.table} WHERE id = ?`, rowId))]))[0];
 
 async function saveCatalog(env, def, d, rowId) {
   const set = setClause(d, def.columns);
@@ -300,16 +331,20 @@ async function saveCatalog(env, def, d, rowId) {
 
 export async function createCatalog({ env, params, request }) {
   const def = catalogDef(params.kind);
-  const newId = await saveCatalog(env, def, def.parse(await readJson(request), false), 0);
-  return json(serializeCatalogRow(await first(env, `SELECT * FROM ${def.table} WHERE id = ?`, newId)), 201);
+  const d = def.parse(await readJson(request), false);
+  const newId = await saveCatalog(env, def, d, 0);
+  await saveLinks(env, def, d, newId);
+  return json(await catalogRow(env, def, newId), 201);
 }
 
 export async function patchCatalog({ env, params, request }) {
   const def = catalogDef(params.kind);
   const rowId = id(params.id);
   if (!(await first(env, `SELECT id FROM ${def.table} WHERE id = ?`, rowId))) throw notFound();
-  await saveCatalog(env, def, def.parse(await readJson(request), true), rowId);
-  return json(serializeCatalogRow(await first(env, `SELECT * FROM ${def.table} WHERE id = ?`, rowId)));
+  const d = def.parse(await readJson(request), true);
+  await saveCatalog(env, def, d, rowId);
+  await saveLinks(env, def, d, rowId);
+  return json(await catalogRow(env, def, rowId));
 }
 
 export async function deleteCatalog({ env, params }) {
@@ -336,13 +371,14 @@ async function rotate(env) {
 }
 
 /** The UI builds the full api_link from its own origin + this path. */
-export async function getIvr({ env }) {
-  const phones = await all(env, `SELECT name, phone, role FROM users WHERE phone IS NOT NULL AND is_active = 1 ORDER BY role, name`);
-  return json({ key: await ivrKey(env), path: '/api/ivr', base_path: env.BASE_PATH || '', phones });
+export async function getIvr({ env, actor }) {
+  const hidden = actor?.is_super ? '' : 'AND NOT (is_super = 1 AND is_hidden = 1)';
+  const phones = await all(env, `SELECT name, phone, role FROM users WHERE phone IS NOT NULL AND is_active = 1 ${hidden} ORDER BY role, name`);
+  return json({ key: await ivrKey(env), path: '/api/ivr', listen_path: '/api/ivr/listen', base_path: env.BASE_PATH || '', phones });
 }
 
 /** New key: the old api_link stops working immediately. */
-export async function rotateIvrKey({ env }) {
+export async function rotateIvrKey({ env, actor }) {
   await rotate(env);
-  return getIvr({ env });
+  return getIvr({ env, actor });
 }

@@ -41,15 +41,15 @@ export function AdminUsers({ me }) {
       : html`<div class="table-wrap card"><table class="table">
           <thead><tr><th>שם</th><th>תפקיד</th><th>בתי כנסת</th><th>כניסה אחרונה</th><th /></tr></thead>
           <tbody>${shown.map((u) => html`<tr key=${u.id} class=${u.is_active ? '' : 'inactive'}>
-            <td><b>${u.name}</b>${u.id === me.id && html` <${Badge} tone="info">זה אתה<//>`}${!u.is_active && html` <${Badge} tone="warn">מושבת<//>`}
+            <td><b>${u.name}</b>${u.is_super && html` <${Badge} tone="info">מנהל על<//>`}${u.is_super && u.is_hidden && html` <${Badge}>מוסתר<//>`}${u.id === me.id && html` <${Badge} tone="info">זה אתה<//>`}${!u.is_active && html` <${Badge} tone="warn">מושבת<//>`}
               <div class="muted small" dir="ltr">${[u.email, u.phone].filter(Boolean).join(' · ')}</div>
-              <div class="row gap-sm">${u.has_password && html`<${Badge}>אתר<//>`}${u.phone && html`<${Badge}>טלפון${u.has_pin ? ' + קוד' : ''}<//>`}</div></td>
+              <div class="row gap-sm">${u.phone_requires_password && html`<${Badge}>סיסמה בטלפון<//>`}${!u.can_message && html`<${Badge} tone="warn">חסום מפניות<//>`}</div></td>
             <td><${Badge} tone=${u.role === 'admin' ? 'info' : 'neutral'}>${ROLE[u.role]}<//></td>
             <td class="small">${u.role === 'admin' ? html`<span class="muted">כולם</span>` : u.synagogues.length ? u.synagogues.map((s) => s.name).join(', ') : html`<${Badge} tone="warn">לא שויך<//>`}</td>
             <td class="small muted">${formatDate(u.last_login_at)}</td>
             <td class="actions">
               <${Button} kind="ghost" small icon="edit" title="עריכה" onClick=${() => setEditing(u)} />
-              ${u.id !== me.id && html`<${Button} kind="ghost" small icon="trash" title="מחיקה" onClick=${() => remove(u)} />`}
+              ${u.id !== me.id && !u.is_super && html`<${Button} kind="ghost" small icon="trash" title="מחיקה" onClick=${() => remove(u)} />`}
             </td>
           </tr>`)}</tbody></table></div>`}
     ${editing && html`<${UserModal} user=${editing === 'new' ? null : editing} me=${me} synagogues=${data.synagogues}
@@ -63,11 +63,12 @@ function UserModal({ user, me, synagogues, onClose, onSaved }) {
   const initial = {
     name: user?.name ?? '', email: user?.email ?? '', phone: user?.phone ?? '', role: user?.role ?? 'manager',
     is_active: user?.is_active ?? true, password: '', synagogue_ids: user?.synagogues.map((s) => s.id) ?? [],
+    can_edit_email: user?.can_edit_email ?? true, can_edit_password: user?.can_edit_password ?? true, can_message: user?.can_message ?? true,
   };
   const save = (v) => {
     const body = { ...v, email: v.email || null, phone: v.phone || null };
     if (!body.password) delete body.password;
-    if (self) { delete body.role; delete body.is_active; }
+    if (self) { delete body.role; delete body.is_active; delete body.can_edit_email; delete body.can_edit_password; delete body.can_message; }
     return isNew ? api.post('/admin/users', body) : api.patch(`/admin/users/${user.id}`, body);
   };
 
@@ -93,7 +94,11 @@ function UserModal({ user, me, synagogues, onClose, onSaved }) {
         ? html`<${Field} group label="בתי הכנסת שהוא מנהל" error=${errors.synagogue_ids}>
             <${CheckList} searchable options=${synagogues.map((s) => ({ value: s.id, label: s.name, sub: s.area_name || '' }))} value=${v.synagogue_ids} onChange=${set('synagogue_ids')} empty="אין בתי כנסת" /><//>`
         : html`<div class="alert alert-info">מנהל מערכת מנהל את כל בתי הכנסת, המשתמשים וההגדרות.</div>`}
-      ${!self && html`<${Toggle} checked=${v.is_active} onChange=${set('is_active')} label="משתמש פעיל" hint="השבתה מנתקת את המשתמש מיד ומונעת כניסה" />`}`}
+      ${!self && html`<${Toggle} checked=${v.is_active} onChange=${set('is_active')} label="משתמש פעיל" hint="השבתה מנתקת את המשתמש מיד ומונעת כניסה" />`}
+      ${!self && html`<h4>מה המשתמש יכול לשנות בעצמו</h4>
+        <${Toggle} checked=${v.can_edit_email} onChange=${set('can_edit_email')} label="שינוי מייל" />
+        <${Toggle} checked=${v.can_edit_password} onChange=${set('can_edit_password')} label="שינוי סיסמה" />
+        ${me.is_super && html`<${Toggle} checked=${v.can_message} onChange=${set('can_message')} label="שליחת פניות לצוות הפיתוח" />`}`}`}
   <//>`;
 }
 

@@ -30,6 +30,9 @@ const PATHS = {
   check: 'M5 12l5 5L20 7',
   external: 'M14 3h7v7M10 14L21 3M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5',
   key: 'M21 2l-2 2m-7.6 7.6a5.5 5.5 0 1 1-7.8 7.8 5.5 5.5 0 0 1 7.8-7.8zM15.5 7.5l3 3L22 7l-3-3',
+  mail: 'M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM22 6l-10 7L2 6',
+  phone: 'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z',
+  shield: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z',
 };
 export const Icon = ({ name, size = 18 }) => html`
   <svg class="icon" width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -122,20 +125,24 @@ export function CheckList({ options, value, onChange, searchable, empty = 'אי�
   </div>`;
 }
 
-export function DaysPicker({ value, onChange }) {
+/** `shabbat` = Shabbat minyanim enabled in the control settings; otherwise the Shabbat day is not offered. */
+export function DaysPicker({ value, onChange, shabbat = true }) {
+  const days = shabbat ? DAYS : DAYS.slice(0, 6);
+  const presets = shabbat ? DAY_PRESETS : [{ label: 'כל ימות החול', mask: 63 }, { label: 'א׳-ה׳', mask: 31 }];
   return html`<div class="days-picker">
     <div class="day-chips">
-      ${DAYS.map((d, i) => html`<button type="button" class=${cx('chip', value & (1 << i) && 'on')}
+      ${days.map((d, i) => html`<button type="button" class=${cx('chip', value & (1 << i) && 'on')}
           aria-pressed=${Boolean(value & (1 << i))} onClick=${() => onChange(value ^ (1 << i))}>${d}</button>`)}
     </div>
     <div class="day-presets">
-      ${DAY_PRESETS.map((p) => html`<button type="button" class=${cx('link', value === p.mask && 'active')} onClick=${() => onChange(p.mask)}>${p.label}</button>`)}
+      ${presets.map((p) => html`<button type="button" class=${cx('link', value === p.mask && 'active')} onClick=${() => onChange(p.mask)}>${p.label}</button>`)}
     </div>
+    ${!shabbat && html`<span class="field-hint">זמני שבת מושבתים כרגע במערכת</span>`}
   </div>`;
 }
 
-export const DaysBadge = ({ mask }) => html`<span class="days">
-  ${DAYS.map((d, i) => html`<i class=${mask & (1 << i) ? 'on' : ''}>${d.replace('׳', '')}</i>`)}</span>`;
+export const DaysBadge = ({ mask, shabbat = true }) => html`<span class="days">
+  ${(shabbat ? DAYS : DAYS.slice(0, 6)).map((d, i) => html`<i class=${mask & (1 << i) ? 'on' : ''}>${d.replace('׳', '')}</i>`)}</span>`;
 
 export const isAllDays = (mask) => mask === ALL_DAYS;
 

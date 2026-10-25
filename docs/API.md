@@ -53,10 +53,28 @@ Write fields: `prayer_id` (required), `time_kind` (`fixed`|`relative`, required)
 | | |
 |---|---|
 | `GET` or `POST /ivr?key=…` | Yemot `type=api` endpoint. Always answers 200 with Yemot command text (`id_list_message=…&read=…`), never JSON |
+| `GET` or `POST /ivr/listen` | Public listening line (no key, no identification) |
 | `GET /admin/ivr` | `{ key, path, base_path, phones }`: what the admin UI needs to build the `api_link` |
 | `POST /admin/ivr/rotate` | New key; the old link stops working |
 
 All routes also work under `BASE_PATH` (`/zmanim/api/...`).
+
+## Me
+
+| | |
+|---|---|
+| `PATCH /me` | `{ email? }` (unless blocked), `{ is_hidden? }` (super admin only). Name and phone are set by the admin |
+| `PUT /me/password` | `{ current_password, new_password }` (unless blocked) |
+| `PUT /me/phone-password` | `{ enabled, password }`: require the (numeric) password on management calls |
+| `GET /me/logins` | Last 50 logins: `{ channel: web\|phone, detail, created_at }` |
+| `GET /me/feedback` · `POST /me/feedback` | Messages to the developers: `{ blocked, items }` / `{ body }` |
+
+## Super admin
+
+| | |
+|---|---|
+| `GET / PATCH /admin/control` | `shabbat_enabled, public_site_enabled, site_notice, listen_phone, listen_enabled, manage_phone_enabled, feedback_enabled` |
+| `GET /admin/feedback` · `PATCH /admin/feedback/:id {is_read}` · `DELETE /admin/feedback/:id` | Developers' inbox |
 
 ## Session
 

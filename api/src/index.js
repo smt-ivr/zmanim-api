@@ -1,5 +1,5 @@
 // Entry point. Every API path lives under /api; anything else is the admin UI (static assets).
-import { authenticate, cleanup, requireAdmin } from './auth.js';
+import { authenticate, cleanup, requireAdmin, requireSuper } from './auth.js';
 import { HttpError, errorResponse, json } from './http.js';
 import { Router } from './router.js';
 import * as admin from './routes/admin.js';
@@ -7,9 +7,12 @@ import * as auth from './routes/auth.js';
 import * as pub from './routes/public.js';
 import * as ws from './routes/workspace.js';
 import { handleIvr } from './ivr/flow.js';
+import { handleListen } from './ivr/listen.js';
+import * as control from './routes/control.js';
 
 const PUBLIC = { auth: 'none' };
 const ADMIN = { auth: 'admin' };
+const SUPER = { auth: 'super' };
 
 export const router = new Router()
   // public
@@ -21,12 +24,19 @@ export const router = new Router()
   // Yemot HaMashiach phone extension (own key check; always answers in Yemot format)
   .get('/ivr', handleIvr, PUBLIC)
   .post('/ivr', handleIvr, PUBLIC)
+  // public listening line (anonymous)
+  .get('/ivr/listen', handleListen, PUBLIC)
+  .post('/ivr/listen', handleListen, PUBLIC)
   // session
   .post('/auth/login', auth.postLogin, PUBLIC)
   .post('/auth/logout', auth.postLogout)
   .get('/me', auth.getMe)
   .patch('/me', auth.patchMe)
   .put('/me/password', auth.putPassword)
+  .put('/me/phone-password', auth.putPhonePassword)
+  .get('/me/logins', auth.getLogins)
+  .get('/me/feedback', control.myFeedback)
+  .post('/me/feedback', control.sendFeedback)
   // synagogue workspace (manager of the synagogue, or admin)
   .get('/synagogues', ws.list)
   .get('/synagogues/:sid', ws.get)
@@ -55,7 +65,13 @@ export const router = new Router()
   .get('/admin/catalog/:kind', admin.listCatalog, ADMIN)
   .post('/admin/catalog/:kind', admin.createCatalog, ADMIN)
   .patch('/admin/catalog/:kind/:id', admin.patchCatalog, ADMIN)
-  .delete('/admin/catalog/:kind/:id', admin.deleteCatalog, ADMIN);
+  .delete('/admin/catalog/:kind/:id', admin.deleteCatalog, ADMIN)
+  // super admin
+  .get('/admin/control', control.getControl, SUPER)
+  .patch('/admin/control', control.patchControl, SUPER)
+  .get('/admin/feedback', control.listFeedback, SUPER)
+  .patch('/admin/feedback/:id', control.patchFeedback, SUPER)
+  .delete('/admin/feedback/:id', control.deleteFeedback, SUPER);
 
 function cors(env, request) {
   const origin = request.headers.get('Origin');
@@ -82,6 +98,7 @@ async function handleApi(request, env, path) {
   if (route.options.auth !== 'none') {
     ctx.actor = await authenticate(env, request);
     if (route.options.auth === 'admin') requireAdmin(ctx.actor);
+    if (route.options.auth === 'super') requireSuper(ctx.actor);
   }
   return route.handler(ctx);
 }

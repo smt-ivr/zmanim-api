@@ -11,6 +11,7 @@ export function PhonePanel() {
   // The API sits next to this page, so the link is built from the address the admin is using now.
   const link = `${API_ROOT}${data.path}?key=${data.key}`;
   const ini = `type=api\napi_link=${link}\napi_hangup_send=yes`;
+  const listenIni = `type=api\napi_link=${API_ROOT}${data.listen_path}\napi_hangup_send=yes`;
 
   const copy = async (value) => {
     try { await navigator.clipboard.writeText(value); toast('הועתק'); } catch { toast('לא ניתן להעתיק, סמנו והעתיקו ידנית', 'error'); }
@@ -23,7 +24,7 @@ export function PhonePanel() {
 
   return html`<section class="narrow-section">
     <div class="card">
-      <h3>הגדרת השלוחה בימות המשיח</h3>
+      <h3>שלוחת הניהול</h3>
       <p class="muted small">צרו שלוחה חדשה והדביקו את התוכן הבא בקובץ <code>ext.ini</code> שלה.</p>
       <pre class="code" dir="ltr">${ini}</pre>
       <div class="row gap-sm wrap">
@@ -32,6 +33,12 @@ export function PhonePanel() {
         <span class="grow" />
         <${Button} kind="ghost" icon="key" onClick=${rotate}>החלפת מפתח<//>
       </div>
+    </div>
+    <div class="card">
+      <h3>קו שמיעת הזמנים (ציבורי)</h3>
+      <p class="muted small">שלוחה שבה כל אחד יכול לשמוע את זמני המניינים לפי אזור, תפילה ויום. בלי זיהוי ובלי מפתח. מדביקים בקובץ <code>ext.ini</code> של השלוחה:</p>
+      <pre class="code" dir="ltr">${listenIni}</pre>
+      <${Button} icon="copy" onClick=${() => copy(listenIni)}>העתקת ההגדרות<//>
     </div>
     <div class="card">
       <h3>מי יכול לנהל בטלפון</h3>

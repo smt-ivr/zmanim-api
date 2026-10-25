@@ -28,7 +28,7 @@ const ASSETS = {
 };
 
 const env = { DB: new D1Shim(), ASSETS, BASE_PATH: '/zmanim' };
-await env.DB.prepare(`INSERT INTO users (name, email, phone, password_hash, role) VALUES ('מנהל הדגמה', 'admin@example.com', '0500000000', ?, 'admin')`)
+await env.DB.prepare(`INSERT INTO users (name, email, phone, password_hash, role, is_super) VALUES ('מנהל הדגמה', 'admin@example.com', '0500000000', ?, 'admin', 1)`)
   .bind(await hashPassword('preview')).run();
 // Demo content so the public site has something to show
 await env.DB.batch([

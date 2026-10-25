@@ -7,6 +7,7 @@ import { AdminSynagogues } from './pages/admin-synagogues.js';
 import { AdminUsers } from './pages/admin-users.js';
 import { Login } from './pages/login.js';
 import { Profile } from './pages/profile.js';
+import { ControlPage, Inbox, MyFeedback } from './pages/control.js';
 import { SynagoguePicker, Workspace } from './pages/workspace.js';
 import { Button, Icon, Spinner, toast } from './ui.js';
 
@@ -78,7 +79,7 @@ function App() {
   if (session.status === 'loading') return html`<div class="boot"><${Spinner} /></div>`;
   if (session.status === 'anon') return html`<${Login} onDone=${signedIn} />`;
 
-  const { user, synagogues } = session;
+  const { user, synagogues, system } = session;
   const isAdmin = user.role === 'admin';
 
   async function logout() {
@@ -91,14 +92,17 @@ function App() {
   // Resolve page
   let page;
   const sMatch = path.match(/^\/s\/(\d+)/);
-  if (sMatch) page = html`<${Workspace} key=${sMatch[1]} id=${Number(sMatch[1])} user=${user} onChanged=${refreshMe} />`;
+  if (sMatch) page = html`<${Workspace} key=${sMatch[1]} id=${Number(sMatch[1])} user=${user} system=${system} onChanged=${refreshMe} />`;
   else if (path === '/profile') page = html`<${Profile} user=${user} onChanged=${refreshMe} />`;
+  else if (path === '/feedback') page = html`<${MyFeedback} />`;
+  else if (user.is_super && path === '/admin/control') page = html`<${ControlPage} onChanged=${refreshMe} />`;
+  else if (user.is_super && path === '/admin/inbox') page = html`<${Inbox} />`;
   else if (isAdmin && path === '/admin/synagogues') page = html`<${AdminSynagogues} onChanged=${refreshMe} />`;
   else if (isAdmin && path === '/admin/users') page = html`<${AdminUsers} me=${user} />`;
   else if (isAdmin && path === '/admin/catalog') page = html`<${AdminCatalog} />`;
   else if (isAdmin) page = html`<${AdminDashboard} />`;
   else if (synagogues.length === 1) {
-    page = html`<${Workspace} key=${synagogues[0].id} id=${synagogues[0].id} user=${user} onChanged=${refreshMe} />`;
+    page = html`<${Workspace} key=${synagogues[0].id} id=${synagogues[0].id} user=${user} system=${system} onChanged=${refreshMe} />`;
   } else page = html`<${SynagoguePicker} synagogues=${synagogues} />`;
 
   const link = (href, icon, label, active) => html`
@@ -106,14 +110,18 @@ function App() {
 
   return html`<div class=${cx('shell', menuOpen && 'menu-open')}>
     <aside class="sidebar">
-      <div class="brand"><span class="brand-mark"><${Icon} name="clock" /></span><div><b>זמני מניינים</b><small>${isAdmin ? 'מנהל מערכת' : 'מנהל בית כנסת'}</small></div></div>
+      <div class="brand"><span class="brand-mark"><${Icon} name="clock" /></span><div><b>זמני מניינים</b><small>${user.is_super ? 'מנהל על' : isAdmin ? 'מנהל מערכת' : 'מנהל בית כנסת'}</small></div></div>
       <nav>
         ${isAdmin && html`
           <div class="nav-section">ניהול כללי</div>
           ${link('/', 'home', 'לוח בקרה', path === '/')}
           ${link('/admin/synagogues', 'building', 'בתי כנסת', path === '/admin/synagogues')}
           ${link('/admin/users', 'users', 'משתמשים', path === '/admin/users')}
-          ${link('/admin/catalog', 'settings', 'הגדרות ורשימות', path === '/admin/catalog')}`}
+          ${link('/admin/catalog', 'list', 'הגדרות ורשימות', path === '/admin/catalog')}`}
+        ${user.is_super && html`
+          <div class="nav-section">מנהל על</div>
+          ${link('/admin/control', 'settings', 'הגדרות שליטה', path === '/admin/control')}
+          ${link('/admin/inbox', 'mail', 'פניות לצוות', path === '/admin/inbox')}`}
         ${synagogues.length > 0 && html`<div class="nav-section">${isAdmin ? 'כניסה לבית כנסת' : 'בתי הכנסת שלי'}</div>
           <div class="nav-scroll">
             ${synagogues.slice(0, isAdmin ? 12 : 100).map((s) => link(`/s/${s.id}`, 'building', s.name, sMatch ? Number(sMatch[1]) === s.id : !isAdmin && synagogues.length === 1 && path === '/'))}
@@ -122,6 +130,7 @@ function App() {
       </nav>
       <div class="sidebar-foot">
         <a href="../" class="nav-link" target="_blank" rel="noopener"><${Icon} name="external" /><span>לאתר הציבורי</span></a>
+        ${system?.feedback_enabled && !user.is_super && link('/feedback', 'mail', 'פנייה לצוות הפיתוח', path === '/feedback')}
         <a href="#/profile" class=${cx('nav-link', path === '/profile' && 'active')}><${Icon} name="user" /><span>${user.name}</span></a>
         <div class="row gap-sm">
           <${Button} kind="ghost" small icon=${dark ? 'sun' : 'moon'} title=${dark ? 'מצב בהיר' : 'מצב כהה'}

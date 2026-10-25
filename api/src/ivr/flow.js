@@ -1,20 +1,16 @@
-// Phone management (Yemot HaMashiach API extension).
-//
-// Stateless HTTP, stateful call: where the caller is in the menu tree is kept in ivr_calls (by ApiCallId).
-// Every prompt reads into a fresh value name s1, s2, s3 ... so Yemot never re-uses an old answer;
-// on each request we take the answer to the prompt we asked last (s<step>).
-//
-// Rule: this endpoint ALWAYS answers with valid Yemot text (HTTP 200). Anything else makes Yemot play
-// "system error" to the caller.
-import { actorFor, checkLock, hashPassword, recordFailure, verifyPassword } from '../auth.js';
-import { all, first, nowIso, nowSec, run, setClause } from '../db.js';
+// Management phone line (Yemot HaMashiach API extension). The engine (state, Yemot protocol) is in engine.js.
+// Callers are identified by caller ID (users.phone); optionally they must also type their password.
+import { actorFor, checkLock, logLoginStatement, recordFailure, verifyPassword } from '../auth.js';
+import { all, first, nowIso, run, setClause } from '../db.js';
 import { HttpError } from '../http.js';
 import { getMinyan, listMinyanim, validateMinyan } from '../minyan.js';
-import { MINYAN_COLUMNS, insertMinyan } from '../routes/workspace.js';
+import { INFO_FIELDS, MINYAN_COLUMNS, insertMinyan, parseFields } from '../routes/workspace.js';
+import { getSettings } from '../settings.js';
 import { normalizePhone } from '../validate.js';
-import { hangup, idListMessage, readDigits, readVoice, speakDays, speakMinyan, speakPhone, text } from './yemot.js';
+import { callStore, chosenIndex, end, go, goodbye, invalid, listChoice, menu, number, readParams, reply, runCall } from './engine.js';
+import { speakMinyan, speakPhone, text } from './yemot.js';
 
-const PIN_LIMIT = { max: 5, window: 30 * 60, lock: 30 * 60 };
+const PASSWORD_LIMIT = { max: 5, window: 30 * 60, lock: 30 * 60 };
 
 // ------------------------------------------------------------------ entry point
 export async function handleIvr({ env, request, url }) {
@@ -23,132 +19,42 @@ export async function handleIvr({ env, request, url }) {
     return reply(await handle(env, params));
   } catch (err) {
     console.error('[ivr]', err?.stack || err);
-    return reply(`${idListMessage([text('אירעה תקלה, נסו שוב מאוחר יותר')])}&${hangup()}`);
+    return reply(goodbye([text('אירעה תקלה, נסו שוב מאוחר יותר')]));
   }
-}
-
-const reply = (body) => new Response(body, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
-
-async function readParams(request, url) {
-  const merged = new URLSearchParams(url.search);
-  if (request.method === 'POST') {
-    const type = request.headers.get('Content-Type') || '';
-    const body = type.includes('json')
-      ? new URLSearchParams(Object.entries(await request.json().catch(() => ({}))))
-      : new URLSearchParams(await request.text());
-    for (const [k, v] of body) merged.append(k, v);
-  }
-  // Yemot may repeat a key; the last one wins.
-  const out = {};
-  for (const [k, v] of merged) out[k] = v;
-  return out;
 }
 
 async function handle(env, params) {
+  if (params.hangup === 'yes') return runCall(env, params, { ...callStore(env, 'ivr_calls'), screens: SCREENS }, {});
   const key = await first(env, `SELECT value FROM settings WHERE key = 'ivr_key'`);
-  if (!key || params.key !== key.value) {
-    return `${idListMessage([text('הגישה לשלוחה זו חסומה')])}&${hangup()}`;
-  }
-  const callId = params.ApiCallId || `phone-${params.ApiPhone}`;
-  if (params.hangup === 'yes') {
-    await run(env, `DELETE FROM ivr_calls WHERE call_id = ?`, callId);
-    return '';
-  }
+  if (!key || params.key !== key.value) return goodbye([text('הגישה לשלוחה זו חסומה')]);
+  const settings = await getSettings(env);
+  if (!settings.manage_phone_enabled) return goodbye([text('שלוחת הניהול סגורה כרגע')]);
 
   const phone = normalizePhone(params.ApiPhone);
   const user = phone ? await first(env, `SELECT * FROM users WHERE phone = ? AND is_active = 1`, phone) : null;
-  if (!user) {
-    return `${idListMessage([text('מספר הטלפון שממנו התקשרתם אינו מורשה לנהל את המערכת')])}&${hangup()}`;
-  }
+  if (!user) return goodbye([text('מספר הטלפון שממנו התקשרתם אינו מורשה לנהל את המערכת')]);
 
-  const row = await first(env, `SELECT * FROM ivr_calls WHERE call_id = ?`, callId);
-  let state = row && row.user_id === user.id ? JSON.parse(row.state) : null;
-  const c = { env, user, actor: await actorFor(env, user), say: [], state };
-
-  let ask;
-  if (!state) {
-    await run(env, `DELETE FROM ivr_calls WHERE updated_at < ?`, nowSec() - 86400); // old calls
-    c.state = state = { step: 0, screen: null, data: {}, empties: 0 };
-    ask = await start(c);
-  } else {
-    const input = state.step ? params[`s${state.step}`] : undefined;
-    if (input === undefined) return state.prompt; // repeated request: ask the same question again
-    ask = await answer(c, String(input).trim());
-  }
-
-  if (ask.end) {
-    await run(env, `DELETE FROM ivr_calls WHERE call_id = ?`, callId);
-    return [c.say.length && idListMessage(c.say), hangup()].filter(Boolean).join('&');
-  }
-
-  state.step += 1;
-  const val = `s${state.step}`;
-  const read = ask.voice ? readVoice(ask.messages, val) : readDigits(ask.messages, val, ask.opts);
-  const prompt = [c.say.length && idListMessage(c.say), read].filter(Boolean).join('&');
-  state.prompt = read; // a repeat does not replay one-time announcements
-  await run(
-    env,
-    `INSERT INTO ivr_calls (call_id, user_id, state, updated_at) VALUES (?, ?, ?, ?)
-     ON CONFLICT(call_id) DO UPDATE SET user_id = excluded.user_id, state = excluded.state, updated_at = excluded.updated_at`,
-    callId, user.id, JSON.stringify(state), nowSec()
-  );
-  return prompt;
+  const store = callStore(env, 'ivr_calls', { user_id: user.id });
+  const flow = { ...store, screens: SCREENS, start, recover: goSynagogueOrHome };
+  return runCall(env, params, flow, { user, actor: await actorFor(env, user), settings, store });
 }
 
 async function start(c) {
-  if (c.user.ivr_pin_hash) return go(c, 'pin');
-  await run(c.env, `UPDATE users SET last_login_at = ? WHERE id = ?`, nowIso(), c.user.id);
+  await c.store.prune();
+  if (c.user.phone_requires_password) return go(c, 'password');
+  return welcome(c);
+}
+
+async function welcome(c) {
+  await c.env.DB.batch([
+    c.env.DB.prepare(`UPDATE users SET last_login_at = ? WHERE id = ?`).bind(nowIso(), c.user.id),
+    logLoginStatement(c.env, c.user.id, 'phone', c.user.phone),
+  ]);
   c.say.push(text(`שלום ${c.user.name}`));
   return goHome(c);
 }
 
-async function answer(c, input) {
-  const screen = SCREENS[c.state.screen];
-  if (input === 'None' || input === '') {
-    // No key pressed in time
-    if (++c.state.empties >= 3) {
-      c.say.push(text('לא התקבלה הקשה, להתראות'));
-      return { end: true };
-    }
-    return screen.prompt(c);
-  }
-  c.state.empties = 0;
-  if (input.includes('*') && screen.back !== undefined) {
-    return typeof screen.back === 'function' ? screen.back(c) : screen.back === null ? bye(c) : go(c, screen.back);
-  }
-  try {
-    return await screen.handle(c, input);
-  } catch (err) {
-    if (err instanceof HttpError) {
-      c.say.push(text(err.fields ? Object.values(err.fields).join(', ') : err.message));
-      return goSynagogueOrHome(c);
-    }
-    throw err;
-  }
-}
-
 // ------------------------------------------------------------------ helpers
-function go(c, name, data) {
-  c.state.screen = name;
-  if (data) Object.assign(c.state.data, data);
-  return SCREENS[name].prompt(c);
-}
-
-const bye = (c) => (c.say.push(text('להתראות')), { end: true });
-const invalid = (c) => (c.say.push(text('הקשה לא חוקית')), SCREENS[c.state.screen].prompt(c));
-
-/** Single-key menu. items: [[digit, label], ...] -> "ל<label> הקישו <digit>" */
-function menu(c, intro, items, { star = true } = {}) {
-  const parts = [...(intro ? [text(intro)] : []), ...items.map(([d, label]) => text(`ל${label} הקישו ${d}`))];
-  if (star) parts.push(text('לחזרה הקישו כוכבית'));
-  return { messages: parts, opts: { max: 1, min: 1 } };
-}
-
-/** Free number ending with #. */
-const number = (messages, { min = 1, max = '' } = {}) => ({ messages: messages.map((m) => (typeof m === 'string' ? text(m) : m)), opts: { min, max } });
-
-const pick = (input, items) => items.find(([d]) => d === input);
-
 async function synagogue(c) {
   const s = await first(c.env, `SELECT * FROM synagogues WHERE id = ?`, c.state.data.sid);
   if (!s || (c.actor.role !== 'admin' && !c.actor.synagogue_ids.includes(s.id))) throw new HttpError(404, 'NOT_FOUND', 'בית הכנסת לא נמצא');
@@ -164,10 +70,7 @@ async function mySynagogues(c) {
 async function goHome(c) {
   if (c.actor.role === 'admin') return go(c, 'home');
   const list = await mySynagogues(c);
-  if (list.length === 0) {
-    c.say.push(text('עדיין לא שויכת לאף בית כנסת. פנו למנהל המערכת'));
-    return { end: true };
-  }
+  if (list.length === 0) return end(c, 'עדיין לא שויכת לאף בית כנסת. פנו למנהל המערכת');
   if (list.length === 1) return go(c, 'syn', { sid: list[0].id, single: true });
   return go(c, 'home');
 }
@@ -180,38 +83,40 @@ async function allowedPrayers(c, s) {
     : all(c.env, `SELECT * FROM prayers ORDER BY sort, id`);
 }
 
-/** Options 1..n for a list (single key up to 9 items, otherwise number + #). */
-function listChoice(c, intro, rows, label, { zero } = {}) {
-  const items = rows.map((r, i) => [String(i + 1), label(r)]);
-  if (zero) items.unshift(['0', zero]);
-  if (items.length <= 10) return menu(c, intro, items);
-  return number([intro, ...items.map(([d, l]) => `${l} ${d}`), 'הקישו את המספר וסולמית']);
+/** Anchors the given prayer may use (an anchor without listed prayers fits all). */
+async function anchorsFor(c, prayerId) {
+  const [anchors, links] = await Promise.all([
+    all(c.env, `SELECT id, name FROM anchors ORDER BY sort, id`),
+    all(c.env, `SELECT anchor_id, prayer_id FROM anchor_prayers`),
+  ]);
+  return anchors.filter((a) => {
+    const own = links.filter((l) => l.anchor_id === a.id);
+    return !own.length || own.some((l) => l.prayer_id === prayerId);
+  });
 }
-const chosenIndex = (input, rows, { zero } = {}) => {
-  if (zero && input === '0') return -1;
-  const i = Number(input) - 1;
-  return Number.isInteger(i) && i >= 0 && i < rows.length ? i : null;
-};
+
+/** Admins visible to this caller (a hidden super admin is visible only to himself). */
+const visibleAdmins = (c) =>
+  all(c.env, `SELECT id, name, phone, is_super FROM users WHERE role = 'admin' AND is_active = 1 ${c.user.is_super ? '' : 'AND NOT (is_super = 1 AND is_hidden = 1)'} ORDER BY is_super DESC, id`);
 
 // ------------------------------------------------------------------ screens
 // Each screen: prompt(c) -> ask; handle(c, input) -> ask; back: screen name, null (= hang up) or function.
 const SCREENS = {
-  pin: {
+  password: {
     back: undefined,
-    prompt: () => number(['הקישו את הקוד האישי וסולמית'], { min: 1 }),
+    prompt: () => number(['הקישו את הסיסמה שלכם וסולמית'], { min: 1 }),
     async handle(c, input) {
-      const key = `pin:${c.user.id}`;
-      try { await checkLock(c.env, key); } catch { c.say.push(text('יותר מדי ניסיונות שגויים, נסו מאוחר יותר')); return { end: true }; }
-      if (!(await verifyPassword(input, c.user.ivr_pin_hash))) {
-        await recordFailure(c.env, key, PIN_LIMIT);
-        c.state.pinFails = (c.state.pinFails || 0) + 1;
-        if (c.state.pinFails >= 3) { c.say.push(text('קוד שגוי, להתראות')); return { end: true }; }
-        c.say.push(text('קוד שגוי'));
-        return SCREENS.pin.prompt(c);
+      const key = `phone:${c.user.id}`;
+      try { await checkLock(c.env, key); } catch { return end(c, 'יותר מדי ניסיונות שגויים, נסו שוב מאוחר יותר'); }
+      if (!(await verifyPassword(input, c.user.password_hash))) {
+        await recordFailure(c.env, key, PASSWORD_LIMIT);
+        c.state.pwFails = (c.state.pwFails || 0) + 1;
+        if (c.state.pwFails >= 3) return end(c, 'סיסמה שגויה');
+        c.say.push(text('סיסמה שגויה'));
+        return c.screens.password.prompt(c);
       }
       await run(c.env, `DELETE FROM login_attempts WHERE key = ?`, key);
-      c.say.push(text(`שלום ${c.user.name}`));
-      return goHome(c);
+      return welcome(c);
     },
   },
 
@@ -221,16 +126,16 @@ const SCREENS = {
       if (c.actor.role === 'admin') {
         return menu(c, 'תפריט ראשי', [
           ['1', 'כניסה לבית כנסת לפי מספר'], ['2', 'שמיעת רשימת בתי הכנסת'], ['3', 'הוספת בית כנסת'],
-          ['4', 'ניהול מנהלי מערכת'], ['5', 'הגדרת קוד אישי'],
+          ['4', 'ניהול מנהלי מערכת'], ['5', 'דרישת סיסמה בשיחה'],
         ], { star: false });
       }
       const list = await mySynagogues(c);
       c.state.data.list = list.map((s) => s.id);
-      return menu(c, 'בחירת בית כנסת', [...list.slice(0, 8).map((s, i) => [String(i + 1), s.name]), ['9', 'הגדרת קוד אישי']], { star: false });
+      return menu(c, 'בחירת בית כנסת', [...list.slice(0, 8).map((s, i) => [String(i + 1), s.name]), ['9', 'דרישת סיסמה בשיחה']], { star: false });
     },
     async handle(c, input) {
       if (c.actor.role !== 'admin') {
-        if (input === '9') return go(c, 'pinSet');
+        if (input === '9') return go(c, 'phonePw');
         const sid = c.state.data.list?.[Number(input) - 1];
         return sid ? go(c, 'syn', { sid, single: false }) : invalid(c);
       }
@@ -243,7 +148,7 @@ const SCREENS = {
       }
       if (input === '3') return go(c, 'synNewName');
       if (input === '4') return go(c, 'admins');
-      if (input === '5') return go(c, 'pinSet');
+      if (input === '5') return go(c, 'phonePw');
       return invalid(c);
     },
   },
@@ -269,7 +174,21 @@ const SCREENS = {
     async handle(c, input) {
       if (input === '2') return go(c, 'synNewName');
       if (input !== '1') return invalid(c);
-      const res = await run(c.env, `INSERT INTO synagogues (name) VALUES (?)`, c.state.data.newName);
+      return go(c, 'synNewArea');
+    },
+  },
+  synNewArea: {
+    back: 'home',
+    async prompt(c) {
+      const areas = await all(c.env, `SELECT id, name FROM areas ORDER BY sort, name`);
+      c.state.data.areas = areas.map((a) => a.id);
+      if (!areas.length) return { ...menu(c, 'לפני הוספת בית כנסת יש להגדיר אזורים באתר הניהול', []) };
+      return listChoice(c, 'בחירת אזור לבית הכנסת', areas, (a) => a.name);
+    },
+    async handle(c, input) {
+      const i = chosenIndex(input, c.state.data.areas);
+      if (i === null) return invalid(c);
+      const res = await run(c.env, `INSERT INTO synagogues (name, area_id) VALUES (?, ?)`, c.state.data.newName, c.state.data.areas[i]);
       c.say.push(text(`בית הכנסת נוצר, מספרו ${res.meta.last_row_id}`));
       return go(c, 'syn', { sid: res.meta.last_row_id, single: false });
     },
@@ -277,12 +196,12 @@ const SCREENS = {
 
   // -------------------------------------------------------------- inside a synagogue
   syn: {
-    back: (c) => (c.state.data.single ? bye(c) : goHome(c)),
+    back: (c) => (c.state.data.single ? end(c) : goHome(c)),
     async prompt(c) {
       const s = await synagogue(c);
       const items = [['1', 'שמיעת המניינים'], ['2', 'הוספת מניין'], ['3', 'עריכת מניין'], ['4', 'ניהול מיקומים']];
       if (c.actor.role === 'admin') items.push(['5', 'הגדרות בית הכנסת'], ['6', 'מנהלי בית הכנסת']);
-      if (c.state.data.single) items.push(['9', 'הגדרת קוד אישי']);
+      if (c.state.data.single) items.push(['9', 'דרישת סיסמה בשיחה']);
       return menu(c, s.name, items, { star: !c.state.data.single });
     },
     async handle(c, input) {
@@ -303,7 +222,7 @@ const SCREENS = {
         case '4': return go(c, 'locs');
         case '5': return admin ? go(c, 'synSettings') : invalid(c);
         case '6': return admin ? go(c, 'synManagers') : invalid(c);
-        case '9': return c.state.data.single ? go(c, 'pinSet') : invalid(c);
+        case '9': return c.state.data.single ? go(c, 'phonePw') : invalid(c);
         default: return invalid(c);
       }
     },
@@ -328,7 +247,7 @@ const SCREENS = {
   mKind: {
     back: 'syn',
     async prompt(c) {
-      const anchors = await all(c.env, `SELECT id FROM anchors`);
+      const anchors = await anchorsFor(c, c.state.data.draft.prayer_id);
       if (!anchors.length) return menu(c, 'סוג הזמן', [['1', 'שעה קבועה']]);
       return menu(c, 'סוג הזמן', [['1', 'שעה קבועה'], ['2', 'זמן ביחס לזמני היום, למשל לפני השקיעה']]);
     },
@@ -350,7 +269,7 @@ const SCREENS = {
   mAnchor: {
     back: 'syn',
     async prompt(c) {
-      const anchors = await all(c.env, `SELECT * FROM anchors ORDER BY sort, id`);
+      const anchors = await anchorsFor(c, c.state.data.draft.prayer_id);
       c.state.data.anchors = anchors.map((a) => a.id);
       return listChoice(c, 'ביחס לאיזה זמן', anchors, (a) => a.name);
     },
@@ -383,9 +302,11 @@ const SCREENS = {
   },
   mDays: {
     back: 'syn',
-    prompt: (c) => menu(c, 'באילו ימים', [['1', 'כל יום'], ['2', 'ראשון עד חמישי'], ['3', 'ראשון עד שישי'], ['4', 'שבת בלבד'], ['5', 'בחירת ימים']]),
+    prompt: (c) => menu(c, 'באילו ימים', c.settings.shabbat_enabled
+      ? [['1', 'כל יום'], ['2', 'ראשון עד חמישי'], ['3', 'ראשון עד שישי'], ['4', 'שבת בלבד'], ['5', 'בחירת ימים']]
+      : [['1', 'כל ימות החול'], ['2', 'ראשון עד חמישי'], ['3', 'ראשון עד שישי'], ['5', 'בחירת ימים']]),
     handle(c, input) {
-      const masks = { 1: 127, 2: 31, 3: 63, 4: 64 };
+      const masks = c.settings.shabbat_enabled ? { 1: 127, 2: 31, 3: 63, 4: 64 } : { 1: 63, 2: 31, 3: 63 };
       if (input === '5') return go(c, 'mDaysCustom');
       if (!masks[input]) return invalid(c);
       c.state.data.draft.days = masks[input];
@@ -394,9 +315,9 @@ const SCREENS = {
   },
   mDaysCustom: {
     back: 'syn',
-    prompt: () => number(['הקישו את מספרי הימים ברצף וסולמית. ראשון אחת, שני שתיים, וכן הלאה, שבת שבע. לדוגמה ראשון שלישי וחמישי, אחת שלוש חמש'], { max: 7 }),
+    prompt: (c) => number([`הקישו את מספרי הימים ברצף וסולמית. ראשון אחת, שני שתיים, וכן הלאה${c.settings.shabbat_enabled ? ', שבת שבע' : ', שישי שש'}. לדוגמה ראשון שלישי וחמישי, אחת שלוש חמש`], { max: 7 }),
     handle(c, input) {
-      if (!/^[1-7]+$/.test(input)) return invalid(c);
+      if (!(c.settings.shabbat_enabled ? /^[1-7]+$/ : /^[1-6]+$/).test(input)) return invalid(c);
       c.state.data.draft.days = [...input].reduce((m, d) => m | (1 << (Number(d) - 1)), 0);
       return afterDays(c);
     },
@@ -571,10 +492,11 @@ const SCREENS = {
     back: 'syn',
     async prompt(c) {
       const s = await synagogue(c);
-      const status = `${s.is_active ? 'מוצג לציבור' : 'מוסתר מהציבור'}, מכסת מניינים ${s.max_minyanim}, מכסת מיקומים ${s.max_locations}, עריכת פרטים ${s.can_edit_info ? 'מותרת' : 'חסומה'}`;
+      const open = parseFields(s.editable_fields).length > 0;
+      const status = `${s.is_active ? 'מוצג לציבור' : 'מוסתר מהציבור'}, מכסת מניינים ${s.max_minyanim}, מכסת מיקומים ${s.max_locations}, עריכת פרטים על ידי המנהל ${open ? 'פתוחה' : 'חסומה'}`;
       return menu(c, status, [
         ['1', s.is_active ? 'הסתרה מהציבור' : 'הצגה לציבור'], ['2', 'שינוי מכסת מניינים'], ['3', 'שינוי מכסת מיקומים'],
-        ['4', s.can_edit_info ? 'חסימת עריכת פרטים' : 'התרת עריכת פרטים'], ['5', 'מחיקת בית הכנסת'],
+        ['4', open ? 'חסימת עריכת כל הפרטים' : 'פתיחת כל הפרטים לעריכה'], ['5', 'מחיקת בית הכנסת'],
       ]);
     },
     async handle(c, input) {
@@ -589,7 +511,13 @@ const SCREENS = {
         case '1': return toggle('is_active');
         case '2': return go(c, 'synLimit', { limitCol: 'max_minyanim' });
         case '3': return go(c, 'synLimit', { limitCol: 'max_locations' });
-        case '4': return toggle('can_edit_info');
+        case '4': {
+          // Phone shortcut: all or nothing. Field-by-field choice is on the website.
+          const next = parseFields(s.editable_fields).length ? [] : INFO_FIELDS;
+          await run(c.env, `UPDATE synagogues SET editable_fields = ?, updated_at = ? WHERE id = ?`, JSON.stringify(next), nowIso(), s.id);
+          c.say.push(text('עודכן'));
+          return go(c, 'synSettings');
+        }
         case '5': return go(c, 'synDelete');
         default: return invalid(c);
       }
@@ -668,7 +596,7 @@ const SCREENS = {
   admins: {
     back: 'home',
     async prompt(c) {
-      const list = await all(c.env, `SELECT id, name, phone FROM users WHERE role = 'admin' AND is_active = 1 ORDER BY id`);
+      const list = await visibleAdmins(c);
       c.state.data.admins = list.map((u) => u.id);
       const intro = [text('מנהלי המערכת:'), ...list.flatMap((u, i) => [text(`${i + 1}, ${u.name}`), u.phone && speakPhone(u.phone)])];
       const m = menu(c, null, [['1', 'הוספת מנהל מערכת לפי טלפון'], ['2', 'הסרת מנהל מערכת']]);
@@ -686,7 +614,8 @@ const SCREENS = {
     async handle(c, input) {
       const phone = normalizePhone(input);
       if (!phone) { c.say.push(text('מספר לא תקין')); return go(c, 'adminAdd'); }
-      const u = await first(c.env, `SELECT id FROM users WHERE phone = ?`, phone);
+      const u = await first(c.env, `SELECT id, is_super FROM users WHERE phone = ?`, phone);
+      if (u?.is_super) { c.say.push(text('מספר זה כבר מנהל מערכת')); return go(c, 'admins'); }
       if (u) {
         await run(c.env, `UPDATE users SET role = 'admin', is_active = 1, updated_at = ? WHERE id = ?`, nowIso(), u.id);
         await run(c.env, `DELETE FROM synagogue_managers WHERE user_id = ?`, u.id);
@@ -704,6 +633,8 @@ const SCREENS = {
       const id = c.state.data.admins[Number(input) - 1];
       if (!id) return invalid(c);
       if (id === c.user.id) { c.say.push(text('לא ניתן להסיר את עצמך')); return go(c, 'admins'); }
+      const target = await first(c.env, `SELECT is_super FROM users WHERE id = ?`, id);
+      if (target?.is_super) { c.say.push(text('לא ניתן להסיר את מנהל העל')); return go(c, 'admins'); }
       await run(c.env, `UPDATE users SET is_active = 0, updated_at = ? WHERE id = ?`, nowIso(), id);
       await run(c.env, `DELETE FROM sessions WHERE user_id = ?`, id);
       c.say.push(text('מנהל המערכת הושבת'));
@@ -711,29 +642,30 @@ const SCREENS = {
     },
   },
 
-  // -------------------------------------------------------------- personal PIN
-  pinSet: {
+  // -------------------------------------------------------------- "ask my password on calls"
+  phonePw: {
     back: (c) => goSynagogueOrHome(c),
-    prompt: (c) => number([c.user.ivr_pin_hash ? 'יש לך קוד אישי. להחלפה הקישו קוד חדש של ארבע עד שמונה ספרות וסולמית, להסרת הקוד הקישו אפס וסולמית' : 'קוד אישי מגן על הניהול גם אם מישהו מתחזה למספר שלך. הקישו קוד של ארבע עד שמונה ספרות וסולמית'], { max: 8 }),
+    prompt: (c) => c.user.phone_requires_password
+      ? menu(c, 'כרגע נדרשת סיסמה בכל שיחה', [['1', 'ביטול דרישת הסיסמה']])
+      : number(['כרגע אין דרישת סיסמה בשיחה. כדי לדרוש סיסמה בכל שיחה, הקישו את הסיסמה שלכם וסולמית. זה עובד רק אם הסיסמה מורכבת מספרות. לחזרה הקישו כוכבית']),
     async handle(c, input) {
-      if (input === '0') {
-        await run(c.env, `UPDATE users SET ivr_pin_hash = NULL WHERE id = ?`, c.user.id);
-        c.user.ivr_pin_hash = null;
-        c.say.push(text('הקוד הוסר'));
+      if (c.user.phone_requires_password) {
+        if (input !== '1') return invalid(c);
+        await run(c.env, `UPDATE users SET phone_requires_password = 0 WHERE id = ?`, c.user.id);
+        c.user.phone_requires_password = 0;
+        c.say.push(text('דרישת הסיסמה בוטלה'));
         return goSynagogueOrHome(c);
       }
-      if (!/^\d{4,8}$/.test(input)) return invalid(c);
-      return go(c, 'pinRepeat', { newPin: input });
-    },
-  },
-  pinRepeat: {
-    back: (c) => goSynagogueOrHome(c),
-    prompt: () => number(['הקישו שוב את הקוד לאישור וסולמית'], { max: 8 }),
-    async handle(c, input) {
-      if (input !== c.state.data.newPin) { c.say.push(text('הקודים לא תואמים')); delete c.state.data.newPin; return go(c, 'pinSet'); }
-      await run(c.env, `UPDATE users SET ivr_pin_hash = ? WHERE id = ?`, await hashPassword(input), c.user.id);
-      delete c.state.data.newPin;
-      c.say.push(text('הקוד נשמר. מעכשיו תתבקשו להקיש אותו בכל שיחה'));
+      const key = `phone:${c.user.id}`;
+      try { await checkLock(c.env, key); } catch { return end(c, 'יותר מדי ניסיונות שגויים, נסו שוב מאוחר יותר'); }
+      if (!(await verifyPassword(input, c.user.password_hash))) {
+        await recordFailure(c.env, key, PASSWORD_LIMIT);
+        c.say.push(text('הסיסמה שגויה. אם הסיסמה שלכם כוללת אותיות, החליפו אותה באתר לסיסמה מספרית'));
+        return goSynagogueOrHome(c);
+      }
+      await run(c.env, `UPDATE users SET phone_requires_password = 1 WHERE id = ?`, c.user.id);
+      c.user.phone_requires_password = 1;
+      c.say.push(text('מעכשיו תתבקשו להקיש את הסיסמה בכל שיחה'));
       return goSynagogueOrHome(c);
     },
   },

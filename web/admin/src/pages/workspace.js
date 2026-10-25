@@ -20,7 +20,8 @@ export function SynagoguePicker({ synagogues }) {
   </div>`;
 }
 
-export function Workspace({ id, user, onChanged }) {
+export function Workspace({ id, user, system, onChanged }) {
+  const shabbat = system?.shabbat_enabled !== false;
   const { data, error, loading, reload, setData } = useLoad(() => api.get(`/synagogues/${id}`), [id]);
   const [tab, setTab] = useState('minyanim');
 
@@ -63,14 +64,14 @@ export function Workspace({ id, user, onChanged }) {
       ${isAdmin && html`<span class="grow" /><a class="link small" href="#/admin/synagogues">הגדרות מנהל לבית הכנסת ←</a>`}
     </div>
 
-    ${tab === 'minyanim' && html`<${MinyanimTab} data=${data} update=${update} />`}
+    ${tab === 'minyanim' && html`<${MinyanimTab} data=${data} update=${update} shabbat=${shabbat} />`}
     ${tab === 'locations' && html`<${LocationsTab} data=${data} update=${update} />`}
     ${tab === 'info' && html`<${InfoTab} data=${data} isAdmin=${isAdmin} onSaved=${(d) => { setData(d); onChanged(); }} />`}
   </div>`;
 }
 
 // ------------------------------------------------------------------ minyanim
-function MinyanimTab({ data, update }) {
+function MinyanimTab({ data, update, shabbat }) {
   const { synagogue: s, settings, minyanim, locations, catalog } = data;
   const [view, setView] = useState(() => { try { return localStorage.getItem('zmanim.view') || 'list'; } catch { return 'list'; } });
   const [season, setSeason] = useState(null);
@@ -129,10 +130,10 @@ function MinyanimTab({ data, update }) {
       : shown.length === 0
         ? html`<${Empty} icon="search" title="אין מניינים שמתאימים לסינון" />`
         : view === 'list'
-          ? html`<${MinyanList} minyanim=${shown} catalog=${catalog} actions=${actions} />`
-          : html`<${WeekView} minyanim=${shown} onEdit=${setEditing} />`}
+          ? html`<${MinyanList} minyanim=${shown} catalog=${catalog} actions=${actions} shabbat=${shabbat} />`
+          : html`<${WeekView} minyanim=${shown} onEdit=${setEditing} shabbat=${shabbat} />`}
 
-    ${editing && html`<${MinyanModal} data=${data} minyan=${editing === 'new' ? null : editing}
+    ${editing && html`<${MinyanModal} data=${data} shabbat=${shabbat} minyan=${editing === 'new' ? null : editing}
         onClose=${() => setEditing(null)} onSaved=${(m, isNew) => (isNew ? add(m) : replace(m))} />`}
   </section>`;
 }
@@ -147,7 +148,7 @@ function sortMinyanim(list, catalog) {
   });
 }
 
-function MinyanList({ minyanim, actions }) {
+function MinyanList({ minyanim, actions, shabbat }) {
   const groups = [];
   for (const m of minyanim) {
     const g = groups.at(-1);
@@ -164,7 +165,7 @@ function MinyanList({ minyanim, actions }) {
           </button>
           <div class="minyan-info">
             <div class="row gap-sm wrap">
-              <${DaysBadge} mask=${m.days} />
+              <${DaysBadge} mask=${m.days} shabbat=${shabbat} />
               ${m.location_name && html`<span class="meta"><${Icon} name="pin" size=${14} />${m.location_name}</span>`}
               ${m.season_name && html`<${Badge}>${m.season_name}<//>`}
               ${!m.is_active && html`<${Badge} tone="warn">מוסתר<//>`}
@@ -183,9 +184,9 @@ function MinyanList({ minyanim, actions }) {
   </div>`;
 }
 
-function WeekView({ minyanim, onEdit }) {
-  return html`<div class="week">
-    ${DAY_FULL.map((day, i) => {
+function WeekView({ minyanim, onEdit, shabbat }) {
+  return html`<div class=${cx('week', !shabbat && 'no-shabbat')}>
+    ${(shabbat ? DAY_FULL : DAY_FULL.slice(0, 6)).map((day, i) => {
       const items = minyanim.filter((m) => m.days & (1 << i));
       return html`<div class=${cx('week-day', i === 6 && 'shabbat')}>
         <div class="week-head">${day}</div>
@@ -197,7 +198,10 @@ function WeekView({ minyanim, onEdit }) {
   </div>`;
 }
 
-function MinyanModal({ data, minyan, onClose, onSaved }) {
+/** Anchors the prayer may use (an anchor without listed prayers fits all). */
+const anchorsForPrayer = (anchors, prayerId) => anchors.filter((a) => !a.prayer_ids?.length || a.prayer_ids.includes(prayerId));
+
+function MinyanModal({ data, minyan, shabbat, onClose, onSaved }) {
   const { synagogue: s, locations, catalog } = data;
   const isNew = !minyan;
   const defaultSeason = null; // all year
@@ -205,7 +209,7 @@ function MinyanModal({ data, minyan, onClose, onSaved }) {
     ? { ...minyan, offset_dir: minyan.offset_minutes < 0 ? -1 : 1, offset_abs: Math.abs(minyan.offset_minutes ?? 0) }
     : {
         prayer_id: catalog.prayers[0]?.id ?? null, time_kind: 'fixed', time: '', anchor_id: catalog.anchors[0]?.id ?? null,
-        offset_dir: -1, offset_abs: 0, days: ALL_DAYS, location_id: locations[0]?.id ?? null, season_id: defaultSeason, notes: '', is_active: true,
+        offset_dir: -1, offset_abs: 0, days: shabbat ? ALL_DAYS : 63, location_id: locations[0]?.id ?? null, season_id: defaultSeason, notes: '', is_active: true,
       };
 
   async function save(v) {
@@ -224,6 +228,7 @@ function MinyanModal({ data, minyan, onClose, onSaved }) {
       onSaved=${(m) => { onSaved(m, isNew); toast(isNew ? 'המניין נוסף' : 'המניין עודכן'); }}>
     ${({ values: v, set, errors }) => {
       const prayer = catalog.prayers.find((p) => p.id === v.prayer_id);
+      const anchors = anchorsForPrayer(catalog.anchors, v.prayer_id);
       const bounds = prayer && (prayer.earliest || prayer.latest)
         ? `טווח מותר: ${prayer.earliest || '00:00'}–${prayer.latest || '23:59'}` : '';
       return html`
@@ -233,7 +238,7 @@ function MinyanModal({ data, minyan, onClose, onSaved }) {
         <${Field} group label="סוג זמן">
           <div class="segmented full">
             <button type="button" class=${cx(v.time_kind === 'fixed' && 'on')} onClick=${() => set('time_kind')('fixed')}>שעה קבועה</button>
-            <button type="button" class=${cx(v.time_kind === 'relative' && 'on')} onClick=${() => set('time_kind')('relative')} disabled=${!catalog.anchors.length}>ביחס לזמן היום</button>
+            <button type="button" class=${cx(v.time_kind === 'relative' && 'on')} onClick=${() => { set('time_kind')('relative'); if (!anchors.some((a) => a.id === v.anchor_id)) set('anchor_id')(anchors[0]?.id ?? null); }} disabled=${!anchors.length} title=${anchors.length ? '' : 'אין זמני ייחוס שמותרים לתפילה זו'}>ביחס לזמן היום</button>
           </div>
         <//>
         ${v.time_kind === 'fixed'
@@ -245,9 +250,9 @@ function MinyanModal({ data, minyan, onClose, onSaved }) {
               <${Field} label="לפני / אחרי">
                 <${Select} value=${v.offset_dir} onChange=${set('offset_dir')} options=${[{ value: -1, label: 'לפני' }, { value: 1, label: 'אחרי' }]} /><//>
               <${Field} label="זמן ייחוס" error=${errors.anchor_id}>
-                <${Select} value=${v.anchor_id} onChange=${set('anchor_id')} options=${catalog.anchors.map((a) => ({ value: a.id, label: a.name }))} /><//>
+                <${Select} value=${anchors.some((a) => a.id === v.anchor_id) ? v.anchor_id : null} onChange=${set('anchor_id')} placeholder="בחרו זמן ייחוס" options=${anchors.map((a) => ({ value: a.id, label: a.name }))} /><//>
             </div>`}
-        <${Field} group label="ימים" error=${errors.days}><${DaysPicker} value=${v.days} onChange=${set('days')} /><//>
+        <${Field} group label="ימים" error=${errors.days}><${DaysPicker} value=${v.days} onChange=${set('days')} shabbat=${shabbat} /><//>
         <div class="grid-2">
           <${Field} label="מיקום" error=${errors.location_id}>
             <${Select} value=${v.location_id} onChange=${set('location_id')} placeholder="ללא מיקום" options=${locations.map((l) => ({ value: l.id, label: l.name }))} /><//>
@@ -340,9 +345,13 @@ function LocationsTab({ data, update }) {
 }
 
 // ------------------------------------------------------------------ details
+const FIELD_LABELS = { name: 'שם', area_id: 'אזור', address: 'כתובת', phone: 'טלפון', notes: 'הערות' };
+
 function InfoTab({ data, isAdmin, onSaved }) {
   const { synagogue: s, settings, catalog } = data;
-  const canEdit = isAdmin || settings.can_edit_info;
+  // Admins edit everything; managers only the fields the admin opened for this synagogue.
+  const open = (k) => isAdmin || settings.editable_fields.includes(k);
+  const anyOpen = isAdmin || settings.editable_fields.length > 0;
   const [v, setV] = useState({ name: s.name, area_id: s.area_id, address: s.address, phone: s.phone, notes: s.notes });
   const [errors, setErrors] = useState({});
   const [busy, setBusy] = useState(false);
@@ -352,7 +361,8 @@ function InfoTab({ data, isAdmin, onSaved }) {
     e.preventDefault();
     setBusy(true);
     setErrors({});
-    try { onSaved(await api.patch(`/synagogues/${s.id}`, v)); toast('הפרטים נשמרו'); }
+    const body = Object.fromEntries(Object.entries(v).filter(([k]) => open(k)));
+    try { onSaved(await api.patch(`/synagogues/${s.id}`, body)); toast('הפרטים נשמרו'); }
     catch (err) { err.fields && Object.keys(err.fields).length ? setErrors(err.fields) : toastError(err); }
     setBusy(false);
   }
@@ -361,25 +371,23 @@ function InfoTab({ data, isAdmin, onSaved }) {
   return html`<section class="grid-sidebar">
     <form class="card form" onSubmit=${save}>
       <h3>פרטים לציבור</h3>
-      ${!canEdit && html`<div class="alert alert-info">מנהל המערכת לא אפשר עריכה של פרטי בית הכנסת. לשינויים פנו אליו.</div>`}
-      <fieldset disabled=${!canEdit}>
-        <div class="grid-2">
-          <${Field} label="שם בית הכנסת" error=${errors.name}><${Input} value=${v.name} onInput=${set('name')} /><//>
-          <${Field} label="אזור" error=${errors.area_id}>
-            <${Select} value=${v.area_id} onChange=${set('area_id')} placeholder="ללא אזור" options=${catalog.areas.map((a) => ({ value: a.id, label: a.name }))} /><//>
-          <${Field} label="כתובת" error=${errors.address}><${Input} value=${v.address} onInput=${set('address')} /><//>
-          <${Field} label="טלפון" error=${errors.phone}><${Input} dir="ltr" value=${v.phone} onInput=${set('phone')} /><//>
-        </div>
-        <${Field} label="הערות כלליות" error=${errors.notes}><${TextArea} value=${v.notes} onInput=${set('notes')} /><//>
-      </fieldset>
-      ${canEdit && html`<div class="row end"><${Button} kind="primary" type="submit" loading=${busy}>שמירה<//></div>`}
+      <div class="grid-2">
+        <${Field} label="שם בית הכנסת" error=${errors.name}><${Input} value=${v.name} onInput=${set('name')} disabled=${!open('name')} /><//>
+        <${Field} label="אזור" error=${errors.area_id}>
+          <${Select} value=${v.area_id} onChange=${set('area_id')} disabled=${!open('area_id')} options=${catalog.areas.map((a) => ({ value: a.id, label: a.name }))} /><//>
+        <${Field} label="כתובת" error=${errors.address}><${Input} value=${v.address} onInput=${set('address')} disabled=${!open('address')} /><//>
+        <${Field} label="טלפון" error=${errors.phone}><${Input} dir="ltr" value=${v.phone} onInput=${set('phone')} disabled=${!open('phone')} /><//>
+      </div>
+      <${Field} label="הערות כלליות" error=${errors.notes}><${TextArea} value=${v.notes} onInput=${set('notes')} disabled=${!open('notes')} /><//>
+      ${!isAdmin && settings.editable_fields.length < 5 && html`<p class="muted small">כדי לשנות ${anyOpen ? 'את שאר' : 'את'} הפרטים, פנו למנהל המערכת.</p>`}
+      ${anyOpen && html`<div class="row end"><${Button} kind="primary" type="submit" loading=${busy}>שמירה<//></div>`}
     </form>
     <aside class="card">
       <h3>מה מוגדר לבית הכנסת</h3>
       <ul class="facts">
         <li><span>מכסת מניינים</span><b>${settings.max_minyanim}</b></li>
         <li><span>מכסת מיקומים</span><b>${settings.max_locations}</b></li>
-        <li><span>עריכת פרטים</span><b>${settings.can_edit_info ? 'מותרת' : 'חסומה'}</b></li>
+        <li><span>פרטים שאפשר לערוך</span><b>${settings.editable_fields.length ? settings.editable_fields.map((k) => FIELD_LABELS[k]).join(', ') : 'אין'}</b></li>
         <li><span>תפילות</span><b>${allowed ? catalog.prayers.map((p) => p.name).join(', ') || 'אין' : 'כל התפילות'}</b></li>
       </ul>
       <p class="muted small">ההגדרות נקבעות על ידי מנהל המערכת.</p>

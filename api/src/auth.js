@@ -98,6 +98,7 @@ export async function login(env, request, identifier, password) {
       `DELETE FROM sessions WHERE user_id = ?1 AND id NOT IN (SELECT id FROM sessions WHERE user_id = ?1 ORDER BY id DESC LIMIT ?2)`
     ).bind(user.id, MAX_SESSIONS),
     env.DB.prepare(`UPDATE users SET last_login_at = ? WHERE id = ?`).bind(nowIso(), user.id),
+    logLoginStatement(env, user.id, 'web', describeAgent(request.headers.get('User-Agent'))),
   ]);
   return { token, expires_at: new Date((now + SESSION_TTL) * 1000).toISOString(), user: publicUser(user) };
 }
@@ -132,6 +133,17 @@ export async function actorFor(env, user) {
   return actor;
 }
 
+// ------------------------------------------------------------------ login history
+export const logLoginStatement = (env, userId, channel, detail) =>
+  env.DB.prepare(`INSERT INTO login_log (user_id, channel, detail) VALUES (?, ?, ?)`).bind(userId, channel, String(detail || '').slice(0, 120));
+
+/** "Chrome on Android" style summary of a User-Agent. */
+function describeAgent(ua = '') {
+  const browser = /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'דפדפן';
+  const os = /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iPhone' : /Windows/.test(ua) ? 'Windows' : /Mac OS/.test(ua) ? 'Mac' : /Linux/.test(ua) ? 'Linux' : '';
+  return os ? `${browser}, ${os}` : browser;
+}
+
 export const logout = (env, actor) => run(env, `DELETE FROM sessions WHERE id = ?`, actor.session_id);
 
 /** Removes every session of the user except (optionally) the current one. */
@@ -142,6 +154,7 @@ export const cleanup = (env) =>
   env.DB.batch([
     env.DB.prepare(`DELETE FROM sessions WHERE expires_at <= ?`).bind(nowSec()),
     env.DB.prepare(`DELETE FROM login_attempts WHERE locked_until < ?1 AND window_start < ?1 - 86400`).bind(nowSec()),
+    env.DB.prepare(`DELETE FROM login_log WHERE created_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-180 days')`),
   ]);
 
 export function publicUser(u) {
@@ -151,7 +164,12 @@ export function publicUser(u) {
     email: u.email ?? null,
     phone: u.phone ?? null,
     has_password: Boolean(u.password_hash),
-    has_pin: Boolean(u.ivr_pin_hash),
+    is_super: u.is_super === 1,
+    is_hidden: u.is_hidden === 1,
+    can_edit_email: u.can_edit_email !== 0,
+    can_edit_password: u.can_edit_password !== 0,
+    can_message: u.can_message !== 0,
+    phone_requires_password: u.phone_requires_password === 1,
     role: u.role,
     is_active: u.is_active === 1,
     created_at: u.created_at,
@@ -162,6 +180,10 @@ export function publicUser(u) {
 // ------------------------------------------------------------------ access checks
 export function requireAdmin(actor) {
   if (actor.role !== 'admin') throw forbidden('פעולה זו שמורה למנהל המערכת');
+}
+
+export function requireSuper(actor) {
+  if (!actor.is_super) throw forbidden('פעולה זו שמורה למנהל העל');
 }
 
 export const canAccess = (actor, synagogueId) => actor.role === 'admin' || actor.synagogue_ids.includes(synagogueId);

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, test } from 'node:test';
+import { hashPassword } from '../src/auth.js';
 import worker from '../src/index.js';
 import { D1Shim } from './d1-shim.mjs';
 
@@ -41,16 +42,18 @@ const q = (sql, ...p) => env.DB.prepare(sql).bind(...p);
 beforeEach(async () => {
   env = { DB: new D1Shim(), BASE_PATH: '/zmanim' };
   await q(`INSERT INTO settings (key, value) VALUES ('ivr_key', ?)`, KEY).run();
-  await q(`INSERT INTO users (name, phone, role) VALUES ('מנהל על', '0583206823', 'admin')`).run();
+  await q(`INSERT INTO users (name, email, phone, role, is_super, password_hash) VALUES ('מנהל על', 'super@x.com', '0583206823', 'admin', 1, ?)`).bind(await hashPassword('4321')).run();
+  await q(`INSERT INTO areas (name) VALUES ('רמות')`).run();
 });
 
 describe('ivr access', () => {
   test('wrong key and unknown phone are rejected with valid Yemot text', async () => {
     let body = await yemotCall('0583206823', { key: 'bad' }).start();
-    assert.match(body, /^id_list_message=t-.+&go_to_folder=hangup$/);
+    assert.match(body, /^id_list_message=t-.+&$/);
+    assert.doesNotMatch(body, /go_to_folder|hangup/);
     body = await yemotCall('0500000000').start();
     assert.match(body, /אינו מורשה/);
-    assert.match(body, /go_to_folder=hangup$/);
+    assert.match(body, /&$/);
   });
 
   test('admin gets the main menu; read syntax is well formed; hangup clears state', async () => {
@@ -84,7 +87,7 @@ describe('ivr access', () => {
     await call.press('None');
     await call.press('None');
     const body = await call.press('None');
-    assert.match(body, /go_to_folder=hangup$/);
+    assert.equal(body, 'id_list_message=t-לא התקבלה הקשה&');
   });
 
   test('text never contains Yemot reserved characters', async () => {
@@ -106,7 +109,10 @@ describe('ivr management', () => {
     body = await admin.press('אהל משה');
     assert.match(body, /שם בית הכנסת: אהל משה/);
     body = await admin.press('1');
+    assert.match(body, /בחירת אזור לבית הכנסת\.t-לרמות הקישו 1/);
+    body = await admin.press('1');
     assert.match(body, /בית הכנסת נוצר, מספרו 1/);
+    assert.equal((await q(`SELECT area_id FROM synagogues`).first()).area_id, 1);
     body = await admin.press('6'); // managers
     assert.match(body, /אין מנהלים/);
     body = await admin.press('1');
@@ -131,7 +137,7 @@ describe('ivr management', () => {
     body = await m.press('1'); // every day -> seasons
     assert.match(body, /בחירת עונה/);
     body = await m.press('0');
-    assert.match(body, /המניין: שחרית, בשעה 6 30, כל יום/);
+    assert.match(body, /המניין: שחרית, בשעה 6 30, ראשון עד שישי/); // Shabbat is off: 'every day' = weekdays
     body = await m.press('1');
     assert.match(body, /המניין נשמר/);
 
@@ -151,12 +157,12 @@ describe('ivr management', () => {
     assert.equal(rows.results.length, 2);
     assert.deepEqual(
       rows.results.map((r) => [r.time_kind, r.time, r.anchor_id, r.offset_minutes, r.days]),
-      [['fixed', '06:30', null, null, 127], ['relative', null, 2, -15, 31]]
+      [['fixed', '06:30', null, null, 63], ['relative', null, 2, -15, 31]]
     );
 
     // listen
     body = await m.press('1');
-    assert.match(body, /מניין 1, שחרית, בשעה 6 30, כל יום/);
+    assert.match(body, /מניין 1, שחרית, בשעה 6 30, ראשון עד שישי/);
     assert.match(body, /מניין 2, מנחה, 15 דקות לפני שקיעה/);
   });
 
@@ -208,20 +214,46 @@ describe('ivr management', () => {
     assert.equal((await q(`SELECT COUNT(*) AS n FROM minyanim`).first()).n, 0);
   });
 
-  test('PIN: set, then required on next call', async () => {
+  test('phone password: enable with the real password, then asked on every call; login is logged', async () => {
     const call = yemotCall('0583206823');
     await call.start();
+    let body = await call.press('5');
+    assert.match(body, /כרגע אין דרישת סיסמה/);
+    body = await call.press('9999');
+    assert.match(body, /הסיסמה שגויה/);
     await call.press('5');
-    await call.press('4321');
-    let body = await call.press('4321');
-    assert.match(body, /הקוד נשמר/);
+    body = await call.press('4321');
+    assert.match(body, /תתבקשו להקיש את הסיסמה/);
     const next = yemotCall('0583206823');
     body = await next.start();
-    assert.match(body, /^read=t-הקישו את הקוד האישי/);
+    assert.match(body, /^read=t-הקישו את הסיסמה שלכם/);
     body = await next.press('1111');
-    assert.match(body, /קוד שגוי/);
+    assert.match(body, /סיסמה שגויה/);
     body = await next.press('4321');
     assert.match(body, /שלום מנהל על/);
+    const log = await q(`SELECT channel, detail FROM login_log ORDER BY id`).all();
+    assert.deepEqual(log.results.map((r) => r.channel), ['phone', 'phone']);
+  });
+
+  test('super admin is protected and can be hidden', async () => {
+    await q(`INSERT INTO users (name, email, phone, role, password_hash) VALUES ('מנהל שני', 'b@x.com', '0547778899', 'admin', 'x')`).run();
+    const other = yemotCall('0547778899');
+    await other.start();
+    let body = await other.press('4');
+    assert.match(body, /1, מנהל על/);
+    await other.press('2');
+    body = await other.press('1');
+    assert.match(body, /לא ניתן להסיר את מנהל העל/);
+    await q(`UPDATE users SET is_hidden = 1 WHERE is_super = 1`).run();
+    const again = yemotCall('0547778899');
+    await again.start();
+    body = await again.press('4');
+    assert.doesNotMatch(body, /מנהל על/);
+  });
+
+  test('closed management line answers politely', async () => {
+    await q(`INSERT INTO settings (key, value) VALUES ('manage_phone_enabled', '0') ON CONFLICT(key) DO UPDATE SET value = '0'`).run();
+    assert.equal(await yemotCall('0583206823').start(), 'id_list_message=t-שלוחת הניהול סגורה כרגע&');
   });
 
   test('admins: add by phone, cannot remove self', async () => {
@@ -235,5 +267,46 @@ describe('ivr management', () => {
     await call.press('2');
     body = await call.press('1'); // #1 is self
     assert.match(body, /לא ניתן להסיר את עצמך/);
+  });
+});
+
+describe('ivr listening line', () => {
+  const listen = (phone = '0501111111') => yemotCall(phone, { path: '/api/ivr/listen', key: '' });
+
+  beforeEach(async () => {
+    await q(`INSERT INTO areas (name) VALUES ('גבעת שאול')`).run();
+    await q(`INSERT INTO synagogues (name, area_id) VALUES ('אהל משה', 1), ('זכרון משה', 2)`).run();
+    await q(`INSERT INTO minyanim (synagogue_id, prayer_id, time_kind, time, days) VALUES (1, 1, 'fixed', '06:30', 127), (2, 1, 'fixed', '07:00', 127), (1, 1, 'fixed', '08:00', 64)`).run();
+    await q(`INSERT INTO minyanim (synagogue_id, prayer_id, time_kind, anchor_id, offset_minutes, days) VALUES (1, 2, 'relative', 2, -15, 127)`).run();
+  });
+
+  test('anyone can call: area, prayer, day; Shabbat hidden while disabled', async () => {
+    const call = listen();
+    let body = await call.start();
+    assert.match(body, /^id_list_message=t-שלום וברוכים הבאים לקו זמני המניינים&read=t-בחירת אזור\.t-לכל האזורים הקישו 0\.t-לגבעת שאול הקישו 1\.t-לרמות הקישו 2/);
+    body = await call.press('2'); // רמות
+    assert.match(body, /לזמני שחרית הקישו 1/);
+    assert.match(body, /להמניינים הקרובים הקישו 0/);
+    body = await call.press('1'); // שחרית
+    assert.match(body, /להיום הקישו 1/);
+    body = await call.press('3'); // pick a weekday
+    assert.doesNotMatch(body, /יום שבת/);
+    body = await call.press('1'); // Sunday
+    assert.match(body, /זמני שחרית ליום ראשון:\.t-בשעה 6 30, אהל משה/);
+    assert.doesNotMatch(body, /זכרון משה/); // other area
+    assert.doesNotMatch(body, /בשעה 8 בדיוק/); // Shabbat-only minyan
+    assert.match(body, /read=t-תפריט ראשי/); // back to the menu, no hang-up
+  });
+
+  test('relative times and closing the line', async () => {
+    const call = listen();
+    await call.start();
+    await call.press('0'); // all areas
+    await call.press('2'); // מנחה
+    await call.press('3');
+    const body = await call.press('2'); // Monday
+    assert.match(body, /15 דקות לפני שקיעה, אהל משה/);
+    await q(`INSERT INTO settings (key, value) VALUES ('listen_enabled', '0') ON CONFLICT(key) DO UPDATE SET value = '0'`).run();
+    assert.equal(await listen('0502222222').start(), 'id_list_message=t-קו זמני המניינים אינו פעיל כרגע&');
   });
 });

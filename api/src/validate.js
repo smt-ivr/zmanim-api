@@ -84,6 +84,12 @@ export function fields(body, { partial = false } = {}) {
     oneOf(key, values, opts = {}) {
       return api._field(key, opts, (v) => (values.includes(v) ? v : { error: 'ערך לא חוקי' }));
     },
+    /** Array of allowed strings (no duplicates). */
+    subset(key, allowed, opts = {}) {
+      return api._field(key, opts, (v) =>
+        Array.isArray(v) && v.every((x) => allowed.includes(x)) ? [...new Set(v)] : { error: 'ערכים לא חוקיים' }
+      );
+    },
     ids(key, opts = {}) {
       return api._field(key, opts, (v) => {
         if (!Array.isArray(v) || v.length > 500 || !v.every((x) => Number.isInteger(x) && x > 0)) {

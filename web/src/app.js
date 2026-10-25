@@ -82,17 +82,23 @@ function useHashRoute() {
 }
 
 // ------------------------------------------------------------------ app
+/** The listening line number comes from the control settings (fallback: config.js). */
+const sitePhone = (data) => ({ phone: data?.catalog?.site?.phone || CONFIG.phone, ready: data?.catalog?.site ? data.catalog.site.phone_enabled : CONFIG.phoneReady });
+
 function App() {
   const path = useHashRoute();
   const [dark, toggleTheme] = useTheme();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
 
-  const load = () => {
+  const load = async () => {
     setError(null);
-    Promise.all([get('/catalog'), get('/synagogues'), get('/minyanim')])
-      .then(([catalog, synagogues, minyanim]) => setData({ catalog, synagogues, minyanim, byId: new Map(synagogues.map((s) => [s.id, s])) }))
-      .catch(setError);
+    try {
+      const catalog = await get('/catalog');
+      if (!catalog.site.enabled) return setData({ catalog, closed: true });
+      const [synagogues, minyanim] = await Promise.all([get('/synagogues'), get('/minyanim')]);
+      setData({ catalog, synagogues, minyanim, byId: new Map(synagogues.map((s) => [s.id, s])) });
+    } catch (e) { setError(e); }
   };
   useEffect(load, []);
 
@@ -100,15 +106,19 @@ function App() {
   let page;
   if (error) page = html`<div class="state"><b>${error.message}</b><button class="btn" onClick=${load}>נסו שוב</button></div>`;
   else if (!data) page = html`<div class="state"><span class="spinner" /> טוען את הזמנים…</div>`;
+  else if (data.closed) page = html`<div class="state"><b>האתר סגור זמנית</b><span>נסו שוב מאוחר יותר</span></div>`;
   else if (sMatch) page = html`<${SynagoguePage} data=${data} id=${Number(sMatch[1])} />`;
   else page = html`<${Home} data=${data} />`;
 
+  const { phone } = sitePhone(data);
+  const notice = data?.catalog?.site?.notice;
   return html`
+    ${notice && html`<div class="notice">${notice}</div>`}
     <header class="top">
       <div class="wrap top-row">
         <a class="brand" href="#/"><span class="brand-mark"><${Icon} name="clock" /></span><span>זמני מניינים</span></a>
         <div class="top-actions">
-          ${CONFIG.phone && html`<a class="phone-pill" href=${`tel:${CONFIG.phone}`}><${Icon} name="phone" size=${16} /><span dir="ltr">${formatPhone(CONFIG.phone)}</span></a>`}
+          ${phone && html`<a class="phone-pill" href=${`tel:${phone}`}><${Icon} name="phone" size=${16} /><span dir="ltr">${formatPhone(phone)}</span></a>`}
           <button class="icon-btn" onClick=${toggleTheme} aria-label=${dark ? 'מצב בהיר' : 'מצב כהה'}><${Icon} name=${dark ? 'sun' : 'moon'} /></button>
         </div>
       </div>
@@ -117,7 +127,7 @@ function App() {
     <footer class="foot">
       <div class="wrap foot-row">
         <span>זמני מניינים</span>
-        ${CONFIG.phone && html`<a href=${`tel:${CONFIG.phone}`}>שמיעה בטלפון: <span dir="ltr">${formatPhone(CONFIG.phone)}</span></a>`}
+        ${phone && html`<a href=${`tel:${phone}`}>שמיעה בטלפון: <span dir="ltr">${formatPhone(phone)}</span></a>`}
         <a href="admin/" class="foot-admin"><${Icon} name="lock" size=${14} /> כניסת מנהלים</a>
       </div>
     </footer>`;
@@ -126,10 +136,13 @@ function App() {
 // ------------------------------------------------------------------ home
 function Home({ data }) {
   const { catalog, minyanim, byId } = data;
+  const phone = sitePhone(data);
+  const shabbat = catalog.site?.shabbat_enabled !== false;
   const now = israelNow();
   const defaultSeason = catalog.seasons.find((s) => s.is_default)?.id ?? null;
 
-  const [offset, setOffset] = useState(0); // days from today
+  // Days from today; while Shabbat is off, Shabbat itself is skipped (start from Sunday).
+  const [offset, setOffset] = useState(() => (!shabbat && now.day === 6 ? 1 : 0));
   const [area, setArea] = useState(() => store.get('area', null));
   const [prayer, setPrayer] = useState(null);
   const [season, setSeason] = useState(defaultSeason);
@@ -159,14 +172,14 @@ function Home({ data }) {
     <section class="hero">
       <h1>זמני מניינים</h1>
       <p>כל המניינים בבתי הכנסת, לפי אזור, תפילה ויום.</p>
-      ${CONFIG.phone && html`<a class="hero-phone" href=${`tel:${CONFIG.phone}`}>
+      ${phone.phone && html`<a class="hero-phone" href=${`tel:${phone.phone}`}>
         <span class="hero-phone-icon"><${Icon} name="phone" size=${20} /></span>
-        <span><small>${CONFIG.phoneReady ? 'שמיעת הזמנים בטלפון' : 'בקרוב: שמיעת הזמנים בטלפון'}</small><b dir="ltr">${formatPhone(CONFIG.phone)}</b></span>
+        <span><small>${phone.ready ? 'שמיעת הזמנים בטלפון' : 'בקרוב: שמיעת הזמנים בטלפון'}</small><b dir="ltr">${formatPhone(phone.phone)}</b></span>
       </a>`}
     </section>
 
     <div class="days" role="tablist" aria-label="יום">
-      ${[0, 1, 2, 3, 4, 5, 6].map((o) => {
+      ${[0, 1, 2, 3, 4, 5, 6].filter((o) => shabbat || (now.day + o) % 7 !== 6).map((o) => {
         const d = (now.day + o) % 7;
         return html`<button role="tab" aria-selected=${offset === o} class=${cx('day', offset === o && 'on', d === 6 && 'shabbat')} onClick=${() => setOffset(o)}>
           <b>${o === 0 ? 'היום' : o === 1 ? 'מחר' : DAY_NAMES[d]}</b><small>${o < 2 ? `יום ${DAY_SHORT[d]}` : dateForDay(o)}</small></button>`;
@@ -266,6 +279,8 @@ function BySynagogue({ list, byId }) {
 // ------------------------------------------------------------------ synagogue page
 function SynagoguePage({ data, id }) {
   const s = data.byId.get(id);
+  const shabbat = data.catalog.site?.shabbat_enabled !== false;
+  const dayNames = shabbat ? DAY_NAMES : DAY_NAMES.slice(0, 6);
   const today = israelNow().day;
   const [day, setDay] = useState(null); // null = whole week
   if (!s) return html`<div class="state"><b>בית הכנסת לא נמצא</b><a class="btn" href="#/">לכל בתי הכנסת</a></div>`;
@@ -287,7 +302,7 @@ function SynagoguePage({ data, id }) {
     </section>
     <div class="chips">
       <button class=${cx('chip', day === null && 'on')} onClick=${() => setDay(null)}>כל השבוע</button>
-      ${DAY_NAMES.map((n, i) => html`<button class=${cx('chip', day === i && 'on')} onClick=${() => setDay(i)}>${i === today ? `היום (${n})` : n}</button>`)}
+      ${dayNames.map((n, i) => html`<button class=${cx('chip', day === i && 'on')} onClick=${() => setDay(i)}>${i === today ? `היום (${n})` : n}</button>`)}
     </div>
     ${groups.length === 0
       ? html`<div class="state"><b>אין מניינים ${day === null ? 'רשומים' : 'ביום זה'}</b></div>`
@@ -295,7 +310,7 @@ function SynagoguePage({ data, id }) {
           <h2>${g.name}</h2>
           <div class="rows">${[...g.fixed, ...g.relative].map((m) => html`<div class="row static">
             <span class=${cx('time', m.time_kind === 'relative' && 'rel')}>${m.time_label}</span>
-            <span class="row-main"><span class="week">${DAY_SHORT.map((d, i) => html`<i class=${cx(m.days & (1 << i) && 'on', i === today && 'today')}>${d.replace('׳', '')}</i>`)}</span>
+            <span class="row-main"><span class="week">${(shabbat ? DAY_SHORT : DAY_SHORT.slice(0, 6)).map((d, i) => html`<i class=${cx(m.days & (1 << i) && 'on', i === today && 'today')}>${d.replace('׳', '')}</i>`)}</span>
               <small>${[m.location_name, m.season_name && `זמני ${m.season_name}`, m.notes].filter(Boolean).join(' · ')}</small></span>
           </div>`)}</div>
         </section>`)}</div>`}`;
