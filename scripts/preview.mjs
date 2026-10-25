@@ -1,0 +1,41 @@
+// Local preview without wrangler: serves ./admin and runs the API on an in-memory database.
+//   node scripts/preview.mjs [port]      then open http://localhost:8787  (setup key: "preview")
+// Data is lost when the process stops. For a real local D1 use `npm run dev`.
+import { readFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { extname, join, normalize } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import worker from '../api/src/index.js';
+import { D1Shim } from '../api/test/d1-shim.mjs';
+
+const root = fileURLToPath(new URL('../admin/', import.meta.url));
+const port = Number(process.argv[2] || 8787);
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
+
+const ASSETS = {
+  async fetch(request) {
+    const path = normalize(decodeURIComponent(new URL(request.url).pathname)).replace(/^(\.\.[/\\])+/, '');
+    for (const file of [join(root, path), join(root, 'index.html')]) {
+      try {
+        const body = await readFile(file.endsWith('/') || file === root ? join(file, 'index.html') : file);
+        return new Response(body, { headers: { 'Content-Type': TYPES[extname(file)] || 'text/html; charset=utf-8' } });
+      } catch { /* try next */ }
+    }
+    return new Response('Not found', { status: 404 });
+  },
+};
+
+const env = { DB: new D1Shim(), ASSETS, SETUP_KEY: 'preview' };
+
+createServer(async (req, res) => {
+  const chunks = [];
+  for await (const c of req) chunks.push(c);
+  const request = new Request(`http://localhost:${port}${req.url}`, {
+    method: req.method,
+    headers: req.headers,
+    body: ['GET', 'HEAD'].includes(req.method) ? undefined : Buffer.concat(chunks),
+  });
+  const response = await worker.fetch(request, env);
+  res.writeHead(response.status, Object.fromEntries(response.headers));
+  res.end(Buffer.from(await response.arrayBuffer()));
+}).listen(port, () => console.log(`preview on http://localhost:${port}  (setup key: preview)`));

@@ -1,126 +1,96 @@
-# מדריך ה-API
+# API
 
-Base URL: `https://<domain>/zmanim/api/v1`. כל הבקשות והתגובות ב-JSON (UTF-8). אימות: `Authorization: Bearer <token>` (חוץ מ-endpoints ציבוריים).
+Base path: `/api`. JSON in and out. Authenticated calls send `Authorization: Bearer <token>`.
 
-## מבנה תגובה
+**Success** returns the resource itself (object or array). `204` has no body.
+**Errors** always look like:
 
-הצלחה:
 ```json
-{ "success": true, "data": { }, "meta": { "limit": 500, "offset": 0, "count": 12 } }
-```
-שגיאה:
-```json
-{ "success": false, "error": { "code": "VALIDATION_ERROR", "message": "הנתונים שנשלחו אינם תקינים",
-  "details": [ { "field": "time_value", "message": "פורמט שעה נדרש: HH:MM" } ], "request_id": "..." } }
+{ "error": { "code": "VALIDATION", "message": "יש שדות שגויים", "fields": { "time": "שעה בפורמט HH:MM" } } }
 ```
 
-| סטטוס | משמעות | קודים נפוצים |
+| Status | `code` | When |
 |---|---|---|
-| 400 | קלט לא תקין | `VALIDATION_ERROR`, `INVALID_JSON`, `BAD_REQUEST` |
-| 401 | לא מחובר / סשן פג | `UNAUTHORIZED`, `SESSION_EXPIRED`, `INVALID_CREDENTIALS` |
-| 403 | אין הרשאה | `MISSING_PERMISSION`, `SYNAGOGUE_ACCESS_DENIED`, `CANNOT_MANAGE_USER`, `CANNOT_ASSIGN`, `CANNOT_MODIFY_SELF`, `ACCOUNT_DISABLED` |
-| 404 | לא נמצא | `NOT_FOUND` |
-| 405 | שיטה לא נתמכת | `METHOD_NOT_ALLOWED` |
-| 409 | התנגשות | `IN_USE`, `HAS_DEPENDENTS`, `DUPLICATE_IDENTIFIER`, `DEFAULT_REQUIRED`, `LAST_SUPER_ADMIN` |
-| 429 | יותר מדי ניסיונות | `TOO_MANY_REQUESTS` (+ כותרת `Retry-After`) |
-| 500 | שגיאת שרת | `INTERNAL_ERROR` (שמרו את `request_id`) |
+| 400 | `BAD_REQUEST` | Malformed JSON / bad id or query param |
+| 401 | `UNAUTHORIZED` | No / expired token, wrong login |
+| 403 | `FORBIDDEN` | Logged in but not allowed (e.g. manager on an admin route, details locked) |
+| 404 | `NOT_FOUND` | Missing, or a synagogue outside the manager's scope |
+| 409 | `CONFLICT` · `LIMIT_REACHED` · `IN_USE` | State conflict, quota reached, catalog value in use |
+| 422 | `VALIDATION` | Field errors in `fields` |
+| 429 | `TOO_MANY_ATTEMPTS` | Login locked; see `Retry-After` |
 
-כללי עדכון: `PATCH` מקבל רק את השדות שמשתנים. `DELETE` ללא גוף. כל תגובה כוללת `X-Request-Id`.
+## Minyan object
 
-## ציבורי (ללא טוקן)
-
-| Method | נתיב | הערות |
-|---|---|---|
-| GET | `/health` | בדיקת חיות + DB |
-| GET | `/public/minyanim` | סינון: `synagogue_id`, `area_id`, `prayer_type_id`, `season_id`; עימוד: `limit` (עד 1000), `offset`. Cache של דקה |
-| GET | `/public/synagogues` | סינון: `area_id` |
-
-## אימות
-
-| Method | נתיב | גוף / הערות |
-|---|---|---|
-| POST | `/auth/login` | `{ "identifier": "email או טלפון", "password": "..." }` ← `{ token, expires_at, user }` |
-| GET | `/auth/me` | פרופיל, הרשאות והיקף |
-| POST | `/auth/logout` | מנתק את המכשיר הנוכחי |
-| POST | `/auth/logout-all` | מנתק את כל המכשירים |
-| POST | `/auth/change-password` | `{ current_password, new_password }` (מינימום 8 תווים); מנתק מכשירים אחרים |
-
-## נתונים
-
-הרשאה נדרשת רק לשינוי. קריאה מוגבלת אוטומטית להיקף המשתמש. חריגה מההיקף ← 403.
-
-| Method | נתיב | הרשאה | הערות |
-|---|---|---|---|
-| GET | `/meta` | התחברות | סוגי תפילה, סוגי זמן, עונות, אזורים בקריאה אחת |
-| GET | `/synagogues` | — | סינון `area_id` |
-| GET | `/synagogues/:id` | — | |
-| POST | `/synagogues` | `synagogues:create` | `{ name, area_id?, address? }`. יוצר עם היקף מוגבל מקבל אליו גישה אוטומטית |
-| PATCH | `/synagogues/:id` | `synagogues:update` | |
-| DELETE | `/synagogues/:id` | `synagogues:delete` | עם תוכן: 409 עד `?cascade=true` |
-| GET | `/locations` | — | סינון `synagogue_id` |
-| GET | `/locations/:id` | — | |
-| POST | `/locations` | `locations:create` | `{ synagogue_id, name }` |
-| PATCH | `/locations/:id` | `locations:update` | שם בלבד (בית הכנסת קבוע) |
-| DELETE | `/locations/:id` | `locations:delete` | מניינים נשארים בלי מיקום |
-| GET | `/minyanim` | — | סינון: `synagogue_id`, `location_id`, `prayer_type_id`, `season_id`; עימוד |
-| GET | `/minyanim/:id` | — | |
-| POST | `/minyanim` | `minyanim:create` | ראו למטה |
-| PATCH | `/minyanim/:id` | `minyanim:update` | העברה לבית כנסת אחר דורשת גישה לשניהם |
-| DELETE | `/minyanim/:id` | `minyanim:delete` | |
-
-**יצירת מניין:**
 ```json
-{ "synagogue_id": 1, "location_id": 3, "prayer_type_id": 1, "time_type_id": 1,
-  "time_value": "07:30", "notes": "", "season_id": 2 }
+{
+  "id": 7, "synagogue_id": 1,
+  "prayer_id": 2, "prayer_name": "מנחה",
+  "location_id": 3, "location_name": "היכל ראשי",
+  "season_id": null, "season_name": null,
+  "days": 31, "days_list": [0,1,2,3,4], "days_label": "א׳-ה׳",
+  "time_kind": "relative", "time": null, "anchor_id": 2, "anchor_name": "שקיעה", "offset_minutes": -15,
+  "time_label": "15 דק׳ לפני שקיעה",
+  "notes": "", "is_active": true, "updated_at": "2026-10-25T20:00:00Z"
+}
 ```
-`season_id` אופציונלי (ברירת מחדל: העונה המסומנת כברירת מחדל). נבדק בשרת: הפניות קיימות; המיקום שייך לבית הכנסת; שעה `HH:MM` בטווח המותר לסוג התפילה; זמן יחסי הוא מספר דקות שלם (±720); סוג הזמן מתאים לתפילה.
 
-## הגדרות בסיס
+Write fields: `prayer_id` (required), `time_kind` (`fixed`|`relative`, required), `time` (`HH:MM`, for fixed),
+`anchor_id` + `offset_minutes` (−720…720, for relative; negative = before), `days` (1–127, default 127),
+`location_id`, `season_id` (null = all year), `notes`, `is_active`.
 
-`/areas`, `/prayer-types`, `/time-types`, `/seasons`. כולם: `GET /x` (כל משתמש), `POST /x`, `PATCH /x/:id`, `DELETE /x/:id` (דורשים `settings:manage`).
+## Public (no login, cached 60s)
 
-| משאב | שדות |
+| | |
 |---|---|
-| areas | `name` |
-| prayer-types | `name`, `allow_update_from`, `allow_update_to` (`HH:MM` או null) |
-| time-types | `name`, `is_relative` (bool), `allowed_prayer_ids` (מערך; ריק = כל התפילות) |
-| seasons | `name`, `is_default` (bool) |
+| `GET /health` | `{ ok: true }` |
+| `GET /public/catalog` | `{ areas, prayers, seasons, anchors }` |
+| `GET /public/synagogues?area_id=` | Active synagogues |
+| `GET /public/synagogues/:id` | Synagogue + its active minyanim |
+| `GET /public/minyanim?area_id=&synagogue_id=&prayer_id=&season_id=&day=0..6` | Active minyanim across synagogues (`season_id` also returns all-year ones; `day`: 0 = Sunday … 6 = Shabbat) |
 
-עונת ברירת מחדל אחת בלבד (ההחלפה אטומית); אי אפשר למחוק אותה. ערך שבשימוש לא נמחק (409 עם ספירה).
+## Session
 
-## משתמשים
+| | |
+|---|---|
+| `GET /setup` | `{ needed, enabled }`: is first-run setup available |
+| `POST /setup` | `{ setup_key, name, email, password }` → creates the first admin, returns like login. Only while there are no users and `SETUP_KEY` is set |
+| `POST /auth/login` | `{ email, password }` → `{ token, expires_at, user }` |
+| `POST /auth/logout` | Ends this session |
+| `GET /me` | `{ user, synagogues: [{ id, name, area_name }] }`: the synagogues this user can open |
+| `PATCH /me` | `{ name?, phone? }` |
+| `PUT /me/password` | `{ current_password, new_password }`: signs out other devices |
 
-| Method | נתיב | הרשאה |
-|---|---|---|
-| GET | `/users` | `users:read` (רואים רק משתמשים שאפשר לנהל, ואת עצמך) |
-| GET | `/users/:id` | `users:read` |
-| POST | `/users` | `users:create` |
-| PATCH | `/users/:id` | `users:update` |
-| DELETE | `/users/:id` | `users:delete` |
+## Synagogue workspace (manager of the synagogue, or admin)
 
-```json
-{ "full_name": "ישראל ישראלי", "email": "a@b.com", "phone": "0501234567", "password": "********",
-  "role_id": 1, "all_synagogues": false, "synagogue_ids": [1, 4], "is_active": true }
-```
-נדרש אימייל או טלפון. אימייל מנורמל לאותיות קטנות, טלפון בלי מקפים ורווחים; ייחודיים. סיסמה חדשה או השבתה מנתקות את המשתמש מכל המכשירים. `is_super_admin` נקבע רק על ידי מנהל ראשי. חוקי ההקצאה: ראו README.
+| | |
+|---|---|
+| `GET /synagogues` | Synagogues I can open |
+| `GET /synagogues/:sid` | Everything for the screen in one call: `{ synagogue, settings, usage, locations, minyanim, managers, catalog }`. `catalog.prayers` is already limited to the allowed prayers |
+| `PATCH /synagogues/:sid` | `{ name?, area_id?, address?, phone?, notes? }`: managers need `settings.can_edit_info` |
+| `POST /synagogues/:sid/locations` | `{ name }`: respects `max_locations` |
+| `PATCH /synagogues/:sid/locations/:id` | `{ name }` |
+| `DELETE /synagogues/:sid/locations/:id` | Minyanim there keep existing without a location |
+| `PUT /synagogues/:sid/locations/order` | `{ ids: [...] }`: the full new order |
+| `POST /synagogues/:sid/minyanim` | Create (respects `max_minyanim` and allowed prayers) |
+| `PATCH /synagogues/:sid/minyanim/:id` | Partial update, the merged result is validated as a whole |
+| `POST /synagogues/:sid/minyanim/:id/duplicate` | Copy |
+| `DELETE /synagogues/:sid/minyanim/:id` | |
 
-## תפקידים
+`settings` = `{ can_edit_info, max_locations, max_minyanim, restrict_prayers, allowed_prayer_ids }` (`allowed_prayer_ids` is `null` when not restricted).
 
-| Method | נתיב | הרשאה |
-|---|---|---|
-| GET | `/permissions` | התחברות. קטלוג הרשאות עם קבוצה ותווית, לבניית תיבות סימון |
-| GET | `/roles`, `/roles/:id` | `roles:manage` או הרשאת משתמשים. כולל `assignable` (האם *אתה* יכול להקצות) ו-`user_count` |
-| POST | `/roles` | `roles:manage` |
-| PATCH | `/roles/:id` | `roles:manage` (תפקידי מערכת: מנהל ראשי בלבד, ללא שינוי שם) |
-| DELETE | `/roles/:id` | `roles:manage` (409 אם יש משתמשים; תפקידי מערכת מוגנים) |
+## Admin only
 
-```json
-{ "name": "מנהל אזור צפון", "description": "...", "permissions": ["minyanim:create", "minyanim:update", "users:read"] }
-```
-
-## זרימה טיפוסית
-
-1. מנהל ראשי נכנס: `POST /auth/login`.
-2. יוצר תפקיד: `POST /roles` (בוחר הרשאות מ-`GET /permissions`).
-3. יוצר משתמש: `POST /users` עם `role_id` ו-`synagogue_ids` (או `all_synagogues: true`).
-4. הגבאי נכנס, ו-`GET /auth/me` אומר לפרונט מה להציג. כפתור "הוספת מניין" רק אם `permissions` כולל `minyanim:create`.
+| | |
+|---|---|
+| `GET /admin/stats` | Counts + recently updated synagogues |
+| `GET /admin/synagogues` | All, with settings, managers and counts |
+| `POST /admin/synagogues` | `{ name, area_id?, address?, phone?, notes?, is_active?, can_edit_info?, max_locations?, max_minyanim?, restrict_prayers?, allowed_prayer_ids?, manager_ids? }` |
+| `GET / PATCH / DELETE /admin/synagogues/:id` | PATCH takes any subset of the above; DELETE removes locations and minyanim too |
+| `GET /admin/users` | All users with their synagogues |
+| `POST /admin/users` | `{ name, email, password, role: admin\|manager, phone?, is_active?, synagogue_ids? }` |
+| `PATCH /admin/users/:id` | Any subset; a new `password` or `is_active: false` signs the user out everywhere. You cannot demote, deactivate or delete yourself |
+| `DELETE /admin/users/:id` | |
+| `GET /admin/catalog/:kind` | `kind` = `prayers` · `anchors` · `seasons` · `areas`; rows include `used` |
+| `POST /admin/catalog/:kind` | prayers: `{ name, sort?, earliest?, latest? }` · seasons: `{ name, sort?, is_default? }` · others: `{ name, sort? }` |
+| `PATCH /admin/catalog/:kind/:id` | |
+| `DELETE /admin/catalog/:kind/:id` | `409 IN_USE` while referenced |

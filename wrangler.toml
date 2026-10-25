@@ -1,22 +1,30 @@
 name = "zmanim-api"
-main = "src/index.js"
-compatibility_date = "2026-05-24"
+main = "api/src/index.js"
+compatibility_date = "2026-10-01"
 
-# Daily cleanup of expired sessions / old login-attempt rows
-[triggers]
-crons = ["0 3 * * *"]
+# The admin UI is plain static files in ./admin. It is served by this same Worker for now,
+# but it only talks to the API over HTTP, so it can be moved to its own project at any time
+# (see README: "Separating the admin UI").
+[assets]
+directory = "./admin"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
 
-[observability]
-enabled = true
-
-# Comma-separated list of allowed front-end origins, e.g. "https://example.com".
-# Empty = any origin (safe here because auth uses Bearer tokens, not cookies).
-[vars]
-ALLOWED_ORIGINS = ""
-
-# Database binding (unchanged)
 [[d1_databases]]
 binding = "DB"
 database_name = "zmanim"
-database_id = "0cfa6f34-aa5e-4662-abd4-a6980d0aea32"
-migrations_dir = "migrations"
+database_id = "978af130-5d6b-407e-9b9e-85a85ac785ce"
+migrations_dir = "api/migrations"
+
+[vars]
+# Comma-separated front-end origins allowed to call the API from another domain.
+# Empty = any origin (safe: auth is a Bearer token, not a cookie).
+ALLOWED_ORIGINS = ""
+
+# Daily cleanup of expired sessions and old login attempts
+[triggers]
+crons = ["17 3 * * *"]
+
+[observability]
+enabled = true
