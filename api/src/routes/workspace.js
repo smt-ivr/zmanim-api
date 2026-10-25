@@ -169,7 +169,7 @@ function parseMinyan(body, partial) {
     .done();
 }
 
-const MINYAN_COLUMNS = ['prayer_id', 'location_id', 'season_id', 'days', 'time_kind', 'time', 'anchor_id', 'offset_minutes', 'notes', 'is_active'];
+export const MINYAN_COLUMNS = ['prayer_id', 'location_id', 'season_id', 'days', 'time_kind', 'time', 'anchor_id', 'offset_minutes', 'notes', 'is_active'];
 
 async function loadMinyanRow(env, s, rawId) {
   const row = await first(env, `SELECT * FROM minyanim WHERE id = ? AND synagogue_id = ?`, id(rawId), s.id);
@@ -177,7 +177,7 @@ async function loadMinyanRow(env, s, rawId) {
   return row;
 }
 
-async function insertMinyan(env, s, m) {
+export async function insertMinyan(env, s, m) {
   const { n } = await first(env, `SELECT COUNT(*) AS n FROM minyanim WHERE synagogue_id = ?`, s.id);
   if (n >= s.max_minyanim) throw conflict(`הגעתם למכסה של ${s.max_minyanim} מניינים`, 'LIMIT_REACHED');
   const row = await validateMinyan(env, s, m);

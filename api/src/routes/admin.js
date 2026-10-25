@@ -333,3 +333,28 @@ export async function deleteCatalog({ env, params }) {
   if (!res.meta.changes) throw notFound();
   return noContent();
 }
+
+// ------------------------------------------------------------------ phone extension (Yemot)
+export async function ivrKey(env) {
+  const row = await first(env, `SELECT value FROM settings WHERE key = 'ivr_key'`);
+  if (row) return row.value;
+  return rotate(env);
+}
+
+async function rotate(env) {
+  const key = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(18)))).replace(/[+/=]/g, (c) => ({ '+': '-', '/': '_', '=': '' })[c]);
+  await run(env, `INSERT INTO settings (key, value) VALUES ('ivr_key', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key);
+  return key;
+}
+
+/** The UI builds the full api_link from its own origin + this path. */
+export async function getIvr({ env }) {
+  const phones = await all(env, `SELECT name, phone, role FROM users WHERE phone IS NOT NULL AND is_active = 1 ORDER BY role, name`);
+  return json({ key: await ivrKey(env), path: '/api/ivr', base_path: env.BASE_PATH || '', phones });
+}
+
+/** New key: the old api_link stops working immediately. */
+export async function rotateIvrKey({ env }) {
+  await rotate(env);
+  return getIvr({ env });
+}

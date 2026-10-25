@@ -1,5 +1,7 @@
 // The only module that knows about HTTP. Everything else calls api.get/post/...
-const BASE = (window.ZMANIM_CONFIG?.apiBase || '').replace(/\/$/, '') + '/api';
+// Default: the API sits next to this page (works at the domain root and under a prefix like /zmanim/).
+const pageDir = location.pathname.replace(/[^/]*$/, '');
+const BASE = (window.ZMANIM_CONFIG?.apiBase || location.origin + pageDir).replace(/\/$/, '') + '/api';
 const TOKEN_KEY = 'zmanim.token';
 
 let token = null;

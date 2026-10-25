@@ -6,6 +6,7 @@ import * as admin from './routes/admin.js';
 import * as auth from './routes/auth.js';
 import * as pub from './routes/public.js';
 import * as ws from './routes/workspace.js';
+import { handleIvr } from './ivr/flow.js';
 
 const PUBLIC = { auth: 'none' };
 const ADMIN = { auth: 'admin' };
@@ -17,6 +18,9 @@ export const router = new Router()
   .get('/public/synagogues', pub.synagogues, PUBLIC)
   .get('/public/synagogues/:id', pub.synagogue, PUBLIC)
   .get('/public/minyanim', pub.minyanim, PUBLIC)
+  // Yemot HaMashiach phone extension (own key check; always answers in Yemot format)
+  .get('/ivr', handleIvr, PUBLIC)
+  .post('/ivr', handleIvr, PUBLIC)
   // session
   .get('/setup', auth.getSetup, PUBLIC)
   .post('/setup', auth.postSetup, PUBLIC)
@@ -39,6 +43,8 @@ export const router = new Router()
   .post('/synagogues/:sid/minyanim/:id/duplicate', ws.duplicateMinyan)
   // admin
   .get('/admin/stats', admin.stats, ADMIN)
+  .get('/admin/ivr', admin.getIvr, ADMIN)
+  .post('/admin/ivr/rotate', admin.rotateIvrKey, ADMIN)
   .get('/admin/synagogues', admin.listSynagogues, ADMIN)
   .post('/admin/synagogues', admin.createSynagogue, ADMIN)
   .get('/admin/synagogues/:id', admin.getSynagogue, ADMIN)
@@ -82,18 +88,36 @@ async function handleApi(request, env, path) {
   return route.handler(ctx);
 }
 
+/**
+ * The app can live under a path prefix (BASE_PATH, e.g. "/zmanim" for smti.uk/zmanim) and at the
+ * root (workers.dev) at the same time. Returns the path without the prefix, or a redirect.
+ */
+function stripBase(env, url) {
+  const base = (env.BASE_PATH || '').replace(/\/$/, '');
+  if (!base) return { path: url.pathname };
+  if (url.pathname === base) return { redirect: `${url.origin}${base}/${url.search}` };
+  if (url.pathname.startsWith(base + '/')) return { path: url.pathname.slice(base.length) };
+  return { path: url.pathname };
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (!url.pathname.startsWith('/api/') && url.pathname !== '/api') {
-      return env.ASSETS ? env.ASSETS.fetch(request) : new Response('Not found', { status: 404 });
+    const { path, redirect } = stripBase(env, url);
+    if (redirect) return Response.redirect(redirect, 301);
+
+    if (!path.startsWith('/api/') && path !== '/api') {
+      if (!env.ASSETS) return new Response('Not found', { status: 404 });
+      const assetUrl = new URL(url);
+      assetUrl.pathname = path;
+      return env.ASSETS.fetch(new Request(assetUrl, request));
     }
     const headers = cors(env, request);
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
 
     let response;
     try {
-      response = await handleApi(request, env, url.pathname.slice(4) || '/');
+      response = await handleApi(request, env, path.slice(4) || '/');
     } catch (err) {
       if (err instanceof HttpError) response = errorResponse(err);
       else {

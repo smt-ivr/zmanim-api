@@ -46,13 +46,13 @@ const LIMITS = {
   ip: { max: 30, window: 15 * 60, lock: 15 * 60 },
 };
 
-async function checkLock(env, key) {
+export async function checkLock(env, key) {
   const row = await first(env, `SELECT locked_until FROM login_attempts WHERE key = ?`, key);
   const wait = row ? row.locked_until - nowSec() : 0;
   if (wait > 0) throw tooMany(`יותר מדי ניסיונות. נסו שוב בעוד ${Math.ceil(wait / 60)} דקות`, wait);
 }
 
-async function recordFailure(env, key, { max, window, lock }) {
+export async function recordFailure(env, key, { max, window, lock }) {
   const now = nowSec();
   await run(
     env,

@@ -48,6 +48,16 @@ Write fields: `prayer_id` (required), `time_kind` (`fixed`|`relative`, required)
 | `GET /public/synagogues/:id` | Synagogue + its active minyanim |
 | `GET /public/minyanim?area_id=&synagogue_id=&prayer_id=&season_id=&day=0..6` | Active minyanim across synagogues (`season_id` also returns all-year ones; `day`: 0 = Sunday … 6 = Shabbat) |
 
+## Phone extension (Yemot HaMashiach)
+
+| | |
+|---|---|
+| `GET` or `POST /ivr?key=…` | Yemot `type=api` endpoint. Always answers 200 with Yemot command text (`id_list_message=…&read=…`), never JSON |
+| `GET /admin/ivr` | `{ key, path, base_path, phones }`: what the admin UI needs to build the `api_link` |
+| `POST /admin/ivr/rotate` | New key; the old link stops working |
+
+All routes also work under `BASE_PATH` (`/zmanim/api/...`).
+
 ## Session
 
 | | |

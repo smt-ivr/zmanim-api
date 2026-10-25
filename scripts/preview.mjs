@@ -1,5 +1,5 @@
 // Local preview without wrangler: serves ./admin and runs the API on an in-memory database.
-//   node scripts/preview.mjs [port]      then open http://localhost:8787  (setup key: "preview")
+//   node scripts/preview.mjs [port]      then open http://localhost:8787/zmanim/  (setup key: "preview")
 // Data is lost when the process stops. For a real local D1 use `npm run dev`.
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -25,7 +25,7 @@ const ASSETS = {
   },
 };
 
-const env = { DB: new D1Shim(), ASSETS, SETUP_KEY: 'preview' };
+const env = { DB: new D1Shim(), ASSETS, SETUP_KEY: 'preview', BASE_PATH: '/zmanim' };
 
 createServer(async (req, res) => {
   const chunks = [];

@@ -339,3 +339,4 @@ select.input { padding-inline-end: 8px; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 .start { text-align: right; }
+.code { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 14px; font-size: 13px; white-space: pre-wrap; word-break: break-all; margin: 12px 0; text-align: left; }

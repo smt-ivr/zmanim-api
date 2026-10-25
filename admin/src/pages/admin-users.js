@@ -15,7 +15,7 @@ export function AdminUsers({ me }) {
   if (loading && !data) return html`<div class="page"><${Spinner} /></div>`;
   if (error && !data) return html`<div class="page"><${ErrorBox} error=${error} onRetry=${reload} /></div>`;
 
-  const shown = data.users.filter((u) => (role === 'all' || u.role === role) && (!q || norm(`${u.name} ${u.email} ${u.phone}`).includes(norm(q))));
+  const shown = data.users.filter((u) => (role === 'all' || u.role === role) && (!q || norm(`${u.name} ${u.email || ''} ${u.phone || ''}`).includes(norm(q))));
   const saved = (u, isNew) => setData((d) => ({ ...d, users: isNew ? [...d.users, u] : d.users.map((x) => (x.id === u.id ? u : x)) }));
 
   async function remove(u) {
@@ -42,7 +42,8 @@ export function AdminUsers({ me }) {
           <thead><tr><th>שם</th><th>תפקיד</th><th>בתי כנסת</th><th>כניסה אחרונה</th><th /></tr></thead>
           <tbody>${shown.map((u) => html`<tr key=${u.id} class=${u.is_active ? '' : 'inactive'}>
             <td><b>${u.name}</b>${u.id === me.id && html` <${Badge} tone="info">זה אתה<//>`}${!u.is_active && html` <${Badge} tone="warn">מושבת<//>`}
-              <div class="muted small" dir="ltr">${u.email}</div></td>
+              <div class="muted small" dir="ltr">${[u.email, u.phone].filter(Boolean).join(' · ')}</div>
+              <div class="row gap-sm">${u.has_password && html`<${Badge}>אתר<//>`}${u.phone && html`<${Badge}>טלפון${u.has_pin ? ' + קוד' : ''}<//>`}</div></td>
             <td><${Badge} tone=${u.role === 'admin' ? 'info' : 'neutral'}>${ROLE[u.role]}<//></td>
             <td class="small">${u.role === 'admin' ? html`<span class="muted">כולם</span>` : u.synagogues.length ? u.synagogues.map((s) => s.name).join(', ') : html`<${Badge} tone="warn">לא שויך<//>`}</td>
             <td class="small muted">${formatDate(u.last_login_at)}</td>
@@ -64,8 +65,8 @@ function UserModal({ user, me, synagogues, onClose, onSaved }) {
     is_active: user?.is_active ?? true, password: '', synagogue_ids: user?.synagogues.map((s) => s.id) ?? [],
   };
   const save = (v) => {
-    const body = { ...v };
-    if (!isNew && !body.password) delete body.password;
+    const body = { ...v, email: v.email || null, phone: v.phone || null };
+    if (!body.password) delete body.password;
     if (self) { delete body.role; delete body.is_active; }
     return isNew ? api.post('/admin/users', body) : api.patch(`/admin/users/${user.id}`, body);
   };
@@ -75,10 +76,10 @@ function UserModal({ user, me, synagogues, onClose, onSaved }) {
     ${({ values: v, set, errors }) => html`
       <div class="grid-2">
         <${Field} label="שם מלא" error=${errors.name}><${Input} value=${v.name} onInput=${set('name')} required /><//>
-        <${Field} label="טלפון" error=${errors.phone}><${Input} dir="ltr" value=${v.phone} onInput=${set('phone')} /><//>
+        <${Field} label="טלפון (לניהול בשלוחה)" error=${errors.phone} hint="מתקשר מהמספר הזה = מזוהה בשלוחה"><${Input} dir="ltr" type="tel" value=${v.phone} onInput=${set('phone')} /><//>
       </div>
-      <${Field} label="מייל (שם משתמש)" error=${errors.email}><${Input} type="email" dir="ltr" value=${v.email} onInput=${set('email')} required /><//>
-      <${Field} label=${isNew ? 'סיסמה' : 'סיסמה חדשה'} error=${errors.password} hint=${isNew ? '8 תווים לפחות. מסרו אותה למשתמש' : 'השאירו ריק כדי לא לשנות. שינוי מנתק את המשתמש מכל המכשירים'}>
+      <${Field} label="מייל (לכניסה לאתר)" error=${errors.email} hint="אפשר להשאיר ריק למשתמש שמנהל רק בטלפון"><${Input} type="email" dir="ltr" value=${v.email} onInput=${set('email')} /><//>
+      <${Field} label=${isNew || !user.has_password ? 'סיסמה לאתר' : 'סיסמה חדשה'} error=${errors.password} hint=${isNew || !user.has_password ? '8 תווים לפחות. נדרשת רק אם הוזן מייל' : 'השאירו ריק כדי לא לשנות. שינוי מנתק את המשתמש מכל המכשירים'}>
         <div class="input-group">
           <${Input} dir="ltr" value=${v.password} onInput=${set('password')} autocomplete="new-password" />
           <${Button} kind="ghost" icon="key" title="יצירת סיסמה" onClick=${() => set('password')(randomPassword())} />

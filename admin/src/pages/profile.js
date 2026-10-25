@@ -4,7 +4,7 @@ import { Button, Field, Input, toast } from '../ui.js';
 import { ApiError } from '../api.js';
 
 export function Profile({ user, onChanged }) {
-  const [info, setInfo] = useState({ name: user.name, phone: user.phone });
+  const [info, setInfo] = useState({ name: user.name });
   const [pw, setPw] = useState({ current_password: '', new_password: '' });
   const [errors, setErrors] = useState({});
   const [busy, setBusy] = useState('');
@@ -33,16 +33,16 @@ export function Profile({ user, onChanged }) {
   }));
 
   return html`<div class="page narrow">
-    <header class="page-head"><div><h1>הפרופיל שלי</h1><p class="muted">${user.email} · כניסה אחרונה ${formatDate(user.last_login_at)}</p></div></header>
+    <header class="page-head"><div><h1>הפרופיל שלי</h1><p class="muted">${user.email || user.phone} · כניסה אחרונה ${formatDate(user.last_login_at)}</p></div></header>
     <form class="card form" onSubmit=${saveInfo}>
       <h3>פרטים אישיים</h3>
       <div class="grid-2">
         <${Field} label="שם" error=${errors.name}><${Input} value=${info.name} onInput=${(v) => setInfo({ ...info, name: v })} /><//>
-        <${Field} label="טלפון" error=${errors.phone}><${Input} dir="ltr" value=${info.phone} onInput=${(v) => setInfo({ ...info, phone: v })} /><//>
+        <${Field} label="טלפון לשלוחה" hint="נקבע על ידי מנהל המערכת"><${Input} dir="ltr" value=${user.phone || '—'} disabled /><//>
       </div>
       <div class="row end"><${Button} kind="primary" type="submit" loading=${busy === 'info'}>שמירה<//></div>
     </form>
-    <form class="card form" onSubmit=${savePw}>
+    ${user.has_password && html`<form class="card form" onSubmit=${savePw}>
       <h3>החלפת סיסמה</h3>
       <div class="grid-2">
         <${Field} label="סיסמה נוכחית" error=${errors.current_password}>
@@ -51,6 +51,6 @@ export function Profile({ user, onChanged }) {
           <${Input} type="password" dir="ltr" autocomplete="new-password" value=${pw.new_password} onInput=${(v) => setPw({ ...pw, new_password: v })} /><//>
       </div>
       <div class="row end"><${Button} kind="primary" type="submit" loading=${busy === 'pw'}>עדכון סיסמה<//></div>
-    </form>
+    </form>`}
   </div>`;
 }

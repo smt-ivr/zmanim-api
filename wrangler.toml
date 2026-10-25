@@ -9,7 +9,7 @@ compatibility_date = "2026-10-01"
 directory = "./admin"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
-run_worker_first = ["/api/*"]
+run_worker_first = true   # the Worker strips BASE_PATH before looking up a file
 
 [[d1_databases]]
 binding = "DB"
@@ -21,6 +21,8 @@ migrations_dir = "api/migrations"
 # Comma-separated front-end origins allowed to call the API from another domain.
 # Empty = any origin (safe: auth is a Bearer token, not a cookie).
 ALLOWED_ORIGINS = ""
+# Path prefix when served from a shared domain (smti.uk/zmanim). The workers.dev root keeps working too.
+BASE_PATH = "/zmanim"
 
 # No cron trigger: the free plan allows only 5 per account. Expired sessions are
 # cleaned up during logins instead (see auth.js).

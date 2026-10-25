@@ -1,6 +1,7 @@
 // The four reference lists every synagogue uses: prayers, anchors (for relative times), seasons and areas.
 import { api } from '../api.js';
 import { cx, html, useState } from '../lib.js';
+import { PhonePanel } from './admin-phone.js';
 import { Badge, Button, Empty, ErrorBox, Field, FormModal, Input, Spinner, Toggle, confirm, toast, toastError, useLoad } from '../ui.js';
 
 const KINDS = {
@@ -16,8 +17,9 @@ export function AdminCatalog() {
     <header class="page-head"><div><h1>הגדרות ורשימות</h1><p class="muted">רשימות משותפות לכל בתי הכנסת</p></div></header>
     <div class="tabs">
       ${Object.entries(KINDS).map(([k, d]) => html`<button class=${cx('tab', kind === k && 'active')} onClick=${() => setKind(k)}>${d.title}</button>`)}
+      <button class=${cx('tab', kind === 'phone' && 'active')} onClick=${() => setKind('phone')}>שלוחת טלפון</button>
     </div>
-    <${CatalogList} key=${kind} kind=${kind} />
+    ${kind === 'phone' ? html`<${PhonePanel} />` : html`<${CatalogList} key=${kind} kind=${kind} />`}
   </div>`;
 }
 
