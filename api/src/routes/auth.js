@@ -30,10 +30,8 @@ export async function getMe({ env, actor }) {
 }
 
 export async function patchMe({ env, actor, request }) {
-  const d = fields(await readJson(request), { partial: true }).str('name', { required: true, max: 80 }).str('phone', { max: 30 }).done();
-  if (d.name !== undefined || d.phone !== undefined) {
-    await run(env, `UPDATE users SET name = COALESCE(?, name), phone = COALESCE(?, phone), updated_at = ? WHERE id = ?`, d.name ?? null, d.phone ?? null, nowIso(), actor.id);
-  }
+  const d = fields(await readJson(request), { partial: true }).str('name', { required: true, max: 80 }).done();
+  if (d.name !== undefined) await run(env, `UPDATE users SET name = ?, updated_at = ? WHERE id = ?`, d.name, nowIso(), actor.id);
   return getMe({ env, actor: { ...actor, ...d } });
 }
 
@@ -41,7 +39,7 @@ export async function patchMe({ env, actor, request }) {
 export async function putPassword({ env, actor, request }) {
   const d = fields(await readJson(request)).str('current_password', { required: true, max: 200 }).password('new_password', { required: true }).done();
   const row = await first(env, `SELECT password_hash FROM users WHERE id = ?`, actor.id);
-  if (!(await verifyPassword(d.current_password, row.password_hash))) throw invalid({ current_password: 'הסיסמה הנוכחית שגויה' });
+  if (!row.password_hash || !(await verifyPassword(d.current_password, row.password_hash))) throw invalid({ current_password: 'הסיסמה הנוכחית שגויה' });
   await run(env, `UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?`, await hashPassword(d.new_password), nowIso(), actor.id);
   await revokeSessions(env, actor.id, actor.session_id);
   return noContent();
@@ -51,7 +49,8 @@ export async function putPassword({ env, actor, request }) {
 // Creates the first admin. Works only while there are no users AND the SETUP_KEY secret is set and matches.
 
 export async function getSetup({ env }) {
-  const row = await first(env, `SELECT COUNT(*) AS n FROM users`);
+  // "Needed" until someone can log in to the web UI (phone-only admins do not count).
+  const row = await first(env, `SELECT COUNT(*) AS n FROM users WHERE password_hash IS NOT NULL`);
   return json({ needed: row.n === 0, enabled: Boolean(env.SETUP_KEY) });
 }
 
@@ -68,8 +67,9 @@ export async function postSetup({ env, request }) {
   // Atomic "only if empty": a concurrent second request inserts nothing.
   const res = await run(
     env,
-    `INSERT INTO users (name, email, password_hash, role) SELECT ?, ?, ?, 'admin' WHERE NOT EXISTS (SELECT 1 FROM users)`,
-    d.name, d.email, hash
+    `INSERT INTO users (name, email, password_hash, role) SELECT ?, ?, ?, 'admin'
+     WHERE NOT EXISTS (SELECT 1 FROM users WHERE password_hash IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM users WHERE email = ?)`,
+    d.name, d.email, hash, d.email
   );
   if (!res.meta.changes) throw conflict('המערכת כבר הותקנה');
   return json(await login(env, request, d.email, d.password), 201);

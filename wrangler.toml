@@ -22,9 +22,9 @@ migrations_dir = "api/migrations"
 # Empty = any origin (safe: auth is a Bearer token, not a cookie).
 ALLOWED_ORIGINS = ""
 
-# Daily cleanup of expired sessions and old login attempts
-[triggers]
-crons = ["17 3 * * *"]
+# No cron trigger: the free plan allows only 5 per account. Expired sessions are
+# cleaned up during logins instead (see auth.js).
+workers_dev = true
 
 [observability]
 enabled = true

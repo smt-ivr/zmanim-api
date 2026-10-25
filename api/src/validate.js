@@ -3,6 +3,13 @@ import { badRequest, invalid } from './http.js';
 export const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+/** Israeli phone to local digits: '+972-58-320-6823' -> '0583206823'. Returns null when not a phone. */
+export function normalizePhone(raw) {
+  let d = String(raw ?? '').replace(/\D/g, '');
+  if (d.startsWith('972')) d = '0' + d.slice(3);
+  return /^0\d{8,9}$/.test(d) ? d : null;
+}
+
 /**
  * Declarative body parser. Collects every problem before failing, so the UI can mark all fields at once.
  *   const d = fields(body, { partial }).str('name', { required: true, max: 120 }).int('area_id', { nullable: true }).done();
@@ -48,6 +55,9 @@ export function fields(body, { partial = false } = {}) {
           ? v.trim().toLowerCase()
           : { error: 'כתובת מייל לא תקינה' }
       );
+    },
+    phone(key, opts = {}) {
+      return api._field(key, { nullable: true, ...opts }, (v) => normalizePhone(v) ?? { error: 'מספר טלפון לא תקין' });
     },
     password(key, opts = {}) {
       return api._field(key, opts, (v) =>

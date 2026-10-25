@@ -19,6 +19,18 @@
 </head>
 <body>
   <div id="app"><div class="boot">טוען…</div></div>
+  <script>
+    // If the app fails to start, show why instead of an endless "loading".
+    (function () {
+      function show(msg) {
+        var el = document.getElementById('app');
+        if (el && el.querySelector('.boot')) el.innerHTML = '<div class="boot" style="flex-direction:column;gap:8px;text-align:center;padding:16px"><b>שגיאה בטעינת המערכת</b><code dir="ltr" style="white-space:pre-wrap">' + String(msg).replace(/</g, '&lt;') + '</code></div>';
+      }
+      window.addEventListener('error', function (e) { show((e.message || 'error') + (e.filename ? ' @ ' + e.filename + ':' + e.lineno : '') || (e.target && e.target.src)); }, true);
+      window.addEventListener('unhandledrejection', function (e) { show(e.reason && e.reason.message || e.reason); });
+      setTimeout(function () { show('הטעינה לוקחת יותר מדי זמן. ייתכן שהדפדפן ישן מדי (נדרש Chrome/Safari עדכני)'); }, 12000);
+    })();
+  </script>
   <script type="module" src="src/main.js"></script>
 </body>
 </html>

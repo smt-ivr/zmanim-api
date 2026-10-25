@@ -73,13 +73,14 @@ export async function login(env, request, email, password) {
   await checkLock(env, keys.email);
 
   const user = await first(env, `SELECT * FROM users WHERE email = ?`, email);
-  const ok = await verifyPassword(password, user?.password_hash ?? DUMMY_HASH);
-  if (!user || !ok || !user.is_active) {
+  const ok = await verifyPassword(password, user?.password_hash || DUMMY_HASH);
+  if (!user || !user.password_hash || !ok || !user.is_active) {
     await recordFailure(env, keys.email, LIMITS.email);
     await recordFailure(env, keys.ip, LIMITS.ip);
     throw unauthorized(user && ok ? 'המשתמש מושבת. פנו למנהל המערכת' : 'מייל או סיסמה שגויים');
   }
   await run(env, `DELETE FROM login_attempts WHERE key = ?`, keys.email);
+  await cleanup(env); // housekeeping piggybacks on logins (no cron on the free plan)
 
   const token = 'zm_' + b64(crypto.getRandomValues(new Uint8Array(32))).replace(/[+/=]/g, (c) => ({ '+': '-', '/': '_', '=': '' })[c]);
   const now = nowSec();
@@ -112,10 +113,15 @@ export async function authenticate(env, request) {
   if (now - row.last_seen_at > SEEN_REFRESH) {
     await run(env, `UPDATE sessions SET last_seen_at = ? WHERE id = ?`, now, row.session_id);
   }
-  const actor = { ...publicUser(row), session_id: row.session_id };
+  return { ...(await actorFor(env, row)), session_id: row.session_id };
+}
+
+/** The acting user plus the synagogues they may open (null = all, for admins). */
+export async function actorFor(env, user) {
+  const actor = publicUser(user);
   actor.synagogue_ids =
     actor.role === 'admin'
-      ? null // null = all
+      ? null
       : (await all(env, `SELECT synagogue_id FROM synagogue_managers WHERE user_id = ?`, actor.id)).map((r) => r.synagogue_id);
   return actor;
 }
@@ -136,8 +142,10 @@ export function publicUser(u) {
   return {
     id: u.id,
     name: u.name,
-    email: u.email,
-    phone: u.phone ?? '',
+    email: u.email ?? null,
+    phone: u.phone ?? null,
+    has_password: Boolean(u.password_hash),
+    has_pin: Boolean(u.ivr_pin_hash),
     role: u.role,
     is_active: u.is_active === 1,
     created_at: u.created_at,
