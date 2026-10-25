@@ -33,7 +33,6 @@ export function readVoice(messages, valName) {
 }
 
 export const idListMessage = (messages) => `id_list_message=${joinMessages(messages)}`;
-export const hangup = () => 'go_to_folder=hangup';
 
 // ------------------------------------------------------------------ speaking values
 const DAY_WORDS = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
