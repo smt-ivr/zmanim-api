@@ -124,19 +124,18 @@ describe('ivr management', () => {
     // the manager calls: goes straight into the synagogue
     const m = yemotCall('052-111-2233');
     body = await m.start();
-    assert.match(body, /read=t-אהל משה\./);
+    assert.match(body, /read=t-אהל משה, זמני קיץ\./); // the season being worked on is announced
     assert.doesNotMatch(body, /הגדרות בית הכנסת/); // admin-only option hidden
 
-    // add: shacharit 06:30, every day, (no locations), all year
+    // add: shacharit 06:30, every day, (no locations), into the season being worked on
     await m.press('2');
     body = await m.press('1'); // prayer 1 = shacharit
     assert.match(body, /סוג הזמן/);
     await m.press('1'); // fixed
     body = await m.press('0630');
     assert.match(body, /באילו ימים/);
-    body = await m.press('1'); // every day -> seasons
-    assert.match(body, /בחירת עונה/);
-    body = await m.press('0');
+    body = await m.press('1'); // every day -> confirm (no season question)
+    assert.doesNotMatch(body, /עונה/);
     assert.match(body, /המניין: שחרית, בשעה 6 30, ראשון עד שישי/); // Shabbat is off: 'every day' = weekdays
     body = await m.press('1');
     assert.match(body, /המניין נשמר/);
@@ -148,8 +147,7 @@ describe('ivr management', () => {
     await m.press('2'); // anchor 2 = sunset
     await m.press('15');
     await m.press('1'); // before
-    await m.press('2'); // Sun-Thu
-    body = await m.press('0'); // all year
+    body = await m.press('2'); // Sun-Thu
     assert.match(body, /15 דקות לפני שקיעה, ראשון עד חמישי/);
     await m.press('1');
 
@@ -185,7 +183,7 @@ describe('ivr management', () => {
 
   test('edit: hide, change time, delete; quotas respected', async () => {
     await q(`INSERT INTO synagogues (name, max_minyanim) VALUES ('ב', 1)`).run();
-    await q(`INSERT INTO minyanim (synagogue_id, prayer_id, time_kind, time) VALUES (1, 1, 'fixed', '07:00')`).run();
+    await q(`INSERT INTO minyanim (synagogue_id, prayer_id, time_kind, time, season_id) VALUES (1, 1, 'fixed', '07:00', 1)`).run();
     const call = yemotCall('0583206823');
     await call.start();
     await call.press('1');
@@ -276,8 +274,8 @@ describe('ivr listening line', () => {
   beforeEach(async () => {
     await q(`INSERT INTO areas (name) VALUES ('גבעת שאול')`).run();
     await q(`INSERT INTO synagogues (name, area_id) VALUES ('אהל משה', 1), ('זכרון משה', 2)`).run();
-    await q(`INSERT INTO minyanim (synagogue_id, prayer_id, time_kind, time, days) VALUES (1, 1, 'fixed', '06:30', 127), (2, 1, 'fixed', '07:00', 127), (1, 1, 'fixed', '08:00', 64)`).run();
-    await q(`INSERT INTO minyanim (synagogue_id, prayer_id, time_kind, anchor_id, offset_minutes, days) VALUES (1, 2, 'relative', 2, -15, 127)`).run();
+    await q(`INSERT INTO minyanim (synagogue_id, prayer_id, time_kind, time, days, season_id) VALUES (1, 1, 'fixed', '06:30', 127, 1), (2, 1, 'fixed', '07:00', 127, 1), (1, 1, 'fixed', '08:00', 64, 1)`).run();
+    await q(`INSERT INTO minyanim (synagogue_id, prayer_id, time_kind, anchor_id, offset_minutes, days, season_id) VALUES (1, 2, 'relative', 2, -15, 127, 1)`).run();
   });
 
   test('anyone can call: area, prayer, day; Shabbat hidden while disabled', async () => {

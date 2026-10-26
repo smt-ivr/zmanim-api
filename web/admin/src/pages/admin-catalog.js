@@ -9,7 +9,7 @@ const MONTHS = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 
 const KINDS = {
   prayers: { title: 'סוגי תפילה', one: 'תפילה', hint: 'אפשר להגדיר טווח שעות מותר לכל תפילה. מניין בשעה קבועה מחוץ לטווח לא יישמר.' },
   anchors: { title: 'זמני ייחוס', one: 'זמן ייחוס', hint: 'נקודות זמן למניינים יחסיים, למשל "15 דק׳ לפני שקיעה". לכל זמן ייחוס אפשר להגביל לאילו תפילות הוא מותר.' },
-  seasons: { title: 'עונות', one: 'עונה', hint: 'מניין יכול להיות לכל השנה או לעונה מסוימת. הציבור רואה רק את העונה הנוכחית. אפשר לקבוע לכל עונה תאריך התחלה, והמערכת תתחלף אוטומטית.' },
+  seasons: { title: 'עונות', one: 'עונה', hint: 'כל מניין שייך לעונה. הציבור רואה רק את העונה הנוכחית. אפשר לקבוע לכל עונה תאריך התחלה, והמערכת תתחלף אוטומטית.' },
   areas: { title: 'אזורים', one: 'אזור', hint: 'לחלוקת בתי הכנסת לפי שכונה או עיר, ולסינון בממשק הציבורי.' },
 };
 
@@ -30,6 +30,7 @@ function CatalogList({ kind }) {
   const { data, error, loading, reload } = useLoad(() => api.get(`/admin/catalog/${kind}`), [kind]);
   const prayers = useLoad(() => (kind === 'anchors' ? api.get('/admin/catalog/prayers') : Promise.resolve([])), [kind]).data || [];
   const [editing, setEditing] = useState(null);
+  const [copying, setCopying] = useState(false);
 
   if (loading && !data) return html`<${Spinner} />`;
   if (error && !data) return html`<${ErrorBox} error=${error} onRetry=${reload} />`;
@@ -50,7 +51,8 @@ function CatalogList({ kind }) {
   }
 
   return html`<section class="narrow-section">
-    <div class="toolbar"><p class="muted grow">${def.hint}</p><${Button} kind="primary" icon="plus" onClick=${() => setEditing('new')}>הוספת ${def.one}<//></div>
+    <div class="toolbar"><p class="muted grow">${def.hint}</p>${kind === 'seasons' && data.length > 1 && html`<${Button} icon="copy" onClick=${() => setCopying(true)}>העתקה בין עונות בכל בתי הכנסת<//>`}
+      <${Button} kind="primary" icon="plus" onClick=${() => setEditing('new')}>הוספת ${def.one}<//></div>
     ${data.length === 0
       ? html`<${Empty} title="הרשימה ריקה" />`
       : html`<div class="card list">${data.map((r, i) => html`<div class="list-row" key=${r.id}>
@@ -71,7 +73,35 @@ function CatalogList({ kind }) {
         </div>`)}</div>`}
     ${editing && html`<${CatalogModal} kind=${kind} prayers=${prayers} row=${editing === 'new' ? null : editing} count=${data.length}
         onClose=${() => setEditing(null)} onSaved=${reload} />`}
+    ${copying && html`<${CopyAllModal} seasons=${data} onClose=${() => setCopying(false)} onDone=${reload} />`}
   </section>`;
+}
+
+/** Copies every synagogue's minyanim from one season to another (clashes are skipped). */
+function CopyAllModal({ seasons, onClose, onDone }) {
+  const initial = { from: seasons[0].id, to: seasons[1].id, replace: false };
+  const name = (id) => seasons.find((x) => x.id === id)?.name;
+  async function save(v) {
+    if (v.from === v.to) throw new Error('יש לבחור עונת יעד אחרת');
+    const sure = await confirm({
+      title: 'העתקה בכל בתי הכנסת',
+      body: `להעתיק את המניינים של זמני ${name(v.from)} לזמני ${name(v.to)} בכל בתי הכנסת?${v.replace ? ` המניינים הקיימים בזמני ${name(v.to)} יימחקו.` : ''}`,
+      confirmLabel: 'העתקה', danger: v.replace,
+    });
+    if (!sure) throw new Error('ההעתקה בוטלה');
+    return api.post('/admin/seasons/copy', { from_season_id: v.from, to_season_id: v.to, replace: v.replace });
+  }
+  const chips = (value, onPick, skip) => html`<div class="chips">${seasons.map((x) => html`<button type="button"
+      class=${cx('chip', value === x.id && 'on')} disabled=${x.id === skip} onClick=${() => onPick(x.id)}>זמני ${x.name}</button>`)}</div>`;
+  return html`<${FormModal} title="העתקת מניינים בין עונות" initial=${initial} save=${save} onClose=${onClose} submitLabel="העתקה"
+      onSaved=${(r) => { toast(`הועתקו ${r.copied} מניינים ב-${r.synagogues} בתי כנסת${r.skipped ? `, ${r.skipped} דולגו (כבר קיימים באותה שעה ובאותו מיקום)` : ''}`); onDone(); }}>
+    ${({ values: v, set }) => html`
+      <${Field} group label="מעונה">${chips(v.from, set('from'), v.to)}<//>
+      <${Field} group label="לעונה">${chips(v.to, set('to'), v.from)}<//>
+      <${Toggle} checked=${v.replace} onChange=${set('replace')} label="מחיקת המניינים הקיימים בעונת היעד לפני ההעתקה"
+          hint="בלי סימון, מניין שכבר קיים באותה שעה ובאותו מיקום ידולג" />
+      <p class="muted small">גבאי של בית כנסת יכול גם להעתיק בעצמו, מתוך מסך המניינים של העונה.</p>`}
+  <//>`;
 }
 
 function CatalogModal({ kind, prayers, row, count, onClose, onSaved }) {

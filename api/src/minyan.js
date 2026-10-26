@@ -102,7 +102,8 @@ export async function validateMinyan(env, synagogue, m) {
   if (!prayer) errors.prayer_id = 'סוג התפילה לא קיים';
   else if (!allowed) errors.prayer_id = 'תפילה זו לא מאושרת לבית הכנסת';
   if (m.location_id && (!location || location.synagogue_id !== synagogue.id)) errors.location_id = 'המיקום לא שייך לבית הכנסת';
-  if (m.season_id && !season) errors.season_id = 'העונה לא קיימת';
+  if (!m.season_id) errors.season_id = 'יש לבחור עונה';
+  else if (!season) errors.season_id = 'העונה לא קיימת';
   if (!m.days || m.days < 1 || m.days > ALL_DAYS) errors.days = 'יש לבחור לפחות יום אחד';
   else if (!settings.shabbat_enabled && (m.days & ~SHABBAT_BIT) === 0) errors.days = 'יש לבחור לפחות יום אחד';
 
@@ -142,7 +143,7 @@ export async function validateMinyan(env, synagogue, m) {
   }
 
   if (!Object.keys(errors).length && row.is_active !== false && row.is_active !== 0) {
-    const clash = siblings.find((o) => (o.days & m.days) && (!o.season_id || !m.season_id || o.season_id === m.season_id) && sameTime(o, row));
+    const clash = siblings.find((o) => (o.days & m.days) && o.season_id === m.season_id && sameTime(o, row));
     if (clash) errors.time = 'כבר קיים מניין באותה שעה ובאותו מיקום';
   }
   if (Object.keys(errors).length) throw invalid(errors);

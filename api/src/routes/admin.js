@@ -4,7 +4,7 @@ import { all, batch, first, marks, nowIso, q, run, setClause } from '../db.js';
 import { conflict, forbidden, invalid, json, noContent, notFound, readJson } from '../http.js';
 import { adminUrl, createEmailToken, sendMail } from '../mail.js';
 import { fields, id } from '../validate.js';
-import { INFO_FIELDS, parseFields, synagogueInfo, synagogueSettings } from './workspace.js';
+import { INFO_FIELDS, copySeason, parseFields, synagogueInfo, synagogueSettings } from './workspace.js';
 
 // ------------------------------------------------------------------ helpers
 async function assertIdsExist(env, table, ids, field) {
@@ -428,4 +428,23 @@ export async function sendWelcome(ctx) {
   guardSuper(ctx.actor, target);
   await welcomeMail(ctx, uid);
   return json({ sent_to: target.email });
+}
+
+// ------------------------------------------------------------------ copy a season in every synagogue
+/** POST /admin/seasons/copy { from_season_id, to_season_id, replace? } */
+export async function copySeasonAll({ env, actor, request }) {
+  const d = fields(await readJson(request))
+    .int('from_season_id', { required: true, min: 1 })
+    .int('to_season_id', { required: true, min: 1 })
+    .bool('replace', { default: false })
+    .done();
+  const synagogues = await all(env, `SELECT * FROM synagogues ORDER BY id`);
+  let copied = 0;
+  let skipped = 0;
+  for (const s of synagogues) {
+    const r = await copySeason(env, actor, s, { from: d.from_season_id, to: d.to_season_id, replace: d.replace });
+    copied += r.copied;
+    skipped += r.skipped.length;
+  }
+  return json({ copied, skipped, synagogues: synagogues.length });
 }

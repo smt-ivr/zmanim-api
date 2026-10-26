@@ -47,7 +47,8 @@ async function minyanimFor(c, { day, prayerId }) {
   if (c.state.data.area) (where.push('s.area_id = ?'), params.push(c.state.data.area));
   if (prayerId) (where.push('m.prayer_id = ?'), params.push(prayerId));
   const season = await currentSeason(c.env);
-  if (season) (where.push('(m.season_id IS NULL OR m.season_id = ?)'), params.push(season.id));
+  where.push('m.season_id = ?');
+  params.push(season?.id ?? 0);
   const rows = await all(
     c.env,
     `${MINYAN_SELECT.replace('FROM minyanim m', 'FROM minyanim m JOIN synagogues s ON s.id = m.synagogue_id')

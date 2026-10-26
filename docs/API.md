@@ -26,7 +26,7 @@ Base path: `/api`. JSON in and out. Authenticated calls send `Authorization: Bea
   "id": 7, "synagogue_id": 1,
   "prayer_id": 2, "prayer_name": "מנחה",
   "location_id": 3, "location_name": "היכל ראשי",
-  "season_id": null, "season_name": null,
+  "season_id": 2, "season_name": "חורף",
   "days": 31, "days_list": [0,1,2,3,4], "days_label": "א׳-ה׳",
   "time_kind": "relative", "time": null, "anchor_id": 2, "anchor_name": "שקיעה", "offset_minutes": -15,
   "time_label": "15 דק׳ לפני שקיעה",
@@ -36,7 +36,7 @@ Base path: `/api`. JSON in and out. Authenticated calls send `Authorization: Bea
 
 Write fields: `prayer_id` (required), `time_kind` (`fixed`|`relative`, required), `time` (`HH:MM`, for fixed),
 `anchor_id` + `offset_minutes` (−720…720, for relative; negative = before), `days` (1–127, default 127),
-`location_id`, `season_id` (null = all year), `notes`, `is_active`.
+`location_id`, `season_id` (required on create: every minyan belongs to one season; there is no "all year"), `notes`, `is_active`.
 
 ## Public (no login, cached 60s)
 
@@ -46,7 +46,7 @@ Write fields: `prayer_id` (required), `time_kind` (`fixed`|`relative`, required)
 | `GET /public/catalog` | `{ areas, prayers, seasons, anchors }` |
 | `GET /public/synagogues?area_id=` | Active synagogues |
 | `GET /public/synagogues/:id` | Synagogue + its active minyanim |
-| `GET /public/minyanim?area_id=&synagogue_id=&prayer_id=&season_id=&day=0..6` | Active minyanim across synagogues (`season_id` also returns all-year ones; `day`: 0 = Sunday … 6 = Shabbat) |
+| `GET /public/minyanim?area_id=&synagogue_id=&prayer_id=&season_id=&day=0..6` | Active minyanim across synagogues (only the current season, unless the admin opened the season choice; `day`: 0 = Sunday … 6 = Shabbat) |
 
 ## Phone extension (Yemot HaMashiach)
 
@@ -110,7 +110,8 @@ All routes also work under `BASE_PATH` (`/zmanim/api/...`).
 | `PUT /synagogues/:sid/locations/order` | `{ ids: [...] }`: the full new order |
 | `POST /synagogues/:sid/minyanim` | Create (respects `max_minyanim` and allowed prayers) |
 | `PATCH /synagogues/:sid/minyanim/:id` | Partial update, the merged result is validated as a whole |
-| `POST /synagogues/:sid/minyanim/:id/duplicate` | Copy |
+| `POST /synagogues/:sid/minyanim/:id/duplicate` | Copy (same season, saved hidden) |
+| `POST /synagogues/:sid/seasons/copy` | `{ from_season_id, to_season_id, minyan_ids?, replace? }` → `{ copied, skipped: [{ id, reason }] }`. Copies into the target season; a clash with an existing minyan is skipped; `replace` deletes the target season's minyanim first. Managers may target only seasons they can edit |
 | `DELETE /synagogues/:sid/minyanim/:id` | |
 
 `settings` = `{ can_edit_info, max_locations, max_minyanim, restrict_prayers, allowed_prayer_ids }` (`allowed_prayer_ids` is `null` when not restricted).
@@ -131,3 +132,4 @@ All routes also work under `BASE_PATH` (`/zmanim/api/...`).
 | `POST /admin/catalog/:kind` | prayers: `{ name, sort?, earliest?, latest? }` · seasons: `{ name, sort?, is_default? }` · others: `{ name, sort? }` |
 | `PATCH /admin/catalog/:kind/:id` | |
 | `DELETE /admin/catalog/:kind/:id` | `409 IN_USE` while referenced |
+| `POST /admin/seasons/copy` | `{ from_season_id, to_season_id, replace? }` → `{ copied, skipped, synagogues }`: the same copy for every synagogue |

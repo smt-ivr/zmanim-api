@@ -96,7 +96,8 @@ async function anchorsFor(c, prayerId) {
 }
 
 /** Spoken minyan; Shabbat is not mentioned while Shabbat is switched off. */
-const speakMinyanFor = (c) => (m) => speakFull({ ...m, days: visibleDays(m.days, c.settings) || m.days });
+// The caller always works inside one season (announced in the menu), so it is not repeated per minyan.
+const speakMinyanFor = (c) => (m) => speakFull({ ...m, season_name: null, days: visibleDays(m.days, c.settings) || m.days });
 
 /** Admins visible to this caller (a hidden super admin is visible only to himself). */
 const visibleAdmins = (c) =>
@@ -202,29 +203,34 @@ const SCREENS = {
     back: (c) => (c.state.data.single ? end(c) : goHome(c)),
     async prompt(c) {
       const s = await synagogue(c);
+      const season = await workSeason(c);
       const items = [['1', 'שמיעת המניינים'], ['2', 'הוספת מניין'], ['3', 'עריכת מניין'], ['4', 'ניהול מיקומים']];
       if (c.actor.role === 'admin') items.push(['5', 'הגדרות בית הכנסת'], ['6', 'מנהלי בית הכנסת']);
+      if ((await seasonsFor(c)).length > 1) items.push(['7', 'מעבר לעונה אחרת']);
       if (c.state.data.single) items.push(['9', 'דרישת סיסמה בשיחה']);
-      return menu(c, s.name, items, { star: !c.state.data.single });
+      return menu(c, season ? `${s.name}, זמני ${season.name}` : s.name, items, { star: !c.state.data.single });
     },
     async handle(c, input) {
       const admin = c.actor.role === 'admin';
       switch (input) {
         case '1': {
-          const list = await listMinyanim(c.env, c.state.data.sid);
-          if (!list.length) c.say.push(text('אין עדיין מניינים'));
+          const list = await seasonMinyanim(c);
+          if (!list.length) c.say.push(text('אין עדיין מניינים בעונה זו'));
           list.forEach((m, i) => c.say.push(text(`מניין ${i + 1}, ${speakMinyanFor(c)(m)}`)));
           return go(c, 'syn');
         }
         case '2': {
           c.state.data.mode = 'add';
-          c.state.data.draft = { days: 127, location_id: null, season_id: null, notes: '', is_active: true };
+          const season = await workSeason(c);
+          if (!season) { c.say.push(text('לא הוגדרו עונות. יש להגדיר עונות באתר הניהול')); return go(c, 'syn'); }
+          c.state.data.draft = { days: c.settings.shabbat_enabled ? 127 : 63, location_id: null, season_id: season.id, notes: '', is_active: true };
           return go(c, 'mPrayer');
         }
         case '3': return go(c, 'mEditPick');
         case '4': return go(c, 'locs');
         case '5': return admin ? go(c, 'synSettings') : invalid(c);
         case '6': return admin ? go(c, 'synManagers') : invalid(c);
+        case '7': return (await seasonsFor(c)).length > 1 ? go(c, 'synSeason') : invalid(c);
         case '9': return c.state.data.single ? go(c, 'phonePw') : invalid(c);
         default: return invalid(c);
       }
@@ -336,39 +342,33 @@ const SCREENS = {
       const i = chosenIndex(input, c.state.data.locs, { zero: true });
       if (i === null) return invalid(c);
       c.state.data.draft.location_id = i === -1 ? null : c.state.data.locs[i];
-      return c.state.data.mode === 'add' ? goSeason(c) : go(c, 'mConfirm');
+      return go(c, 'mConfirm');
     },
   },
-  mSeason: {
+  // The season the caller works in; a minyan is always added to it.
+  synSeason: {
     back: 'syn',
     async prompt(c) {
-      const s = await synagogue(c);
-      let seasons = await all(c.env, `SELECT id, name FROM seasons ORDER BY sort, id`);
-      if (c.actor.role !== 'admin' && !s.allow_other_seasons) {
-        const current = await currentSeason(c.env);
-        seasons = seasons.filter((x) => x.id === current?.id);
-      }
+      const seasons = await seasonsFor(c);
       c.state.data.seasons = seasons.map((x) => x.id);
-      return listChoice(c, 'בחירת עונה', seasons, (x) => `זמני ${x.name}`, { zero: 'כל השנה' });
+      return listChoice(c, 'בחירת עונה לעבודה', seasons, (x) => `זמני ${x.name}`);
     },
     handle(c, input) {
-      const i = chosenIndex(input, c.state.data.seasons, { zero: true });
+      const i = chosenIndex(input, c.state.data.seasons);
       if (i === null) return invalid(c);
-      c.state.data.draft.season_id = i === -1 ? null : c.state.data.seasons[i];
-      return go(c, 'mConfirm');
+      return go(c, 'syn', { season: c.state.data.seasons[i] });
     },
   },
   mConfirm: {
     back: 'syn',
     async prompt(c) {
       const d = c.state.data.draft;
-      const [prayer, anchor, loc, season] = await Promise.all([
+      const [prayer, anchor, loc] = await Promise.all([
         first(c.env, `SELECT name FROM prayers WHERE id = ?`, d.prayer_id),
         d.anchor_id ? first(c.env, `SELECT name FROM anchors WHERE id = ?`, d.anchor_id) : null,
         d.location_id ? first(c.env, `SELECT name FROM locations WHERE id = ?`, d.location_id) : null,
-        d.season_id ? first(c.env, `SELECT name FROM seasons WHERE id = ?`, d.season_id) : null,
       ]);
-      const summary = speakMinyanFor(c)({ ...d, prayer_name: prayer?.name, anchor_name: anchor?.name, location_name: loc?.name, season_name: season?.name });
+      const summary = speakMinyanFor(c)({ ...d, prayer_name: prayer?.name, anchor_name: anchor?.name, location_name: loc?.name });
       return menu(c, `המניין: ${summary}`, [['1', 'שמירה'], ['2', 'ביטול']]);
     },
     async handle(c, input) {
@@ -393,9 +393,9 @@ const SCREENS = {
   mEditPick: {
     back: 'syn',
     async prompt(c) {
-      const list = await listMinyanim(c.env, c.state.data.sid);
+      const list = await seasonMinyanim(c);
       c.state.data.mins = list.map((m) => m.id);
-      if (!list.length) return { ...menu(c, 'אין עדיין מניינים', []) };
+      if (!list.length) return { ...menu(c, 'אין עדיין מניינים בעונה זו', []) };
       return number(['הקישו את מספר המניין וסולמית. מספרי המניינים מושמעים בשמיעת המניינים. לחזרה הקישו כוכבית']);
     },
     async handle(c, input) {
@@ -683,14 +683,31 @@ const SCREENS = {
   },
 };
 
-// Wizard order: add = prayer, kind, time, days, location, season, confirm. Edit jumps to confirm after the changed part.
+// Wizard order: add = prayer, kind, time, days, location, confirm (the season is the one being worked on). Edit jumps to confirm after the changed part.
 const afterTime = (c) => (c.state.data.mode === 'add' ? go(c, 'mDays') : go(c, 'mConfirm'));
 const afterDays = (c) => (c.state.data.mode === 'add' ? goLocation(c) : go(c, 'mConfirm'));
 async function goLocation(c) {
   const { n } = await first(c.env, `SELECT COUNT(*) AS n FROM locations WHERE synagogue_id = ?`, c.state.data.sid);
-  return n ? go(c, 'mLoc') : goSeason(c);
+  return n ? go(c, 'mLoc') : go(c, 'mConfirm');
 }
-async function goSeason(c) {
-  const { n } = await first(c.env, `SELECT COUNT(*) AS n FROM seasons`);
-  return n ? go(c, 'mSeason') : go(c, 'mConfirm');
+/** Seasons this caller may write into: all for admins / approved synagogues, otherwise the current one. */
+async function seasonsFor(c) {
+  const s = await synagogue(c);
+  const seasons = await all(c.env, `SELECT id, name FROM seasons ORDER BY sort, id`);
+  if (c.actor.role === 'admin' || s.allow_other_seasons) return seasons;
+  const current = await currentSeason(c.env);
+  return seasons.filter((x) => x.id === current?.id);
+}
+
+/** The season being worked on: the one chosen in this call, otherwise the current season. */
+async function workSeason(c) {
+  const id = c.state.data.season;
+  if (id) return first(c.env, `SELECT id, name FROM seasons WHERE id = ?`, id);
+  const season = await currentSeason(c.env);
+  if (season) c.state.data.season = season.id;
+  return season;
+}
+async function seasonMinyanim(c) {
+  const season = await workSeason(c);
+  return (await listMinyanim(c.env, c.state.data.sid)).filter((m) => m.season_id === season?.id);
 }

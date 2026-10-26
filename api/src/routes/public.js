@@ -22,11 +22,11 @@ async function openSettings(env) {
 
 /**
  * Minyanim as the public sees them: Shabbat removed while disabled (minyanim left without days dropped),
- * notes hidden while notes are off, and only the given season (plus all-year minyanim).
+ * notes hidden while notes are off, and only the given season.
  */
 function publicMinyanim(rows, settings, seasonId, extra = () => ({})) {
   return rows
-    .filter((r) => !seasonId || !r.season_id || r.season_id === seasonId)
+    .filter((r) => r.season_id === seasonId)
     .map((r) => ({ ...r, days: visibleDays(r.days, settings), notes: settings.minyan_notes_enabled ? r.notes : '' }))
     .filter((r) => r.days !== 0)
     .map((r) => ({ ...serializeMinyan(r), ...extra(r) }));

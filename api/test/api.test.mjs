@@ -8,7 +8,9 @@ let env;
 let phoneSeq = 0;
 const nextPhone = () => `05${String(20000000 + ++phoneSeq)}`;
 
+// Every minyan belongs to a season. Tests that do not care use season 1 (the default, current season).
 function call(method, path, { token, body, ip = '1.1.1.1' } = {}) {
+  if (method === 'POST' && /\/minyanim$/.test(path) && body && !('season_id' in body)) body = { ...body, season_id: 1 };
   const headers = { 'CF-Connecting-IP': ip };
   if (token) headers.Authorization = `Bearer ${token}`;
   if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -428,7 +430,7 @@ describe('seasons, intervals, Rosh Chodesh, notes', () => {
 
     const post = (token, season_id, time) => call('POST', `/synagogues/${s.id}/minyanim`, { token, body: { prayer_id: 1, time_kind: 'fixed', time, season_id } });
     assert.equal((await post(m.token, current, '07:00')).status, 201);
-    assert.equal((await post(m.token, null, '07:30')).status, 201); // all year
+    assert.ok((await post(m.token, null, '07:30')).body.error.fields.season_id); // no "all year"
     const blocked = await post(m.token, other, '08:00');
     assert.equal(blocked.status, 403);
     assert.match(blocked.body.error.message, /ניתן לעדכן רק את זמני/);
@@ -437,11 +439,46 @@ describe('seasons, intervals, Rosh Chodesh, notes', () => {
     assert.equal((await post(m.token, other, '08:15')).status, 201);
 
     const pub = await call('GET', '/public/minyanim');
-    assert.deepEqual(pub.body.map((x) => x.time).sort(), ['07:00', '07:30']);
+    assert.deepEqual(pub.body.map((x) => x.time), ['07:00']);
     assert.equal((await call('GET', '/public/catalog')).body.current_season.id, current);
-    assert.equal((await call('GET', `/public/minyanim?season_id=${other}`)).body.length, 2, 'choice is closed by default');
+    assert.deepEqual((await call('GET', `/public/minyanim?season_id=${other}`)).body.map((x) => x.time), ['07:00'], 'choice is closed by default');
     await setSetting('public_season_choice', '1');
-    assert.deepEqual((await call('GET', `/public/minyanim?season_id=${other}`)).body.map((x) => x.time).sort(), ['07:30', '08:00', '08:15']);
+    assert.deepEqual((await call('GET', `/public/minyanim?season_id=${other}`)).body.map((x) => x.time).sort(), ['08:00', '08:15']);
+    assert.equal((await post(admin, other, '07:00')).status, 201, 'same time in another season is no clash');
+  });
+
+  test('copy minyanim from season to season', async () => {
+    const admin = await setupAdmin();
+    const s = await newSynagogue(admin);
+    const m = await createManager(admin, 'c@x.com', [s.id]);
+    const current = (await call('GET', `/synagogues/${s.id}`, { token: m.token })).body.catalog.current_season.id;
+    const other = current === 1 ? 2 : 1;
+    const post = (season_id, time) => call('POST', `/synagogues/${s.id}/minyanim`, { token: admin, body: { prayer_id: 1, time_kind: 'fixed', time, season_id } });
+    const a = (await post(other, '06:00')).body;
+    await post(other, '07:00');
+    await post(current, '07:00'); // already in the target season
+    const copy = (token, body) => call('POST', `/synagogues/${s.id}/seasons/copy`, { token, body });
+    const seasonTimes = async (id) => (await call('GET', `/synagogues/${s.id}`, { token: admin })).body.minyanim.filter((x) => x.season_id === id).map((x) => x.time).sort();
+
+    const r = await copy(m.token, { from_season_id: other, to_season_id: current });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.copied, 1);
+    assert.equal(r.body.skipped.length, 1, 'the clash is skipped, not doubled');
+    assert.match(r.body.skipped[0].reason, /באותה שעה/);
+    assert.deepEqual(await seasonTimes(current), ['06:00', '07:00']);
+
+    assert.equal((await copy(m.token, { from_season_id: current, to_season_id: other })).status, 403, 'managers write only the current season');
+    assert.equal((await copy(m.token, { from_season_id: current, to_season_id: current })).status, 422);
+
+    const r2 = await copy(admin, { from_season_id: other, to_season_id: current, minyan_ids: [a.id], replace: true });
+    assert.deepEqual([r2.body.copied, r2.body.skipped.length], [1, 0]);
+    assert.deepEqual(await seasonTimes(current), ['06:00'], 'replace clears the target first');
+
+    const all = await call('POST', '/admin/seasons/copy', { token: admin, body: { from_season_id: other, to_season_id: current, replace: true } });
+    assert.equal(all.status, 200);
+    assert.equal(all.body.copied, 2);
+    assert.deepEqual(await seasonTimes(current), ['06:00', '07:00']);
+    assert.equal((await call('POST', '/admin/seasons/copy', { token: m.token, body: { from_season_id: other, to_season_id: current } })).status, 403);
   });
 
   test('no two shown minyanim at the same time and place; intervals need approval', async () => {

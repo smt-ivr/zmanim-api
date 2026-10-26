@@ -2,7 +2,7 @@
 // Admins can open any synagogue the same way.
 import { requireSynagogue } from '../auth.js';
 import { all, batch, first, nowIso, q, run, setClause } from '../db.js';
-import { conflict, forbidden, json, noContent, notFound, readJson } from '../http.js';
+import { HttpError, conflict, forbidden, invalid, json, noContent, notFound, readJson } from '../http.js';
 import { ALL_DAYS, getMinyan, listMinyanim, validateMinyan } from '../minyan.js';
 import { currentSeason, getSettings } from '../settings.js';
 import { fields, id } from '../validate.js';
@@ -187,7 +187,7 @@ function parseMinyan(body, partial) {
   return fields(body, { partial })
     .int('prayer_id', { required: true, min: 1 })
     .int('location_id', { nullable: true, min: 1 })
-    .int('season_id', { nullable: true, min: 1 })
+    .int('season_id', { required: true, min: 1 })
     .int('days', { min: 1, max: ALL_DAYS, default: ALL_DAYS })
     .oneOf('time_kind', ['fixed', 'relative', 'interval'], { required: true })
     .time('time', { nullable: true })
@@ -204,13 +204,13 @@ function parseMinyan(body, partial) {
 export const MINYAN_COLUMNS = ['prayer_id', 'location_id', 'season_id', 'days', 'time_kind', 'time', 'end_time', 'every_minutes', 'anchor_id', 'offset_minutes', 'rosh_chodesh_time', 'notes', 'is_active'];
 
 /**
- * Managers edit only the current season (and all-year minyanim), unless the synagogue allows other
+ * Managers edit only the current season, unless the synagogue allows other
  * seasons. Admins edit everything. `seasonIds` are the seasons touched by the change.
  */
 export async function requireSeasonAccess(env, actor, s, ...seasonIds) {
   if (actor.role === 'admin' || s.allow_other_seasons) return;
   const current = await currentSeason(env);
-  if (seasonIds.some((sid) => sid && sid !== current?.id)) {
+  if (seasonIds.some((sid) => sid !== undefined && sid !== current?.id)) {
     throw forbidden(`ניתן לעדכן רק את ${current ? `זמני ${current.name}` : 'העונה הנוכחית'}. לעונות אחרות פנו למנהל המערכת`);
   }
 }
@@ -269,4 +269,47 @@ export async function deleteMinyan({ env, actor, params }) {
   await requireSeasonAccess(env, actor, s, current.season_id);
   await run(env, `DELETE FROM minyanim WHERE id = ?`, current.id);
   return noContent();
+}
+
+// ------------------------------------------------------------------ copy between seasons
+/**
+ * Copies the minyanim of one season into another season of the same synagogue.
+ * replace = delete what the target season has first; otherwise existing minyanim stay and copies that
+ * would clash with them (same time and place) are skipped. Managers may write only into seasons they may edit.
+ */
+export async function copySeason(env, actor, s, { from, to, ids = null, replace = false }) {
+  if (from === to) throw invalid({ to_season_id: 'יש לבחור עונת יעד אחרת' });
+  const found = await all(env, `SELECT id FROM seasons WHERE id IN (?, ?)`, from, to);
+  if (found.length !== 2) throw invalid({ to_season_id: 'העונה לא קיימת' });
+  await requireSeasonAccess(env, actor, s, to);
+
+  let rows = await all(env, `SELECT * FROM minyanim WHERE synagogue_id = ? AND season_id = ? ORDER BY id`, s.id, from);
+  if (ids) rows = rows.filter((r) => ids.includes(r.id));
+  if (replace) await run(env, `DELETE FROM minyanim WHERE synagogue_id = ? AND season_id = ?`, s.id, to);
+
+  let copied = 0;
+  const skipped = [];
+  for (const r of rows) {
+    const copy = Object.fromEntries(MINYAN_COLUMNS.map((c) => [c, r[c]]));
+    try {
+      await insertMinyan(env, s, { ...copy, season_id: to, is_active: r.is_active === 1 });
+      copied++;
+    } catch (err) {
+      if (!(err instanceof HttpError)) throw err;
+      skipped.push({ id: r.id, reason: err.fields ? Object.values(err.fields).join(', ') : err.message });
+    }
+  }
+  return { copied, skipped };
+}
+
+/** POST /synagogues/:sid/seasons/copy { from_season_id, to_season_id, minyan_ids?, replace? } */
+export async function copySeasonRoute({ env, actor, params, request }) {
+  const s = await loadSynagogue(env, actor, params.sid);
+  const d = fields(await readJson(request))
+    .int('from_season_id', { required: true, min: 1 })
+    .int('to_season_id', { required: true, min: 1 })
+    .ids('minyan_ids', { nullable: true })
+    .bool('replace', { default: false })
+    .done();
+  return json(await copySeason(env, actor, s, { from: d.from_season_id, to: d.to_season_id, ids: d.minyan_ids ?? null, replace: d.replace }));
 }
