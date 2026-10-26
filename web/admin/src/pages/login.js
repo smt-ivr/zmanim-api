@@ -1,5 +1,5 @@
 import { ApiError, api } from '../api.js';
-import { html, useEffect, useState } from '../lib.js';
+import { html, useEffect, useRef, useState } from '../lib.js';
 import { Button, Field, Icon, Input } from '../ui.js';
 
 function AuthCard({ title, subtitle, children }) {
@@ -33,13 +33,51 @@ function useSubmit(fn) {
   return { busy, error, fields, submit };
 }
 
+/** Loads Google's sign-in script once. */
+let gsiLoading;
+function loadGsi() {
+  gsiLoading ??= new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://accounts.google.com/gsi/client';
+    s.async = true;
+    s.onload = resolve;
+    s.onerror = () => { gsiLoading = null; reject(new Error('לא ניתן לטעון את הכניסה עם Google')); };
+    document.head.appendChild(s);
+  });
+  return gsiLoading;
+}
+
+/** Google's own "Sign in with Google" button; the account's e-mail must belong to a user here. */
+function GoogleButton({ clientId, onDone, onError }) {
+  const ref = useRef();
+  useEffect(() => {
+    let alive = true;
+    loadGsi().then(() => {
+      if (!alive || !ref.current) return;
+      window.google.accounts.id.initialize({
+        client_id: clientId,
+        callback: async ({ credential }) => {
+          try { onDone(await api.post('/auth/google', { credential })); } catch (e) { onError(e.message); }
+        },
+      });
+      window.google.accounts.id.renderButton(ref.current, {
+        theme: document.documentElement.dataset.theme === 'dark' ? 'filled_black' : 'outline',
+        size: 'large', text: 'signin_with', shape: 'rectangular', locale: 'he', width: Math.min(ref.current.offsetWidth || 320, 400),
+      });
+    }).catch((e) => onError(e.message));
+    return () => { alive = false; };
+  }, [clientId]);
+  return html`<div class="google-btn" ref=${ref} />`;
+}
+
 export function Login({ onDone }) {
   const [mode, setMode] = useState('password'); // password | link | reset
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
   const [show, setShow] = useState(false);
   const [sent, setSent] = useState(false);
-  const [options, setOptions] = useState({ magic_link: false, password_reset: false });
+  const [options, setOptions] = useState({ magic_link: false, password_reset: false, google_client_id: null });
+  const [googleError, setGoogleError] = useState(null);
   useEffect(() => { api.get('/auth/options').then(setOptions).catch(() => {}); }, []);
 
   const { busy, error, fields, submit } = useSubmit(async () => {
@@ -59,7 +97,10 @@ export function Login({ onDone }) {
   const titles = { password: ['כניסה למערכת', 'ניהול זמני המניינים של בית הכנסת'], link: ['כניסה בקישור למייל', 'נשלח לכם קישור כניסה, בלי סיסמה'], reset: ['איפוס סיסמה', 'נשלח לכם קישור לבחירת סיסמה חדשה'] };
   return html`<${AuthCard} title=${titles[mode][0]} subtitle=${titles[mode][1]}>
     <form class="form" onSubmit=${submit}>
-      ${error && html`<div class="alert alert-error">${error}</div>`}
+      ${(error || googleError) && html`<div class="alert alert-error">${error || googleError}</div>`}
+      ${mode === 'password' && options.google_client_id && html`
+        <${GoogleButton} clientId=${options.google_client_id} onDone=${onDone} onError=${setGoogleError} />
+        <div class="or"><span>או</span></div>`}
       <${Field} label="מייל או טלפון" error=${fields.login}>
         <${Input} dir="ltr" autocomplete="username" inputmode="email" value=${login} onInput=${setLogin} required autofocus />
       <//>

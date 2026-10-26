@@ -2,8 +2,9 @@
 import { hashPassword, publicUser, revokeSessions } from '../auth.js';
 import { all, batch, first, marks, nowIso, q, run, setClause } from '../db.js';
 import { conflict, forbidden, invalid, json, noContent, notFound, readJson } from '../http.js';
-import { adminUrl, createEmailToken, sendMail } from '../mail.js';
+import { adminUrl, createEmailToken, sendMail, siteUrl } from '../mail.js';
 import { fields, id } from '../validate.js';
+import { getSettings } from '../settings.js';
 import { CALCS } from '../zmanim.js';
 import { INFO_FIELDS, copySeason, parseFields, synagogueInfo, synagogueSettings } from './workspace.js';
 
@@ -409,17 +410,27 @@ async function welcomeMail({ env, url }, uid) {
   if (!u?.email) throw invalid({ email: 'למשתמש אין מייל' });
   const token = await createEmailToken(env, u.id, 'welcome');
   const synagogues = await all(env, `SELECT s.name FROM synagogue_managers sm JOIN synagogues s ON s.id = sm.synagogue_id WHERE sm.user_id = ?`, uid);
+  const settings = await getSettings(env);
   await sendMail(env, {
     to: u.email,
     subject: 'נפתח לך משתמש בזמני מניינים',
-    title: `שלום ${u.name}`,
+    title: `ברוך הבא, ${u.name}`,
+    site: siteUrl(env, url),
     paragraphs: [
-      u.role === 'admin' ? 'נפתח לך משתמש מנהל מערכת.' : `נפתח לך משתמש לניהול ${synagogues.map((s) => s.name).join(', ') || 'בית הכנסת'}.`,
-      `שם המשתמש שלך: ${u.phone || u.email} (אפשר גם עם המייל).`,
-      'הכפתור מכניס אותך ישר למערכת (תקף לשבוע, לשימוש אחד). את הסיסמה מקבלים ממנהל המערכת, ואפשר להחליף אותה בפרופיל.',
-      u.phone ? 'אפשר לנהל גם בטלפון: מתקשרים מהמספר שלך לשלוחת הניהול.' : '',
-    ].filter(Boolean),
+      u.role === 'admin' ? 'נפתח לך משתמש מנהל במערכת זמני המניינים.' : 'נפתח לך משתמש לעדכון זמני המניינים של בית הכנסת.',
+      'הכפתור למטה מכניס אותך ישר למערכת, בלי סיסמה.',
+    ],
+    details: [
+      ...(u.role === 'admin' ? [] : [['בית הכנסת', synagogues.map((s) => s.name).join(', ') || '—']]),
+      ['שם משתמש', u.phone ? `${u.phone} או ${u.email}` : u.email],
+      ['סיסמה', 'מקבלים ממנהל המערכת'],
+      ...(settings.google_login_enabled ? [['או', `כניסה עם חשבון Google של ${u.email}`]] : []),
+    ],
     button: { label: 'כניסה למערכת', url: adminUrl(env, url, `/link?t=${token}`) },
+    note: [
+      'הקישור בכפתור תקף לשבוע ולשימוש אחד. אחרי הכניסה אפשר לבחור סיסמה חדשה בעמוד הפרופיל.',
+      u.phone ? ' אפשר לנהל גם בטלפון: מתקשרים מהמספר שלך לשלוחת הניהול.' : '',
+    ].join(''),
   });
 }
 

@@ -54,9 +54,10 @@ export function ControlPage({ onChanged }) {
 
     <section class="card">
       <h3><${Icon} name="key" /> כניסה למערכת</h3>
-      ${!data.mail_ready && html`<p class="muted small">האפשרויות האלה פועלות רק כששליחת המיילים מוגדרת.</p>`}
+      ${!data.mail_ready && html`<p class="muted small">הכניסה בקישור ואיפוס הסיסמה פועלים רק כששליחת המיילים מוגדרת.</p>`}
       ${toggle('magic_link_enabled', 'כניסה עם קישור למייל', 'למי שלא זוכר סיסמה: מקבל קישור כניסה חד-פעמי למייל')}
       ${toggle('password_reset_enabled', 'איפוס סיסמה במייל', 'קישור לבחירת סיסמה חדשה. משתמש שנחסם לו שינוי סיסמה לא יכול לאפס')}
+      ${toggle('google_login_enabled', 'כניסה עם Google', 'כפתור "כניסה עם Google" במסך הכניסה. נכנסים רק משתמשים שהמייל שלהם במערכת זהה לחשבון Google')}
     </section>
 
     <section class="card">

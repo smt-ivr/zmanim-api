@@ -1,6 +1,6 @@
 import { all, first, nowIso, nowSec, run } from './db.js';
 import { forbidden, notFound, tooMany, unauthorized } from './http.js';
-import { normalizePhone } from './validate.js';
+import { normalizeEmail, normalizePhone } from './validate.js';
 
 const enc = new TextEncoder();
 
@@ -94,7 +94,7 @@ export async function findUserByLogin(env, identifier) {
   const phone = normalizePhone(identifier);
   return phone
     ? first(env, `SELECT * FROM users WHERE phone = ? AND is_active = 1`, phone)
-    : first(env, `SELECT * FROM users WHERE email = ? AND is_active = 1`, String(identifier).trim().toLowerCase());
+    : first(env, `SELECT * FROM users WHERE email = ? AND is_active = 1`, normalizeEmail(identifier) ?? '');
 }
 
 /** Starts a web session for an already verified user. `how` is recorded in the login history. */

@@ -1,7 +1,18 @@
 import { badRequest, invalid } from './http.js';
 
 export const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_RE = /^[A-Za-z0-9._%+'-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$/;
+
+// Invisible characters that sneak in when text is copied from Hebrew apps (WhatsApp, contacts):
+// direction marks (RLM/LRM), embeddings/isolates, zero-width spaces, BOM, soft hyphen.
+const INVISIBLE = /[\u00AD\u061C\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/g;
+/** Removes invisible characters, turns no-break spaces into spaces and trims. */
+export const clean = (s) => String(s ?? '').replace(INVISIBLE, '').replace(/[\u00A0\u2007\u202F]/g, ' ').trim();
+/** A cleaned, lower-cased e-mail address, or null when it is not one. */
+export function normalizeEmail(raw) {
+  const s = clean(raw).toLowerCase();
+  return EMAIL_RE.test(s) && s.length <= 200 ? s : null;
+}
 
 /** Israeli phone to local digits: '+972-58-320-6823' -> '0583206823'. Returns null when not a phone. */
 export function normalizePhone(raw) {
@@ -42,7 +53,7 @@ export function fields(body, { partial = false } = {}) {
     str(key, opts = {}) {
       return api._field(key, { empty: '', ...opts }, (v) => {
         if (typeof v !== 'string') return { error: 'חייב להיות טקסט' };
-        const s = v.trim();
+        const s = clean(v);
         if (!s && opts.required) return { error: 'שדה חובה' };
         if (opts.max && s.length > opts.max) return { error: `עד ${opts.max} תווים` };
         if (opts.min && s.length < opts.min) return { error: `לפחות ${opts.min} תווים` };
@@ -50,11 +61,7 @@ export function fields(body, { partial = false } = {}) {
       });
     },
     email(key, opts = {}) {
-      return api._field(key, opts, (v) =>
-        typeof v === 'string' && EMAIL_RE.test(v.trim()) && v.length <= 200
-          ? v.trim().toLowerCase()
-          : { error: 'כתובת מייל לא תקינה' }
-      );
+      return api._field(key, opts, (v) => (typeof v === 'string' && normalizeEmail(v)) || { error: 'כתובת מייל לא תקינה' });
     },
     phone(key, opts = {}) {
       return api._field(key, { nullable: true, ...opts }, (v) => normalizePhone(v) ?? { error: 'מספר טלפון לא תקין' });

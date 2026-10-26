@@ -1,9 +1,9 @@
 import { checkLock, createSession, findUserByLogin, hashPassword, login, logout, publicUser, recordFailure, revokeSessions, verifyPassword } from '../auth.js';
-import { adminUrl, consumeEmailToken, createEmailToken, mailReady, sendMail } from '../mail.js';
+import { adminUrl, consumeEmailToken, createEmailToken, mailReady, sendMail, siteUrl } from '../mail.js';
 import { all, first, nowIso, run } from '../db.js';
-import { forbidden, invalid, json, noContent, readJson, tooMany } from '../http.js';
+import { forbidden, invalid, json, noContent, readJson, tooMany, unauthorized } from '../http.js';
 import { getSettings } from '../settings.js';
-import { fields } from '../validate.js';
+import { fields, normalizeEmail } from '../validate.js';
 
 export async function postLogin({ env, request }) {
   // "login" = e-mail or phone ("email" accepted too, for older clients)
@@ -95,7 +95,35 @@ const MAIL_LIMIT = { max: 3, window: 3600, lock: 3600 };
 export async function getOptions({ env }) {
   const s = await getSettings(env);
   const ready = await mailReady(env);
-  return json({ magic_link: ready && s.magic_link_enabled, password_reset: ready && s.password_reset_enabled });
+  return json({
+    magic_link: ready && s.magic_link_enabled,
+    password_reset: ready && s.password_reset_enabled,
+    google_client_id: s.google_login_enabled && s.google_client_id ? s.google_client_id : null,
+  });
+}
+
+/**
+ * POST /auth/google { credential }: the ID token from Google's sign-in button. Google checks the signature
+ * (tokeninfo); we check it was issued to our app, the e-mail is verified, and a user has that e-mail.
+ */
+export async function postGoogle({ env, request }) {
+  const s = await getSettings(env);
+  if (!s.google_login_enabled || !s.google_client_id) throw forbidden('הכניסה עם Google סגורה כרגע');
+  const d = fields(await readJson(request)).str('credential', { required: true, max: 4096 }).done();
+  const res = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(d.credential)}`);
+  const g = res.ok ? await res.json() : null;
+  if (!g?.email || g.aud !== s.google_client_id || String(g.email_verified) !== 'true' || Number(g.exp) * 1000 < Date.now()) {
+    throw unauthorized('האימות מול Google נכשל. נסו שוב');
+  }
+  const email = normalizeEmail(g.email);
+  const key = `google:${email}`;
+  await checkLock(env, key);
+  const user = email && (await first(env, `SELECT * FROM users WHERE email = ? AND is_active = 1`, email));
+  if (!user) {
+    await recordFailure(env, key, { max: 5, window: 900, lock: 900 });
+    throw unauthorized(`אין במערכת משתמש פעיל עם המייל ${g.email}. פנו למנהל המערכת`);
+  }
+  return json(await createSession(env, request, user, 'Google'));
 }
 
 /**
@@ -117,12 +145,16 @@ async function sendLink(ctx, purpose) {
   const token = await createEmailToken(env, user.id, purpose);
   const link = adminUrl(env, url, `/${purpose === 'login' ? 'link' : 'reset'}?t=${token}`);
   await sendMail(env, purpose === 'login'
-    ? { to: user.email, subject: 'קישור כניסה לזמני מניינים', title: `שלום ${user.name}`,
-        paragraphs: ['ביקשת להיכנס בלי סיסמה. הקישור תקף ל-30 דקות ולשימוש אחד.', 'אם לא ביקשת, אפשר להתעלם מהמייל.'],
-        button: { label: 'כניסה למערכת', url: link } }
-    : { to: user.email, subject: 'איפוס סיסמה - זמני מניינים', title: `שלום ${user.name}`,
-        paragraphs: ['ביקשת לאפס את הסיסמה. הקישור תקף לשעה ולשימוש אחד.', 'אם לא ביקשת, אפשר להתעלם מהמייל. הסיסמה הנוכחית נשארת בתוקף.'],
-        button: { label: 'בחירת סיסמה חדשה', url: link } });
+    ? { to: user.email, subject: 'קישור כניסה לזמני מניינים', title: `שלום ${user.name}`, site: siteUrl(env, url),
+        paragraphs: ['ביקשת להיכנס למערכת בלי סיסמה. לחיצה על הכפתור מכניסה אותך ישר.'],
+        details: [['תוקף הקישור', '30 דקות'], ['שימוש', 'פעם אחת']],
+        button: { label: 'כניסה למערכת', url: link },
+        note: 'אם לא ביקשת להיכנס, אפשר להתעלם מהמייל. בלי הקישור אי אפשר להיכנס לחשבון שלך.' }
+    : { to: user.email, subject: 'איפוס סיסמה - זמני מניינים', title: `שלום ${user.name}`, site: siteUrl(env, url),
+        paragraphs: ['ביקשת לאפס את הסיסמה. בכפתור בוחרים סיסמה חדשה ונכנסים למערכת.'],
+        details: [['תוקף הקישור', 'שעה'], ['שימוש', 'פעם אחת']],
+        button: { label: 'בחירת סיסמה חדשה', url: link },
+        note: 'אם לא ביקשת, אפשר להתעלם מהמייל. הסיסמה הנוכחית נשארת בתוקף.' });
   return noContent();
 }
 

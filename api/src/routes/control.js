@@ -1,7 +1,7 @@
 // Super-admin control panel and messages to the developers.
 import { all, first, nowIso, run } from '../db.js';
 import { forbidden, invalid, json, noContent, notFound, readJson } from '../http.js';
-import { sendMail } from '../mail.js';
+import { sendMail, siteUrl } from '../mail.js';
 import { SETTINGS, getSettings, publicView, saveSettings } from '../settings.js';
 import { fields, id } from '../validate.js';
 
@@ -30,10 +30,14 @@ export async function patchControl({ env, request }) {
 }
 
 /** Sends a test e-mail to the super admin. */
-export async function testMail({ env, actor }) {
+export async function testMail({ env, actor, url }) {
   const me = await first(env, `SELECT email, name FROM users WHERE id = ?`, actor.id);
   if (!me.email) throw invalid({ email: 'למשתמש שלך אין מייל' });
-  await sendMail(env, { to: me.email, subject: 'בדיקת מייל - זמני מניינים', title: `שלום ${me.name}`, paragraphs: ['שליחת המיילים מוגדרת ועובדת.'] });
+  await sendMail(env, {
+    to: me.email, subject: 'בדיקת מייל - זמני מניינים', title: `שלום ${me.name}`, site: siteUrl(env, url),
+    paragraphs: ['זהו מייל בדיקה. אם הוא הגיע אליך, שליחת המיילים מוגדרת ועובדת.'],
+    details: [['נשלח אל', me.email]],
+  });
   return json({ sent_to: me.email });
 }
 
@@ -70,7 +74,7 @@ export async function listFeedback({ env }) {
 }
 
 /** Mark read/unread, and/or answer. The answer shows in the user's messages page; send_email also mails it. */
-export async function patchFeedback({ env, params, request }) {
+export async function patchFeedback({ env, params, request, url }) {
   const fid = id(params.id);
   const f = await first(env, `SELECT f.*, u.email, u.name FROM feedback f JOIN users u ON u.id = f.user_id WHERE f.id = ?`, fid);
   if (!f) throw notFound();
@@ -82,8 +86,10 @@ export async function patchFeedback({ env, params, request }) {
     if (d.reply && d.send_email) {
       if (!f.email) throw invalid({ send_email: 'למשתמש אין מייל' });
       await sendMail(env, {
-        to: f.email, subject: 'תשובה לפנייה שלך - זמני מניינים', title: `שלום ${f.name}`,
-        paragraphs: ['קיבלנו את הפנייה שלך:', f.body, 'התשובה:', d.reply],
+        to: f.email, subject: 'תשובה לפנייה שלך - זמני מניינים', title: `שלום ${f.name}`, site: siteUrl(env, url),
+        paragraphs: ['צוות הפיתוח השיב לפנייה ששלחת.'],
+        quotes: [{ label: 'הפנייה שלך', text: f.body }, { label: 'התשובה', text: d.reply, accent: true }],
+        note: 'אפשר לראות את כל הפניות והתשובות במערכת, בעמוד "פנייה לצוות".',
       });
       emailed = true;
     }

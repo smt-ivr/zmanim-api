@@ -30,6 +30,7 @@ export const router = new Router()
   // session
   .post('/auth/login', auth.postLogin, PUBLIC)
   .get('/auth/options', auth.getOptions, PUBLIC)
+  .post('/auth/google', auth.postGoogle, PUBLIC)
   .post('/auth/email-link', auth.postEmailLink, PUBLIC)
   .post('/auth/email-link/verify', auth.postEmailLinkVerify, PUBLIC)
   .post('/auth/reset-request', auth.postResetRequest, PUBLIC)

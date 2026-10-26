@@ -545,6 +545,11 @@ describe('e-mail (Resend mocked)', () => {
         sent.push({ headers: init.headers, body: JSON.parse(init.body) });
         return new Response(JSON.stringify({ id: 'x' }), { status: 200 });
       }
+      if (String(u).startsWith('https://oauth2.googleapis.com/tokeninfo')) {
+        // fake Google: the "token" is the JSON Google would return for it
+        const info = decodeURIComponent(String(u).split('id_token=')[1]);
+        return info === 'bad' ? new Response('{}', { status: 400 }) : new Response(info, { status: 200 });
+      }
       return realFetch(u, init);
     };
   });
@@ -558,7 +563,7 @@ describe('e-mail (Resend mocked)', () => {
   test('control hides the key; test mail; options follow the switches', async () => {
     const admin = await setupAdmin();
     await env.DB.prepare(`UPDATE users SET is_super = 1`).run();
-    assert.deepEqual((await call('GET', '/auth/options')).body, { magic_link: false, password_reset: false });
+    assert.deepEqual((await call('GET', '/auth/options')).body, { magic_link: false, password_reset: false, google_client_id: '89500817024-tbvsuu4dci6bqh173l65ua9lc65pe24p.apps.googleusercontent.com' });
     await enableMail();
     const ctl = await call('GET', '/admin/control', { token: admin });
     assert.equal(ctl.body.resend_api_key, '••••1234');
@@ -567,7 +572,7 @@ describe('e-mail (Resend mocked)', () => {
     assert.equal((await call('POST', '/admin/control/test-mail', { token: admin })).status, 200);
     assert.equal(sent[0].headers.Authorization, 'Bearer re_secret_1234');
     assert.deepEqual(sent[0].body.to, ['admin@x.com']);
-    assert.deepEqual((await call('GET', '/auth/options')).body, { magic_link: true, password_reset: true });
+    assert.deepEqual((await call('GET', '/auth/options')).body, { magic_link: true, password_reset: true, google_client_id: '89500817024-tbvsuu4dci6bqh173l65ua9lc65pe24p.apps.googleusercontent.com' });
     await setSetting('magic_link_enabled', '0');
     assert.equal((await call('POST', '/auth/email-link', { body: { login: 'admin@x.com' } })).status, 403);
   });
@@ -614,5 +619,62 @@ describe('e-mail (Resend mocked)', () => {
     assert.equal(r.body.emailed, true);
     assert.match(sent.at(-1).body.text, /בטח, נוסיף/);
     assert.equal((await call('GET', '/me/feedback', { token: login.body.token })).body.items[0].reply, 'בטח, נוסיף');
+  });
+
+  test('invisible characters are removed; a bad recipient gets a clear error', async () => {
+    const admin = await setupAdmin();
+    await enableMail();
+    const pasted = '\u200F\u202Ana0527143567@Gmail.com\u202C\u200F';
+    const u = await call('POST', '/admin/users', { token: admin, body: { name: '\u200Fנחמן ', email: pasted, phone: '\u200F052-714-3567', password: 'pass1234', role: 'manager' } });
+    assert.equal(u.status, 201, JSON.stringify(u.body));
+    assert.equal(u.body.email, 'na0527143567@gmail.com');
+    assert.equal(u.body.name, 'נחמן');
+    assert.equal(u.body.phone, '0527143567');
+    assert.equal((await call('POST', '/auth/login', { body: { login: pasted, password: 'pass1234' } })).status, 200, 'login with the pasted address too');
+    await env.DB.prepare(`UPDATE users SET email = ? WHERE id = ?`).bind('not an email', u.body.id).run(); // old bad data
+    const r = await call('POST', `/admin/users/${u.body.id}/welcome`, { token: admin });
+    assert.equal(r.status, 422);
+    assert.match(r.body.error.message, /כתובת המייל של הנמען אינה תקינה/);
+  });
+
+  test('e-mails look like the site: header, details, button, footer', async () => {
+    const admin = await setupAdmin();
+    await enableMail();
+    const u = await call('POST', '/admin/users', { token: admin, body: { name: 'דוד', email: 'd@x.com', phone: '0521234567', password: 'pass1234', role: 'manager', send_welcome: true } });
+    assert.equal(u.status, 201);
+    const html = sent.at(-1).body.html;
+    assert.match(html, /dir="rtl"/);
+    assert.match(html, /זמני מניינים/);
+    assert.match(html, /ברוך הבא, דוד/);
+    assert.match(html, /שם משתמש/);
+    assert.match(html, /כניסה עם חשבון Google/);
+    assert.match(html, /href="[^"]*\/admin\/#\/link\?t=[0-9a-f]+"/);
+    assert.match(html, /שמיעת הזמנים בטלפון/);
+    assert.match(sent.at(-1).body.text, /שם משתמש: 0521234567 או d@x\.com/);
+  });
+
+  test('sign in with Google: our app, verified e-mail, existing active user', async () => {
+    const admin = await setupAdmin();
+    const google = (claims) => call('POST', '/auth/google', { body: { credential: JSON.stringify({ aud: '89500817024-tbvsuu4dci6bqh173l65ua9lc65pe24p.apps.googleusercontent.com', email_verified: 'true', exp: String(Math.floor(Date.now() / 1000) + 600), ...claims }) } });
+    const ok = await google({ email: 'Admin@x.com' });
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    assert.ok(ok.body.token);
+    assert.equal(ok.body.user.email, 'admin@x.com');
+    const logins = (await call('GET', '/me/logins', { token: ok.body.token })).body;
+    assert.match(logins[0].detail, /Google/);
+
+    assert.equal((await google({ email: 'admin@x.com', aud: 'someone-else' })).status, 401, 'token for another app');
+    assert.equal((await google({ email: 'admin@x.com', email_verified: 'false' })).status, 401);
+    assert.equal((await google({ email: 'admin@x.com', exp: '1' })).status, 401, 'expired');
+    assert.equal((await call('POST', '/auth/google', { body: { credential: 'bad' } })).status, 401);
+    const nobody = await google({ email: 'nobody@x.com' });
+    assert.equal(nobody.status, 401);
+    assert.match(nobody.body.error.message, /אין במערכת משתמש פעיל עם המייל nobody@x\.com/);
+
+    await call('PATCH', '/admin/control', { token: admin, body: { google_login_enabled: false } }); // not super: refused
+    await env.DB.prepare(`UPDATE users SET is_super = 1`).run();
+    await call('PATCH', '/admin/control', { token: admin, body: { google_login_enabled: false } });
+    assert.equal((await google({ email: 'admin@x.com' })).status, 403);
+    assert.equal((await call('GET', '/auth/options')).body.google_client_id, null);
   });
 });
