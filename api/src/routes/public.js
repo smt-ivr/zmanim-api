@@ -5,6 +5,7 @@ import { MINYAN_ORDER, MINYAN_SELECT, serializeMinyan } from '../minyan.js';
 import { currentSeason, getSettings, visibleDays } from '../settings.js';
 import { id, queryInt } from '../validate.js';
 import { synagogueInfo } from './workspace.js';
+import { anchorTimes, israelDate, placeOf } from '../zmanim.js';
 
 const CACHE = { 'Cache-Control': 'public, max-age=60, stale-while-revalidate=300' };
 
@@ -54,12 +55,18 @@ export async function catalog({ env }) {
     all(env, `SELECT id, name FROM areas ORDER BY sort, name`),
     all(env, `SELECT id, name FROM prayers ORDER BY sort, id`),
     all(env, `SELECT id, name, is_default FROM seasons ORDER BY sort, id`),
-    all(env, `SELECT id, name FROM anchors ORDER BY sort, id`),
+    all(env, `SELECT id, name, calc FROM anchors ORDER BY sort, id`),
   ]);
+  // Clock times of the computed anchors for today and the next 6 days, so relative minyanim show a time.
+  const place = placeOf(settings);
+  const zmanim = Array.from({ length: 7 }, (_, i) => {
+    const date = israelDate(new Date(Date.now() + i * 86400000));
+    return { date, times: anchorTimes(anchors, date, place) };
+  });
   return json({
     site,
     current_season: current ? { id: current.id, name: current.name } : null,
-    areas, prayers, seasons: seasons.map((s) => ({ ...s, is_default: s.is_default === 1 })), anchors,
+    areas, prayers, seasons: seasons.map((s) => ({ ...s, is_default: s.is_default === 1 })), anchors, zmanim,
   }, 200, CACHE);
 }
 

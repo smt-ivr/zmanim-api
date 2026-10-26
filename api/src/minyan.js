@@ -27,7 +27,7 @@ export function timeLabel(m) {
 
 export const MINYAN_SELECT = `
   SELECT m.*, p.name AS prayer_name, p.sort AS prayer_sort, l.name AS location_name,
-         se.name AS season_name, a.name AS anchor_name, p.has_rosh_chodesh
+         se.name AS season_name, a.name AS anchor_name, a.calc AS anchor_calc, p.has_rosh_chodesh
   FROM minyanim m
   JOIN prayers p ON p.id = m.prayer_id
   LEFT JOIN locations l ON l.id = m.location_id

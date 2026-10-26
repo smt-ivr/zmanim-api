@@ -8,7 +8,7 @@ const MONTHS = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 
 
 const KINDS = {
   prayers: { title: 'סוגי תפילה', one: 'תפילה', hint: 'אפשר להגדיר טווח שעות מותר לכל תפילה. מניין בשעה קבועה מחוץ לטווח לא יישמר.' },
-  anchors: { title: 'זמני ייחוס', one: 'זמן ייחוס', hint: 'נקודות זמן למניינים יחסיים, למשל "15 דק׳ לפני שקיעה". לכל זמן ייחוס אפשר להגביל לאילו תפילות הוא מותר.' },
+  anchors: { title: 'זמני ייחוס', one: 'זמן ייחוס', hint: 'נקודות זמן למניינים יחסיים, למשל "15 דק׳ לפני שקיעה". לכל זמן ייחוס בוחרים איך הוא מחושב (הנץ, שקיעה וכו׳), כדי שהמערכת תדע את השעה בפועל בכל יום, ואפשר להגביל לאילו תפילות הוא מותר.' },
   seasons: { title: 'עונות', one: 'עונה', hint: 'כל מניין שייך לעונה. הציבור רואה רק את העונה הנוכחית. אפשר לקבוע לכל עונה תאריך התחלה, והמערכת תתחלף אוטומטית.' },
   areas: { title: 'אזורים', one: 'אזור', hint: 'לחלוקת בתי הכנסת לפי שכונה או עיר, ולסינון בממשק הציבורי.' },
 };
@@ -28,7 +28,7 @@ export function AdminCatalog() {
 function CatalogList({ kind }) {
   const def = KINDS[kind];
   const { data, error, loading, reload } = useLoad(() => api.get(`/admin/catalog/${kind}`), [kind]);
-  const prayers = useLoad(() => (kind === 'anchors' ? api.get('/admin/catalog/prayers') : Promise.resolve([])), [kind]).data || [];
+  const prayers = useLoad(() => (kind === 'anchors' || kind === 'seasons' ? api.get('/admin/catalog/prayers') : Promise.resolve([])), [kind]).data || [];
   const [editing, setEditing] = useState(null);
   const [copying, setCopying] = useState(false);
 
@@ -65,6 +65,7 @@ function CatalogList({ kind }) {
             ${r.is_default && html` <${Badge}>ברירת מחדל<//>`}
             ${kind === 'seasons' && r.starts_md && html` <span class="muted small">מתחילה ב-${Number(r.starts_md.slice(3))} ב${MONTHS[Number(r.starts_md.slice(0, 2)) - 1]}</span>`}
             ${kind === 'prayers' && r.has_rosh_chodesh && html` <${Badge}>ראש חודש<//>`}
+            ${kind === 'anchors' && html` <${Badge} tone=${r.calc ? 'info' : 'warn'}>${r.calc ? `מחושב: ${CALC_NAMES[r.calc]}` : 'לא מחושב'}<//>`}
             ${kind === 'anchors' && html` <span class="muted small">${r.prayer_ids?.length ? `ל${prayers.filter((p) => r.prayer_ids.includes(p.id)).map((p) => p.name).join(', ')} בלבד` : 'לכל התפילות'}</span>`}
           </div>
           <span class="muted small">${r.used ? `בשימוש: ${r.used}` : 'לא בשימוש'}</span>
@@ -73,23 +74,26 @@ function CatalogList({ kind }) {
         </div>`)}</div>`}
     ${editing && html`<${CatalogModal} kind=${kind} prayers=${prayers} row=${editing === 'new' ? null : editing} count=${data.length}
         onClose=${() => setEditing(null)} onSaved=${reload} />`}
-    ${copying && html`<${CopyAllModal} seasons=${data} onClose=${() => setCopying(false)} onDone=${reload} />`}
+    ${copying && html`<${CopyAllModal} seasons=${data} prayers=${prayers} onClose=${() => setCopying(false)} onDone=${reload} />`}
   </section>`;
 }
 
 /** Copies every synagogue's minyanim from one season to another (clashes are skipped). */
-function CopyAllModal({ seasons, onClose, onDone }) {
-  const initial = { from: seasons[0].id, to: seasons[1].id, replace: false };
+function CopyAllModal({ seasons, prayers, onClose, onDone }) {
+  const initial = { from: seasons[0].id, to: seasons[1].id, replace: false, prayer_ids: prayers.map((p) => p.id) };
   const name = (id) => seasons.find((x) => x.id === id)?.name;
   async function save(v) {
     if (v.from === v.to) throw new Error('יש לבחור עונת יעד אחרת');
+    if (!v.prayer_ids.length) throw new Error('יש לבחור לפחות תפילה אחת');
+    const allPrayers = v.prayer_ids.length === prayers.length;
+    const which = allPrayers ? 'המניינים' : `מניני ${prayers.filter((p) => v.prayer_ids.includes(p.id)).map((p) => p.name).join(', ')}`;
     const sure = await confirm({
       title: 'העתקה בכל בתי הכנסת',
-      body: `להעתיק את המניינים של זמני ${name(v.from)} לזמני ${name(v.to)} בכל בתי הכנסת?${v.replace ? ` המניינים הקיימים בזמני ${name(v.to)} יימחקו.` : ''}`,
+      body: `להעתיק את ${which} של זמני ${name(v.from)} לזמני ${name(v.to)} בכל בתי הכנסת?${v.replace ? ` ${which} הקיימים בזמני ${name(v.to)} יימחקו.` : ''}`,
       confirmLabel: 'העתקה', danger: v.replace,
     });
     if (!sure) throw new Error('ההעתקה בוטלה');
-    return api.post('/admin/seasons/copy', { from_season_id: v.from, to_season_id: v.to, replace: v.replace });
+    return api.post('/admin/seasons/copy', { from_season_id: v.from, to_season_id: v.to, replace: v.replace, prayer_ids: allPrayers ? null : v.prayer_ids });
   }
   const chips = (value, onPick, skip) => html`<div class="chips">${seasons.map((x) => html`<button type="button"
       class=${cx('chip', value === x.id && 'on')} disabled=${x.id === skip} onClick=${() => onPick(x.id)}>זמני ${x.name}</button>`)}</div>`;
@@ -98,18 +102,23 @@ function CopyAllModal({ seasons, onClose, onDone }) {
     ${({ values: v, set }) => html`
       <${Field} group label="מעונה">${chips(v.from, set('from'), v.to)}<//>
       <${Field} group label="לעונה">${chips(v.to, set('to'), v.from)}<//>
+      <${Field} group label="אילו תפילות להעתיק">
+        <div class="chips">${prayers.map((p) => html`<button type="button" class=${cx('chip', v.prayer_ids.includes(p.id) && 'on')}
+          onClick=${() => set('prayer_ids')(v.prayer_ids.includes(p.id) ? v.prayer_ids.filter((x) => x !== p.id) : [...v.prayer_ids, p.id])}>${p.name}</button>`)}</div><//>
       <${Toggle} checked=${v.replace} onChange=${set('replace')} label="מחיקת המניינים הקיימים בעונת היעד לפני ההעתקה"
-          hint="בלי סימון, מניין שכבר קיים באותה שעה ובאותו מיקום ידולג" />
+          hint="רק של התפילות שנבחרו. בלי סימון, מניין שכבר קיים באותה שעה ובאותו מיקום ידולג" />
       <p class="muted small">גבאי של בית כנסת יכול גם להעתיק בעצמו, מתוך מסך המניינים של העונה.</p>`}
   <//>`;
 }
+
+const CALC_NAMES = { alot: 'עלות השחר', sunrise: 'הנץ החמה', chatzot: 'חצות היום', sunset: 'שקיעה', tzeit: 'צאת הכוכבים', rabbeinu_tam: 'רבינו תם (72 דק׳ אחרי שקיעה)' };
 
 function CatalogModal({ kind, prayers, row, count, onClose, onSaved }) {
   const def = KINDS[kind];
   const [sm, sd] = (row?.starts_md || '-').split('-');
   const initial = {
     name: row?.name ?? '', earliest: row?.earliest ?? '', latest: row?.latest ?? '', is_default: row?.is_default ?? false, prayer_ids: row?.prayer_ids ?? [],
-    has_rosh_chodesh: row?.has_rosh_chodesh ?? false, start_month: sm ? Number(sm) : null, start_day: sd ? Number(sd) : null,
+    has_rosh_chodesh: row?.has_rosh_chodesh ?? false, calc: row?.calc ?? null, start_month: sm ? Number(sm) : null, start_day: sd ? Number(sd) : null,
   };
   const save = (v) => {
     const body = { name: v.name };
@@ -118,7 +127,7 @@ function CatalogModal({ kind, prayers, row, count, onClose, onSaved }) {
       body.is_default = v.is_default;
       body.starts_md = v.start_month && v.start_day ? `${String(v.start_month).padStart(2, '0')}-${String(v.start_day).padStart(2, '0')}` : null;
     }
-    if (kind === 'anchors') body.prayer_ids = v.prayer_ids;
+    if (kind === 'anchors') Object.assign(body, { prayer_ids: v.prayer_ids, calc: v.calc });
     if (!row) body.sort = (count + 1) * 10;
     return row ? api.patch(`/admin/catalog/${kind}/${row.id}`, body) : api.post(`/admin/catalog/${kind}`, body);
   };
@@ -138,6 +147,10 @@ function CatalogModal({ kind, prayers, row, count, onClose, onSaved }) {
             <${Select} value=${v.start_month} onChange=${set('start_month')} placeholder="חודש" options=${MONTHS.map((m, i) => ({ value: i + 1, label: m }))} />
           </div><//>
         <${Toggle} checked=${v.is_default} onChange=${set('is_default')} label="עונת ברירת מחדל" hint="משמשת כשאין לעונות תאריכי התחלה" />`}
+      ${kind === 'anchors' && html`<${Field} group label="איך מחשבים את הזמן" error=${errors.calc}
+          hint="כך המערכת יודעת מתי המניין בפועל (למשל 15 דקות לפני השקיעה של היום), כדי להשמיע ולהציג אותו לפי השעה">
+        <div class="chips">${[[null, 'לא מחושב'], ...Object.entries(CALC_NAMES)].map(([k, l]) => html`<button type="button"
+          class=${cx('chip', v.calc === k && 'on')} onClick=${() => set('calc')(k)}>${l}</button>`)}</div><//>`}
       ${kind === 'anchors' && html`<${Field} group label="מותר לתפילות" hint="לא סומן כלום = מותר לכל התפילות" error=${errors.prayer_ids}>
         <${CheckList} options=${prayers.map((p) => ({ value: p.id, label: p.name }))} value=${v.prayer_ids} onChange=${set('prayer_ids')} /><//>`}`}
   <//>`;

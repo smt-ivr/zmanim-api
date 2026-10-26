@@ -39,11 +39,25 @@ function isRoshChodesh(offset = 0) {
   return d === 30 || (d === 1 && !/^Tishri/.test(p.month));
 }
 
-/** The time a minyan starts on the shown day (Rosh Chodesh time when relevant). */
-const effectiveTime = (m, rc) => (rc && m.rosh_chodesh_time ? m.rosh_chodesh_time : m.time);
+/**
+ * Adds `clock` to minyanim set relative to a computed time of day (sunset, ...): the clock time on the day
+ * `offset` days from today, from the server's zmanim. Null offset (whole week) or an uncomputed anchor: no clock.
+ */
+function withClock(list, catalog, offset) {
+  const times = offset === null ? null : catalog.zmanim?.[offset]?.times;
+  return list.map((m) => {
+    if (m.time_kind !== 'relative' || !times?.[m.anchor_id]) return m;
+    const t = toMinutes(times[m.anchor_id]) + (m.offset_minutes || 0);
+    return t >= 0 && t < 1440 ? { ...m, clock: hhmm(t) } : m;
+  });
+}
+
+/** The time a minyan starts on the shown day (Rosh Chodesh time when relevant; computed time when relative). */
+const effectiveTime = (m, rc) => (m.time_kind === 'relative' ? m.clock : rc && m.rosh_chodesh_time ? m.rosh_chodesh_time : m.time);
+const hasClock = (m) => m.time_kind !== 'relative' || Boolean(m.clock);
 
 function nextStart(m, nowMin, rc) {
-  if (m.time_kind === 'fixed') { const t = toMinutes(effectiveTime(m, rc)); return t >= nowMin ? t : null; }
+  if (m.time_kind === 'fixed' || m.clock) { const t = toMinutes(effectiveTime(m, rc)); return t >= nowMin ? t : null; }
   if (m.time_kind === 'interval') {
     for (let t = toMinutes(m.time); t <= toMinutes(m.end_time); t += m.every_minutes) if (t >= nowMin) return t;
   }
@@ -57,6 +71,7 @@ function TimeCell({ m, rc, cls = 'time' }) {
       ? html`<span class=${cls}>${m.rosh_chodesh_time}<small class="rc">ר״ח</small></span>`
       : html`<span class=${cls}>${m.time}<small class="rc-hint">ר״ח ${m.rosh_chodesh_time}</small></span>`;
   }
+  if (m.clock) return html`<span class=${cls}>${m.clock}<small class="rc-hint">${m.time_label}</small></span>`;
   return html`<span class=${cx(cls, m.time_kind === 'relative' && 'rel', m.time_kind === 'interval' && 'interval')}>${m.time_label}</span>`;
 }
 
@@ -188,13 +203,13 @@ function Home({ data, season: pickedSeason, setSeason }) {
   const day = (now.day + offset) % 7;
   const validArea = area !== null && catalog.areas.some((a) => a.id === area) ? area : null;
 
-  const shown = useMemo(() => minyanim.filter((m) => {
+  const shown = useMemo(() => withClock(minyanim.filter((m) => {
     const s = byId.get(m.synagogue_id);
     return s && (m.days & (1 << day)) &&
       (validArea === null || s.area_id === validArea) &&
       (prayer === null || m.prayer_id === prayer) &&
       (!q || norm(`${s.name} ${s.address} ${s.area_name || ''} ${m.location_name || ''}`).includes(norm(q)));
-  }), [minyanim, day, validArea, prayer, q]);
+  }), catalog, offset), [minyanim, day, validArea, prayer, q, offset]);
 
   // Next start of each minyan from now (interval minyanim: the next slot)
   const rc = isRoshChodesh(offset);
@@ -264,7 +279,7 @@ function groupByPrayer(list, catalog, rc = false) {
   const groups = new Map();
   for (const m of list) {
     if (!groups.has(m.prayer_id)) groups.set(m.prayer_id, { name: m.prayer_name, fixed: [], relative: [] });
-    groups.get(m.prayer_id)[m.time_kind === 'relative' ? 'relative' : 'fixed'].push(m);
+    groups.get(m.prayer_id)[hasClock(m) ? 'fixed' : 'relative'].push(m);
   }
   return [...groups.entries()].sort((a, b) => (order.get(a[0]) ?? 99) - (order.get(b[0]) ?? 99)).map(([, g]) => {
     g.fixed.sort((a, b) => effectiveTime(a, rc).localeCompare(effectiveTime(b, rc)));
@@ -319,7 +334,7 @@ function SynagoguePage({ data, id }) {
   const [day, setDay] = useState(null); // null = whole week
   if (!s) return html`<div class="state"><b>בית הכנסת לא נמצא</b><a class="btn" href="#/">לכל בתי הכנסת</a></div>`;
   const all = data.minyanim.filter((m) => m.synagogue_id === id);
-  const list = day === null ? all : all.filter((m) => m.days & (1 << day));
+  const list = day === null ? all : withClock(all.filter((m) => m.days & (1 << day)), data.catalog, (day - today + 7) % 7);
   const rc = day === null ? false : isRoshChodesh((day - today + 7) % 7);
   const groups = groupByPrayer(list, data.catalog, rc);
   const mapUrl = s.address ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.address)}` : null;

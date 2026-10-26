@@ -1,5 +1,6 @@
 // Public listening line: anyone can call and hear today's minyan times.
-// Area (or 0 = all) -> prayer (or 0 = everything soon) -> from what time (or 0 = from now).
+// Area (or 0 = all) -> prayer (or 0 = everything soon) -> from what time (0 = from now, 00 = the whole day).
+// Minyanim set relative to sunrise / sunset get today's clock time, so they sort and filter like the rest.
 // Each minyan is one short sentence: "מנחה בשעה 13 30 באהל משה בעזרת נשים".
 // No identification; uses the same engine as the management line.
 import { all } from '../db.js';
@@ -7,6 +8,7 @@ import { MINYAN_ORDER, MINYAN_SELECT } from '../minyan.js';
 import { currentSeason, getSettings, isRoshChodesh, visibleDays } from '../settings.js';
 import { callStore, chosenIndex, go, goodbye, invalid, listChoice, menu, number, readParams, reply, runCall } from './engine.js';
 import { speakClock, text } from './yemot.js';
+import { CALCS, israelDate, placeOf, zmanTime } from '../zmanim.js';
 
 const PAGE = 8;
 
@@ -35,6 +37,7 @@ function israelNow(env) {
     day: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(parts.weekday),
     minutes: Number(parts.hour) * 60 + Number(parts.minute),
     roshChodesh: isRoshChodesh(date),
+    date: israelDate(date),
   };
 }
 const toMinutes = (hhmm) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3));
@@ -64,10 +67,11 @@ async function todaysMinyanim(c, now, prayerId) {
 
 /**
  * One sentence per minyan starting at `from` or later, in time order. The Rosh Chodesh time is used only
- * on Rosh Chodesh; an interval minyan gives one sentence per start. Minyanim relative to a time of day
- * come last (their clock time is not computed).
+ * on Rosh Chodesh; an interval minyan gives one sentence per start; a minyan relative to a computed time
+ * of day (sunset, ...) gets today's clock time. Relative to an anchor that is not computed: last.
  */
-function sentences(rows, now, from) {
+function sentences(rows, now, from, place) {
+  const zman = (kind) => (CALCS[kind] ? zmanTime(now.date, kind, place) : null);
   const where = (r) => `ב${r.synagogue_name}${r.location_name ? ` ב${r.location_name}` : ''}`;
   const timed = [];
   const relative = [];
@@ -77,6 +81,10 @@ function sentences(rows, now, from) {
       if (t >= from) timed.push({ t, r });
     } else if (r.time_kind === 'interval') {
       for (let t = toMinutes(r.time); t <= toMinutes(r.end_time); t += r.every_minutes) if (t >= from) timed.push({ t, r });
+    } else if (zman(r.anchor_calc)) {
+      const base = zman(r.anchor_calc);
+      const t = toMinutes(base) + (r.offset_minutes || 0);
+      if (t >= from) timed.push({ t, r });
     } else {
       const n = Math.abs(r.offset_minutes);
       relative.push(`${r.prayer_name} ${n ? `${n} דקות ${r.offset_minutes < 0 ? 'לפני' : 'אחרי'} ${r.anchor_name}` : `ב${r.anchor_name}`} ${where(r)}`);
@@ -100,9 +108,9 @@ async function list(c, prayerId, from) {
     return go(c, 'main');
   }
   const start = from ?? now.minutes;
-  const rest = sentences(await todaysMinyanim(c, now, prayerId), now, start);
+  const rest = sentences(await todaysMinyanim(c, now, prayerId), now, start, placeOf(c.settings));
   if (!rest.length) {
-    c.say.push(text(from === null ? 'אין מניינים נוספים היום' : `אין מניינים מהשעה ${speakClock(hhmm(start))}`));
+    c.say.push(text(from === null ? 'אין מניינים נוספים היום' : from === 0 ? 'אין מניינים היום' : `אין מניינים מהשעה ${speakClock(hhmm(start))}`));
     return go(c, 'main');
   }
   if (now.roshChodesh) c.say.push(text('היום ראש חודש'));
@@ -149,9 +157,10 @@ const SCREENS = {
 
   time: {
     back: 'main',
-    prompt: () => number(['הקישו שעה וסולמית', 'אפשר להקיש גם דקות, אבל לא חובה', 'למניינים הקרובים הקישו 0 וסולמית'], { max: 4 }),
+    prompt: () => number(['הקישו שעה וסולמית', 'אפשר להקיש גם דקות, אבל לא חובה', 'למניינים הקרובים הקישו 0 וסולמית', 'לכל המניינים של היום מההתחלה הקישו 0 0 וסולמית'], { max: 4 }),
     handle(c, input) {
       if (input === '0') return list(c, c.state.data.prayerId, null);
+      if (input === '00') return list(c, c.state.data.prayerId, 0);
       const from = parseClock(input);
       return from === null ? invalid(c) : list(c, c.state.data.prayerId, from);
     },

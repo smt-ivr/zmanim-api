@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 import { hashPassword } from '../src/auth.js';
 import { isRoshChodesh } from '../src/settings.js';
+import { relativeClock, zmanTime } from '../src/zmanim.js';
+import { speakClock } from '../src/ivr/yemot.js';
 import worker from '../src/index.js';
 import { D1Shim } from './d1-shim.mjs';
 
@@ -301,7 +303,8 @@ describe('ivr listening line', () => {
     assert.match(body, /לכל המניינים הקרובים הקישו 0/);
     body = await call.press('1'); // שחרית
     assert.match(body, /t-הקישו שעה וסולמית\.t-אפשר להקיש גם דקות, אבל לא חובה/);
-    assert.doesNotMatch(body, /יום/); // no day question
+    assert.doesNotMatch(body, /בחירת יום|ליום/); // no day question
+    assert.match(body, /לכל המניינים של היום מההתחלה הקישו 0 0 וסולמית/);
     body = await call.press('0630');
     assert.match(body, /t-שחרית בשעה 6 30 באהל משה בעזרת נשים&/);
     assert.doesNotMatch(body, /זכרון משה/); // other area
@@ -315,14 +318,16 @@ describe('ivr listening line', () => {
     assert.match(body, /אין מניינים מהשעה 6 31/);
   });
 
-  test('0 = everything soon; Rosh Chodesh time only on Rosh Chodesh; relative times last', async () => {
+  test('0 = everything soon; Rosh Chodesh time only on Rosh Chodesh; relative times get today\'s clock', async () => {
     await q(`UPDATE minyanim SET rosh_chodesh_time = '06:15' WHERE id = 1`).run();
-    env.FIXED_NOW = at(findDay(false), '06:20');
+    const plain = findDay(false);
+    env.FIXED_NOW = at(plain, '06:20');
+    const mincha = relativeClock({ anchor_id: 2, offset_minutes: -15 }, { 2: zmanTime(plain, 'sunset', { lat: 31.778, lng: 35.235 }) });
     let call = listen();
     await call.start();
     await call.press('0'); // all areas
     let body = await call.press('0'); // all prayers, from now
-    assert.match(body, /t-שחרית בשעה 6 30 באהל משה\.t-שחרית בשעה 7 בזכרון משה\.t-מנחה 15 דקות לפני שקיעה באהל משה/);
+    assert.ok(body.includes(`t-שחרית בשעה 6 30 באהל משה.t-שחרית בשעה 7 בזכרון משה.t-מנחה בשעה ${speakClock(mincha)} באהל משה`), body);
     assert.doesNotMatch(body, /ראש חודש|6 15/);
 
     env.FIXED_NOW = at(findDay(true), '06:10');
@@ -332,6 +337,22 @@ describe('ivr listening line', () => {
     body = await call.press('0');
     assert.match(body, /t-היום ראש חודש\.t-שחרית בשעה 6 15 באהל משה\.t-שחרית בשעה 7/);
     assert.doesNotMatch(body, /6 30/);
+  });
+
+  test('00 = the whole day; a time filters computed minyanim too; uncomputed anchors come last', async () => {
+    const day = findDay(false);
+    env.FIXED_NOW = at(day, '12:00');
+    await q(`INSERT INTO anchors (name) VALUES ('סוף זמן קריאת שמע')`).run();
+    await q(`INSERT INTO minyanim (synagogue_id, prayer_id, time_kind, anchor_id, offset_minutes, days, season_id) VALUES (1, 1, 'relative', 4, -30, 127, 1)`).run();
+    let call = listen();
+    await call.start();
+    await call.press('0');
+    await call.press('1'); // שחרית
+    let body = await call.press('00');
+    assert.match(body, /t-שחרית בשעה 6 30 באהל משה\.t-שחרית בשעה 7 בזכרון משה\.t-שחרית 30 דקות לפני סוף זמן קריאת שמע באהל משה/);
+    await call.press('2'); // מנחה
+    body = await call.press('20');
+    assert.match(body, /אין מניינים מהשעה 20/, 'mincha before sunset is earlier than 20:00');
   });
 
   test('long lists are read in pages', async () => {

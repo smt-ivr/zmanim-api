@@ -325,10 +325,14 @@ function CopySeasonModal({ data, to, onClose, onDone }) {
 
   async function save(v) {
     if (!v.ids.length) throw new Error('לא נבחרו מניינים להעתקה');
-    if (v.replace && count(to) && !(await confirm({ title: 'החלפת מניינים', body: `${pluralize(count(to), 'מניין', 'מניינים')} בזמני ${toName} יימחקו ויוחלפו. להמשיך?`, confirmLabel: 'החלפה', danger: true }))) {
+    const copiedPrayers = new Set(minyanim.filter((m) => v.ids.includes(m.id)).map((m) => m.prayer_id));
+    const doomed = minyanim.filter((m) => m.season_id === to && copiedPrayers.has(m.prayer_id)).length;
+    if (v.replace && doomed && !(await confirm({ title: 'החלפת מניינים', body: `${pluralize(doomed, 'מניין', 'מניינים')} בזמני ${toName} יימחקו ויוחלפו. להמשיך?`, confirmLabel: 'החלפה', danger: true }))) {
       throw new Error('ההעתקה בוטלה');
     }
-    return api.post(`/synagogues/${s.id}/seasons/copy`, { from_season_id: v.from, to_season_id: to, minyan_ids: v.ids, replace: v.replace });
+    // replace clears only the prayers being copied
+    const prayer_ids = [...new Set(minyanim.filter((m) => v.ids.includes(m.id)).map((m) => m.prayer_id))];
+    return api.post(`/synagogues/${s.id}/seasons/copy`, { from_season_id: v.from, to_season_id: to, minyan_ids: v.ids, prayer_ids, replace: v.replace });
   }
 
   return html`<${FormModal} title=${`העתקה לזמני ${toName}`} initial=${initial} save=${save} onClose=${onClose} submitLabel="העתקה"
@@ -337,12 +341,23 @@ function CopySeasonModal({ data, to, onClose, onDone }) {
         onDone();
       }}>
     ${({ values: v, setValues, set }) => {
-      const list = minyanim.filter((m) => m.season_id === v.from);
+      const source = minyanim.filter((m) => m.season_id === v.from);
+      const prayerIds = [...new Set(source.map((m) => m.prayer_id))];
+      const prayersShown = catalog.prayers.filter((p) => prayerIds.includes(p.id));
+      // Choosing prayers selects (or clears) all their minyanim; single minyanim can then be unchecked.
+      const prayerOn = (pid) => source.some((m) => m.prayer_id === pid && v.ids.includes(m.id));
+      const togglePrayer = (pid) => {
+        const of = source.filter((m) => m.prayer_id === pid).map((m) => m.id);
+        set('ids')(prayerOn(pid) ? v.ids.filter((x) => !of.includes(x)) : [...new Set([...v.ids, ...of])]);
+      };
+      const list = source;
       const toggle = (id) => set('ids')(v.ids.includes(id) ? v.ids.filter((x) => x !== id) : [...v.ids, id]);
       return html`
         <${Field} group label="מאיזו עונה להעתיק">
           <div class="chips">${sources.map((x) => html`<button type="button" class=${cx('chip', v.from === x.id && 'on')}
               onClick=${() => setValues((o) => ({ ...o, from: x.id, ids: pick(x.id) }))}>זמני ${x.name} (${count(x.id)})</button>`)}</div><//>
+        ${prayersShown.length > 1 && html`<${Field} group label="אילו תפילות להעתיק">
+          <div class="chips">${prayersShown.map((p) => html`<button type="button" class=${cx('chip', prayerOn(p.id) && 'on')} onClick=${() => togglePrayer(p.id)}>${p.name}</button>`)}</div><//>`}
         ${list.length === 0
           ? html`<div class="alert alert-info">אין מניינים בעונה זו</div>`
           : html`<${Field} group label=${`מניינים להעתקה (${v.ids.length} מתוך ${list.length})`}>
@@ -352,7 +367,7 @@ function CopySeasonModal({ data, to, onClose, onDone }) {
                 ${list.map((m) => html`<label class="check" key=${m.id}><input type="checkbox" checked=${v.ids.includes(m.id)} onChange=${() => toggle(m.id)} />
                   ${m.prayer_name} · <span>${m.time_label}</span><small class="muted">${m.days_label}${m.location_name ? ` · ${m.location_name}` : ''}</small></label>`)}
               </div></div><//>`}
-        <${Toggle} checked=${v.replace} onChange=${set('replace')} label=${`מחיקת המניינים הקיימים בזמני ${toName} לפני ההעתקה`}
+        <${Toggle} checked=${v.replace} onChange=${set('replace')} label=${`מחיקת המניינים הקיימים בזמני ${toName} לפני ההעתקה (רק של התפילות שמועתקות)`}
             hint=${count(to) ? `כרגע יש ${pluralize(count(to), 'מניין', 'מניינים')} בזמני ${toName}. בלי סימון, מניין שכבר קיים באותה שעה ובאותו מיקום ידולג` : 'אין כרגע מניינים בעונת היעד'} />
         <p class="muted small">המניינים המועתקים הם עותק נפרד: אחרי ההעתקה אפשר לשנות בזמני ${toName} רק את מה שמשתנה.</p>`;
     }}

@@ -52,7 +52,7 @@ export function parseFields(json) {
 /** Anchors with the prayers they may be used for (empty list = all prayers). */
 export async function anchorsWithPrayers(env) {
   const [anchors, links] = await Promise.all([
-    all(env, `SELECT id, name FROM anchors ORDER BY sort, id`),
+    all(env, `SELECT id, name, calc FROM anchors ORDER BY sort, id`),
     all(env, `SELECT anchor_id, prayer_id FROM anchor_prayers`),
   ]);
   return anchors.map((a) => ({ ...a, prayer_ids: links.filter((l) => l.anchor_id === a.id).map((l) => l.prayer_id) }));
@@ -277,7 +277,7 @@ export async function deleteMinyan({ env, actor, params }) {
  * replace = delete what the target season has first; otherwise existing minyanim stay and copies that
  * would clash with them (same time and place) are skipped. Managers may write only into seasons they may edit.
  */
-export async function copySeason(env, actor, s, { from, to, ids = null, replace = false }) {
+export async function copySeason(env, actor, s, { from, to, ids = null, prayerIds = null, replace = false }) {
   if (from === to) throw invalid({ to_season_id: 'יש לבחור עונת יעד אחרת' });
   const found = await all(env, `SELECT id FROM seasons WHERE id IN (?, ?)`, from, to);
   if (found.length !== 2) throw invalid({ to_season_id: 'העונה לא קיימת' });
@@ -285,7 +285,11 @@ export async function copySeason(env, actor, s, { from, to, ids = null, replace 
 
   let rows = await all(env, `SELECT * FROM minyanim WHERE synagogue_id = ? AND season_id = ? ORDER BY id`, s.id, from);
   if (ids) rows = rows.filter((r) => ids.includes(r.id));
-  if (replace) await run(env, `DELETE FROM minyanim WHERE synagogue_id = ? AND season_id = ?`, s.id, to);
+  if (prayerIds) rows = rows.filter((r) => prayerIds.includes(r.prayer_id));
+  // replace: clears the target season (only the chosen prayers, when prayers were chosen)
+  if (replace && prayerIds) {
+    if (prayerIds.length) await run(env, `DELETE FROM minyanim WHERE synagogue_id = ? AND season_id = ? AND prayer_id IN (${prayerIds.map(() => '?').join(',')})`, s.id, to, ...prayerIds);
+  } else if (replace) await run(env, `DELETE FROM minyanim WHERE synagogue_id = ? AND season_id = ?`, s.id, to);
 
   let copied = 0;
   const skipped = [];
@@ -302,14 +306,15 @@ export async function copySeason(env, actor, s, { from, to, ids = null, replace 
   return { copied, skipped };
 }
 
-/** POST /synagogues/:sid/seasons/copy { from_season_id, to_season_id, minyan_ids?, replace? } */
+/** POST /synagogues/:sid/seasons/copy { from_season_id, to_season_id, minyan_ids?, prayer_ids?, replace? } */
 export async function copySeasonRoute({ env, actor, params, request }) {
   const s = await loadSynagogue(env, actor, params.sid);
   const d = fields(await readJson(request))
     .int('from_season_id', { required: true, min: 1 })
     .int('to_season_id', { required: true, min: 1 })
     .ids('minyan_ids', { nullable: true })
+    .ids('prayer_ids', { nullable: true })
     .bool('replace', { default: false })
     .done();
-  return json(await copySeason(env, actor, s, { from: d.from_season_id, to: d.to_season_id, ids: d.minyan_ids ?? null, replace: d.replace }));
+  return json(await copySeason(env, actor, s, { from: d.from_season_id, to: d.to_season_id, ids: d.minyan_ids ?? null, prayerIds: d.prayer_ids ?? null, replace: d.replace }));
 }

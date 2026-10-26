@@ -21,6 +21,9 @@ export async function patchControl({ env, request }) {
   // The masked key shown in the panel ("••••abcd") means "unchanged".
   if (typeof d.resend_api_key === 'string' && d.resend_api_key.includes('••••')) delete d.resend_api_key;
   if (d.mail_from && !/^[^<>]*<?[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+>?$/.test(d.mail_from)) throw invalid({ mail_from: 'כתובת שולח לא תקינה. לדוגמה: זמני מניינים <noreply@example.com>' });
+  for (const [k, lim] of [['zmanim_lat', 90], ['zmanim_lng', 180]]) {
+    if (d[k] !== undefined && !(Math.abs(Number(d[k])) <= lim && d[k] !== '')) throw invalid({ [k]: 'מספר לא תקין' });
+  }
   if (d.listen_phone && !/^[\d-]{7,15}$/.test(d.listen_phone)) throw invalid({ listen_phone: 'מספר טלפון לא תקין' });
   await saveSettings(env, d);
   return json(publicView(await getSettings(env)));

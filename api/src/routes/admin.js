@@ -4,6 +4,7 @@ import { all, batch, first, marks, nowIso, q, run, setClause } from '../db.js';
 import { conflict, forbidden, invalid, json, noContent, notFound, readJson } from '../http.js';
 import { adminUrl, createEmailToken, sendMail } from '../mail.js';
 import { fields, id } from '../validate.js';
+import { CALCS } from '../zmanim.js';
 import { INFO_FIELDS, copySeason, parseFields, synagogueInfo, synagogueSettings } from './workspace.js';
 
 // ------------------------------------------------------------------ helpers
@@ -289,8 +290,10 @@ const CATALOG = {
     table: 'anchors',
     usedBy: `SELECT COUNT(*) AS n FROM minyanim WHERE anchor_id = ?`,
     // prayer_ids: which prayers may use this anchor ([] = all)
-    parse: (b, partial) => fields(b, { partial }).str('name', { required: true, max: 60 }).int('sort', { default: 0 }).ids('prayer_ids', { default: [] }).done(),
-    columns: ['name', 'sort'],
+    // calc: how the time is computed (sunrise, sunset, ...); null = not computed
+    parse: (b, partial) => fields(b, { partial }).str('name', { required: true, max: 60 }).int('sort', { default: 0 }).ids('prayer_ids', { default: [] })
+      .oneOf('calc', Object.keys(CALCS), { nullable: true, default: null }).done(),
+    columns: ['name', 'sort', 'calc'],
     links: { table: 'anchor_prayers', owner: 'anchor_id', other: 'prayer_id', field: 'prayer_ids' },
   },
 };
@@ -437,12 +440,13 @@ export async function copySeasonAll({ env, actor, request }) {
     .int('from_season_id', { required: true, min: 1 })
     .int('to_season_id', { required: true, min: 1 })
     .bool('replace', { default: false })
+    .ids('prayer_ids', { nullable: true })
     .done();
   const synagogues = await all(env, `SELECT * FROM synagogues ORDER BY id`);
   let copied = 0;
   let skipped = 0;
   for (const s of synagogues) {
-    const r = await copySeason(env, actor, s, { from: d.from_season_id, to: d.to_season_id, replace: d.replace });
+    const r = await copySeason(env, actor, s, { from: d.from_season_id, to: d.to_season_id, prayerIds: d.prayer_ids ?? null, replace: d.replace });
     copied += r.copied;
     skipped += r.skipped.length;
   }

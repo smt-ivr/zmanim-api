@@ -43,7 +43,7 @@ Write fields: `prayer_id` (required), `time_kind` (`fixed`|`relative`, required)
 | | |
 |---|---|
 | `GET /health` | `{ ok: true }` |
-| `GET /public/catalog` | `{ areas, prayers, seasons, anchors }` |
+| `GET /public/catalog` | `{ site, current_season, areas, prayers, seasons, anchors, zmanim }`. `zmanim` = 7 days from today: `[{ date, times: { anchorId: "HH:MM" } }]` for the computed anchors (`anchor.calc`) |
 | `GET /public/synagogues?area_id=` | Active synagogues |
 | `GET /public/synagogues/:id` | Synagogue + its active minyanim |
 | `GET /public/minyanim?area_id=&synagogue_id=&prayer_id=&season_id=&day=0..6` | Active minyanim across synagogues (only the current season, unless the admin opened the season choice; `day`: 0 = Sunday … 6 = Shabbat) |
@@ -84,7 +84,7 @@ All routes also work under `BASE_PATH` (`/zmanim/api/...`).
 |---|---|
 | `POST /admin/control/test-mail` | Test e-mail to me |
 | `POST /admin/users/:id/welcome` | (admin) welcome e-mail with a login link; `send_welcome: true` on create does the same |
-| `GET / PATCH /admin/control` | `shabbat_enabled, public_site_enabled, site_notice, listen_phone, listen_enabled, manage_phone_enabled, feedback_enabled` |
+| `GET / PATCH /admin/control` | `shabbat_enabled, public_site_enabled, site_notice, listen_phone, listen_enabled, manage_phone_enabled, feedback_enabled, zmanim_lat, zmanim_lng` (where times of day are computed; default Jerusalem) |
 | `GET /admin/feedback` · `PATCH /admin/feedback/:id {is_read}` · `DELETE /admin/feedback/:id` | Developers' inbox |
 
 ## Session
@@ -111,7 +111,7 @@ All routes also work under `BASE_PATH` (`/zmanim/api/...`).
 | `POST /synagogues/:sid/minyanim` | Create (respects `max_minyanim` and allowed prayers) |
 | `PATCH /synagogues/:sid/minyanim/:id` | Partial update, the merged result is validated as a whole |
 | `POST /synagogues/:sid/minyanim/:id/duplicate` | Copy (same season, saved hidden) |
-| `POST /synagogues/:sid/seasons/copy` | `{ from_season_id, to_season_id, minyan_ids?, replace? }` → `{ copied, skipped: [{ id, reason }] }`. Copies into the target season; a clash with an existing minyan is skipped; `replace` deletes the target season's minyanim first. Managers may target only seasons they can edit |
+| `POST /synagogues/:sid/seasons/copy` | `{ from_season_id, to_season_id, minyan_ids?, prayer_ids?, replace? }` → `{ copied, skipped: [{ id, reason }] }`. With `prayer_ids`, only those prayers are copied, and `replace` clears only those prayers. Copies into the target season; a clash with an existing minyan is skipped; `replace` deletes the target season's minyanim first. Managers may target only seasons they can edit |
 | `DELETE /synagogues/:sid/minyanim/:id` | |
 
 `settings` = `{ can_edit_info, max_locations, max_minyanim, restrict_prayers, allowed_prayer_ids }` (`allowed_prayer_ids` is `null` when not restricted).
@@ -129,7 +129,7 @@ All routes also work under `BASE_PATH` (`/zmanim/api/...`).
 | `PATCH /admin/users/:id` | Any subset; a new `password` or `is_active: false` signs the user out everywhere. You cannot demote, deactivate or delete yourself |
 | `DELETE /admin/users/:id` | |
 | `GET /admin/catalog/:kind` | `kind` = `prayers` · `anchors` · `seasons` · `areas`; rows include `used` |
-| `POST /admin/catalog/:kind` | prayers: `{ name, sort?, earliest?, latest? }` · seasons: `{ name, sort?, is_default? }` · others: `{ name, sort? }` |
+| `POST /admin/catalog/:kind` | prayers: `{ name, sort?, earliest?, latest? }` · seasons: `{ name, sort?, is_default?, starts_md? }` · anchors: `{ name, sort?, prayer_ids?, calc? }` (`calc`: `alot`·`sunrise`·`chatzot`·`sunset`·`tzeit`·`rabbeinu_tam`, null = not computed) · areas: `{ name, sort? }` |
 | `PATCH /admin/catalog/:kind/:id` | |
 | `DELETE /admin/catalog/:kind/:id` | `409 IN_USE` while referenced |
-| `POST /admin/seasons/copy` | `{ from_season_id, to_season_id, replace? }` → `{ copied, skipped, synagogues }`: the same copy for every synagogue |
+| `POST /admin/seasons/copy` | `{ from_season_id, to_season_id, prayer_ids?, replace? }` → `{ copied, skipped, synagogues }`: the same copy for every synagogue |

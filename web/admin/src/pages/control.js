@@ -30,6 +30,7 @@ export function ControlPage({ onChanged }) {
       ${toggle('shabbat_enabled', 'זמני שבת פעילים', 'כבוי: זמני שבת לא מופיעים בשום מקום, לא באתר, לא בניהול ולא בטלפון')}
       ${toggle('public_season_choice', 'הציבור יכול לבחור עונה', 'כבוי: באתר ובטלפון מוצגת רק העונה הנוכחית. את תאריכי ההחלפה קובעים ב"הגדרות ורשימות ← עונות"')}
       ${toggle('minyan_notes_enabled', 'הערות למניינים', 'כבוי: אין שדה הערה במניין, והערות קיימות לא מוצגות')}
+      <${PlaceEditor} data=${data} onSave=${(patch) => save(patch, 'המיקום לחישוב הזמנים עודכן')} />
     </section>
 
     <section class="card">
@@ -101,6 +102,28 @@ function NoticeEditor({ value, onSave }) {
     <${Field} label="הודעה בראש האתר הציבורי" hint="ריק = אין הודעה. למשל: זמני החורף נכנסים לתוקף ביום ראשון">
       <${Input} value=${v} onInput=${setV} maxlength="300" /><//>
     <div class="row gap-sm"><${Button} kind="primary" small type="submit">שמירת ההודעה<//>${value && html`<${Button} small onClick=${() => { setV(''); onSave(''); }}>הסרה<//>`}</div>
+  </form>`;
+}
+
+// Where sunrise / sunset are computed for minyanim set relative to them.
+const PLACES = [
+  ['ירושלים', 31.778, 35.235], ['בני ברק', 32.084, 34.834], ['בית שמש', 31.747, 34.988], ['מודיעין עילית', 31.932, 35.043],
+  ['ביתר עילית', 31.700, 35.117], ['אלעד', 32.052, 34.951], ['אשדוד', 31.801, 34.650], ['פתח תקווה', 32.087, 34.887],
+  ['חיפה', 32.794, 34.990], ['צפת', 32.965, 35.496],
+];
+function PlaceEditor({ data, onSave }) {
+  const [lat, setLat] = useState(data.zmanim_lat || '');
+  const [lng, setLng] = useState(data.zmanim_lng || '');
+  const current = PLACES.find(([, a, b]) => String(a) === String(lat) && String(b) === String(lng));
+  return html`<form class="form setting-form" onSubmit=${(e) => (e.preventDefault(), onSave({ zmanim_lat: String(lat).trim(), zmanim_lng: String(lng).trim() }))}>
+    <${Field} group label="מיקום לחישוב זמני היום" hint="לפיו מחושבים הנץ, שקיעה וכו׳ למניינים שנקבעו ביחס אליהם">
+      <div class="chips">${PLACES.map(([n, a, b]) => html`<button type="button" class=${cx('chip', current?.[0] === n && 'on')}
+        onClick=${() => { setLat(a); setLng(b); }}>${n}</button>`)}</div><//>
+    <div class="grid-2">
+      <${Field} label="קו רוחב"><${Input} dir="ltr" value=${lat} onInput=${setLat} /><//>
+      <${Field} label="קו אורך"><${Input} dir="ltr" value=${lng} onInput=${setLng} /><//>
+    </div>
+    <div><${Button} kind="primary" small type="submit">שמירה<//></div>
   </form>`;
 }
 

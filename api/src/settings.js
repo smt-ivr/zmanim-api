@@ -16,6 +16,8 @@ export const SETTINGS = {
   resend_api_key: { type: 'secret', default: '', max: 200 }, // never returned to the browser in full
   magic_link_enabled: { type: 'bool', default: true },    // login with a one-time e-mail link
   password_reset_enabled: { type: 'bool', default: true },
+  zmanim_lat: { type: 'text', default: '31.778', max: 12 }, // where sunrise/sunset are computed (default Jerusalem)
+  zmanim_lng: { type: 'text', default: '35.235', max: 12 },
 };
 
 export const SHABBAT_BIT = 64;

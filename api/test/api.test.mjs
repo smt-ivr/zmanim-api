@@ -479,9 +479,29 @@ describe('seasons, intervals, Rosh Chodesh, notes', () => {
     assert.equal(all.body.copied, 2);
     assert.deepEqual(await seasonTimes(current), ['06:00', '07:00']);
     assert.equal((await call('POST', '/admin/seasons/copy', { token: m.token, body: { from_season_id: other, to_season_id: current } })).status, 403);
+
+    // only some prayers: mincha in the source is copied, shacharit is not; replace clears only mincha in the target
+    await call('POST', `/synagogues/${s.id}/minyanim`, { token: admin, body: { prayer_id: 2, time_kind: 'fixed', time: '13:30', season_id: other } });
+    const some = await call('POST', '/admin/seasons/copy', { token: admin, body: { from_season_id: other, to_season_id: current, prayer_ids: [2], replace: true } });
+    assert.equal(some.body.copied, 1);
+    assert.deepEqual(await seasonTimes(current), ['06:00', '07:00', '13:30']);
   });
 
-  test('no two shown minyanim at the same time and place; intervals need approval', async () => {
+  test('anchors are computed; the public catalog has the week\'s times; place is a setting', async () => {
+    const admin = await setupAdmin();
+    const anchors = (await call('GET', '/admin/catalog/anchors', { token: admin })).body;
+    assert.deepEqual(anchors.map((x) => x.calc), ['sunrise', 'sunset', 'tzeit']);
+    assert.equal((await call('PATCH', '/admin/catalog/anchors/1', { token: admin, body: { calc: 'nope' } })).status, 422);
+    assert.equal((await call('PATCH', '/admin/catalog/anchors/1', { token: admin, body: { calc: 'alot' } })).body.calc, 'alot');
+    const cat = (await call('GET', '/public/catalog')).body;
+    assert.equal(cat.zmanim.length, 7);
+    assert.match(cat.zmanim[0].times[2], /^1[5-9]:\d\d$/, 'sunset in the afternoon');
+    await env.DB.prepare(`UPDATE users SET is_super = 1`).run();
+    assert.equal((await call('PATCH', '/admin/control', { token: admin, body: { zmanim_lat: '200' } })).status, 422);
+    assert.equal((await call('PATCH', '/admin/control', { token: admin, body: { zmanim_lat: '32.084', zmanim_lng: '34.834' } })).body.zmanim_lat, '32.084');
+  });
+
+    test('no two shown minyanim at the same time and place; intervals need approval', async () => {
     const admin = await setupAdmin();
     const s = await newSynagogue(admin);
     const post = (body) => call('POST', `/synagogues/${s.id}/minyanim`, { token: admin, body: { prayer_id: 1, ...body } });
