@@ -5,7 +5,7 @@ import { AdminCatalog } from './pages/admin-catalog.js';
 import { AdminDashboard } from './pages/admin-dashboard.js';
 import { AdminSynagogues } from './pages/admin-synagogues.js';
 import { AdminUsers } from './pages/admin-users.js';
-import { LinkLogin, Login, ResetPassword } from './pages/login.js';
+import { LinkLogin, Login, ResetPassword, googleLoggedOut } from './pages/login.js';
 import { Profile } from './pages/profile.js';
 import { ControlPage, Inbox, MyFeedback } from './pages/control.js';
 import { SynagoguePicker, Workspace } from './pages/workspace.js';
@@ -88,6 +88,7 @@ function App() {
 
   async function logout() {
     await api.post('/auth/logout').catch(() => {});
+    googleLoggedOut();
     setToken(null);
     setSession({ status: 'anon' });
     navigate('/');

@@ -354,7 +354,25 @@ select.input { padding-inline-end: 8px; }
 .readonly-value { padding: 8px 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); }
 @media (min-width: 1001px) { .week.no-shabbat { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
 .auth-links { display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; font-size: 14px; }
-.google-btn { display: flex; justify-content: center; min-height: 44px; }
+/* Google sign-in: a same-size placeholder, Google's button fades in over it (no layout jump) */
+.google-box { position: relative; height: 44px; }
+.google-placeholder {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 10px;
+  border: 1px solid var(--border-strong); border-radius: 999px; background: var(--surface);
+  font-weight: 500; font-size: 15px; color: var(--text); transition: opacity .25s;
+}
+.google-placeholder::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(127,127,127,.10), transparent); background-size: 200% 100%;
+  animation: g-shimmer 1.4s linear infinite;
+}
+@keyframes g-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+.gsi-slot { position: absolute; inset: 0; display: flex; justify-content: center; align-items: center; opacity: 0; transition: opacity .25s; }
+.google-box.ready .gsi-slot { opacity: 1; }
+.google-box.ready .google-placeholder { opacity: 0; pointer-events: none; }
+.google-box.busy .gsi-slot { opacity: 0; pointer-events: none; }
+.google-box.busy .google-placeholder { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .google-placeholder::after { animation: none; } }
 .or { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 13px; }
 .or::before, .or::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
 .chip:disabled { opacity: .45; cursor: not-allowed; }

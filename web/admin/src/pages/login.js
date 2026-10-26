@@ -47,27 +47,70 @@ function loadGsi() {
   return gsiLoading;
 }
 
-/** Google's own "Sign in with Google" button; the account's e-mail must belong to a user here. */
+// After an explicit logout Google must not sign the user straight back in (One Tap auto-select).
+const NO_AUTO = 'zmanim.google.noAuto';
+export function googleLoggedOut() {
+  try { localStorage.setItem(NO_AUTO, '1'); } catch { /* ignore */ }
+  window.google?.accounts?.id?.disableAutoSelect();
+}
+
+const G_LOGO = html`<svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>`;
+
+/**
+ * "Sign in with Google": a placeholder of the same size shows at once, Google's button fades in over it
+ * when ready (no jumping). Also shows Google's One Tap card, which signs a returning user in by itself.
+ */
 function GoogleButton({ clientId, onDone, onError }) {
-  const ref = useRef();
+  const box = useRef();
+  const [ready, setReady] = useState(false);
+  const [busy, setBusy] = useState(false);
   useEffect(() => {
     let alive = true;
+    let noAuto = false;
+    try { noAuto = localStorage.getItem(NO_AUTO) === '1'; } catch { /* ignore */ }
     loadGsi().then(() => {
-      if (!alive || !ref.current) return;
-      window.google.accounts.id.initialize({
+      if (!alive || !box.current) return;
+      const gid = window.google.accounts.id;
+      gid.initialize({
         client_id: clientId,
+        auto_select: !noAuto, // returning users are signed in without a click
+        cancel_on_tap_outside: false,
+        itp_support: true,
+        use_fedcm_for_prompt: true,
+        context: 'signin',
         callback: async ({ credential }) => {
-          try { onDone(await api.post('/auth/google', { credential })); } catch (e) { onError(e.message); }
+          setBusy(true);
+          try {
+            const session = await api.post('/auth/google', { credential });
+            try { localStorage.removeItem(NO_AUTO); } catch { /* ignore */ }
+            onDone(session);
+          } catch (e) { setBusy(false); onError(e.message); }
         },
       });
-      window.google.accounts.id.renderButton(ref.current, {
+      if (noAuto) gid.disableAutoSelect();
+      const slot = box.current.querySelector('.gsi-slot');
+      gid.renderButton(slot, {
         theme: document.documentElement.dataset.theme === 'dark' ? 'filled_black' : 'outline',
-        size: 'large', text: 'signin_with', shape: 'rectangular', locale: 'he', width: Math.min(ref.current.offsetWidth || 320, 400),
+        size: 'large', text: 'continue_with', shape: 'pill', logo_alignment: 'center', locale: 'he',
+        width: Math.min(Math.max(box.current.offsetWidth, 200), 400),
       });
+      // Show Google's button only once its frame has loaded
+      const waitFrame = () => {
+        const frame = slot.querySelector('iframe');
+        if (!frame) return alive && setTimeout(waitFrame, 50);
+        frame.addEventListener('load', () => alive && setTimeout(() => setReady(true), 120), { once: true });
+      };
+      waitFrame();
+      setTimeout(() => alive && setReady(true), 4000); // never leave the placeholder forever
+      gid.prompt(); // One Tap
     }).catch((e) => onError(e.message));
-    return () => { alive = false; };
+    return () => { alive = false; window.google?.accounts?.id?.cancel(); };
   }, [clientId]);
-  return html`<div class="google-btn" ref=${ref} />`;
+
+  return html`<div class=${`google-box${ready ? ' ready' : ''}${busy ? ' busy' : ''}`} ref=${box}>
+    <div class="google-placeholder" aria-hidden=${ready}>${G_LOGO}<span>${busy ? 'מתחברים…' : 'המשך עם Google'}</span></div>
+    <div class="gsi-slot" />
+  </div>`;
 }
 
 export function Login({ onDone }) {
@@ -76,9 +119,17 @@ export function Login({ onDone }) {
   const [password, setPassword] = useState('');
   const [show, setShow] = useState(false);
   const [sent, setSent] = useState(false);
-  const [options, setOptions] = useState({ magic_link: false, password_reset: false, google_client_id: null });
+  // Last known options first (no layout jump when the answer arrives), then the server's.
+  const [options, setOptions] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('zmanim.authOptions')) || {}; } catch { return {}; }
+  });
   const [googleError, setGoogleError] = useState(null);
-  useEffect(() => { api.get('/auth/options').then(setOptions).catch(() => {}); }, []);
+  useEffect(() => {
+    api.get('/auth/options').then((o) => {
+      setOptions(o);
+      try { localStorage.setItem('zmanim.authOptions', JSON.stringify(o)); } catch { /* ignore */ }
+    }).catch(() => {});
+  }, []);
 
   const { busy, error, fields, submit } = useSubmit(async () => {
     if (mode === 'password') return onDone(await api.post('/auth/login', { login, password }));
