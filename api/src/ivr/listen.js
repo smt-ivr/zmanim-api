@@ -149,7 +149,7 @@ const SCREENS = {
 
   time: {
     back: 'main',
-    prompt: () => number(['הקישו את השעה בארבע ספרות וסולמית, לדוגמה 0 7 3 0. למניינים הקרובים הקישו 0 וסולמית'], { max: 4 }),
+    prompt: () => number(['הקישו שעה וסולמית', 'אפשר להקיש גם דקות, אבל לא חובה', 'למניינים הקרובים הקישו 0 וסולמית'], { max: 4 }),
     handle(c, input) {
       if (input === '0') return list(c, c.state.data.prayerId, null);
       const from = parseClock(input);

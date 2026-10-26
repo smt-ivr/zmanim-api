@@ -47,7 +47,7 @@ export function speakDays(mask) {
 
 export function speakClock(hhmm) {
   const [h, m] = hhmm.split(':').map(Number);
-  if (m === 0) return `${h} בדיוק`;
+  if (m === 0) return String(h);
   if (m < 10) return `${h} ו ${m} דקות`;
   return `${h} ${m}`;
 }

@@ -191,7 +191,7 @@ describe('ivr management', () => {
     await call.press('1');
     await call.press('3'); // edit
     let body = await call.press('1'); // minyan #1
-    assert.match(body, /שחרית, בשעה 7 בדיוק/);
+    assert.match(body, /שחרית, בשעה 7/);
     body = await call.press('4'); // hide
     assert.match(body, /הוסתר/);
     assert.equal((await q(`SELECT is_active FROM minyanim`).first()).is_active, 0);
@@ -300,13 +300,16 @@ describe('ivr listening line', () => {
     assert.match(body, /לשחרית הקישו 1/);
     assert.match(body, /לכל המניינים הקרובים הקישו 0/);
     body = await call.press('1'); // שחרית
-    assert.match(body, /הקישו את השעה/);
+    assert.match(body, /t-הקישו שעה וסולמית\.t-אפשר להקיש גם דקות, אבל לא חובה/);
     assert.doesNotMatch(body, /יום/); // no day question
     body = await call.press('0630');
     assert.match(body, /t-שחרית בשעה 6 30 באהל משה בעזרת נשים&/);
     assert.doesNotMatch(body, /זכרון משה/); // other area
-    assert.doesNotMatch(body, /בשעה 8 בדיוק/); // Shabbat-only minyan
+    assert.doesNotMatch(body, /בשעה 8 /); // Shabbat-only minyan
     assert.match(body, /read=t-בחירת תפילה/); // back to the menu, no hang-up
+    body = await call.press('1');
+    body = await call.press('7'); // hour only
+    assert.match(body, /t-שחרית בשעה 7 בזכרון משה|אין מניינים מהשעה 7/);
     body = await call.press('1');
     body = await call.press('0631');
     assert.match(body, /אין מניינים מהשעה 6 31/);
@@ -319,7 +322,7 @@ describe('ivr listening line', () => {
     await call.start();
     await call.press('0'); // all areas
     let body = await call.press('0'); // all prayers, from now
-    assert.match(body, /t-שחרית בשעה 6 30 באהל משה\.t-שחרית בשעה 7 בדיוק בזכרון משה\.t-מנחה 15 דקות לפני שקיעה באהל משה/);
+    assert.match(body, /t-שחרית בשעה 6 30 באהל משה\.t-שחרית בשעה 7 בזכרון משה\.t-מנחה 15 דקות לפני שקיעה באהל משה/);
     assert.doesNotMatch(body, /ראש חודש|6 15/);
 
     env.FIXED_NOW = at(findDay(true), '06:10');
@@ -327,7 +330,7 @@ describe('ivr listening line', () => {
     await call.start();
     await call.press('0');
     body = await call.press('0');
-    assert.match(body, /t-היום ראש חודש\.t-שחרית בשעה 6 15 באהל משה\.t-שחרית בשעה 7 בדיוק/);
+    assert.match(body, /t-היום ראש חודש\.t-שחרית בשעה 6 15 באהל משה\.t-שחרית בשעה 7/);
     assert.doesNotMatch(body, /6 30/);
   });
 
