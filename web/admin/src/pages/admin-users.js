@@ -5,6 +5,8 @@ import { Badge, Button, CheckList, Empty, ErrorBox, Field, FormModal, Icon, Inpu
 const ROLE = { admin: 'מנהל מערכת', manager: 'מנהל בית כנסת' };
 
 export function AdminUsers({ me, system }) {
+  // What this admin may change: managers need 'managers', admins need 'admins' (the super admin: everything).
+  const mayManage = (u) => !u.is_super && me.perms.includes(u.role === 'admin' ? 'admins' : 'managers');
   const { data, error, loading, reload, setData } = useLoad(() =>
     Promise.all([api.get('/admin/users'), api.get('/admin/synagogues')]).then(([users, synagogues]) => ({ users, synagogues }))
   );
@@ -32,7 +34,7 @@ export function AdminUsers({ me, system }) {
   return html`<div class="page">
     <header class="page-head">
       <div><h1>משתמשים</h1><p class="muted">מנהלי מערכת ומנהלי בתי כנסת</p></div>
-      <${Button} kind="primary" icon="plus" onClick=${() => setEditing('new')}>משתמש חדש<//>
+      ${(me.perms.includes('managers') || me.perms.includes('admins')) && html`<${Button} kind="primary" icon="plus" onClick=${() => setEditing('new')}>משתמש חדש<//>`}
     </header>
     <div class="toolbar">
       <div class="search"><${Icon} name="search" /><input class="input" placeholder="חיפוש לפי שם, מייל או טלפון…" value=${q} onInput=${(e) => setQ(e.currentTarget.value)} /></div>
@@ -48,14 +50,14 @@ export function AdminUsers({ me, system }) {
           <tbody>${shown.map((u) => html`<tr key=${u.id} class=${u.is_active ? '' : 'inactive'}>
             <td><b>${u.name}</b>${u.is_super && html` <${Badge} tone="info">מנהל על<//>`}${u.is_super && u.is_hidden && html` <${Badge}>מוסתר<//>`}${u.id === me.id && html` <${Badge} tone="info">זה אתה<//>`}${!u.is_active && html` <${Badge} tone="warn">מושבת<//>`}
               <div class="muted small" dir="ltr">${[u.email, u.phone].filter(Boolean).join(' · ')}</div>
-              <div class="row gap-sm">${u.must_change_password && html`<${Badge} tone="warn">חייב להחליף סיסמה<//>`}${u.phone_requires_password && html`<${Badge}>סיסמה בטלפון<//>`}${!u.can_message && html`<${Badge} tone="warn">חסום מפניות<//>`}</div></td>
+              <div class="row gap-sm">${u.role === 'admin' && !u.is_super && u.perms.length < Object.keys(PERMS).length - 1 && html`<${Badge} tone="info">${u.perms.length ? `הרשאות חלקיות (${u.perms.length})` : 'צפייה בלבד'}<//>`}${u.must_change_password && html`<${Badge} tone="warn">חייב להחליף סיסמה<//>`}${u.phone_requires_password && html`<${Badge}>סיסמה בטלפון<//>`}${!u.can_message && html`<${Badge} tone="warn">חסום מפניות<//>`}</div></td>
             <td><${Badge} tone=${u.role === 'admin' ? 'info' : 'neutral'}>${ROLE[u.role]}<//></td>
             <td class="small">${u.role === 'admin' ? html`<span class="muted">כולם</span>` : u.synagogues.length ? u.synagogues.map((s) => s.name).join(', ') : html`<${Badge} tone="warn">לא שויך<//>`}</td>
             <td class="small muted">${formatDate(u.last_login_at)}</td>
             <td class="actions">
-              ${system?.mail_ready && u.email && html`<${Button} kind="ghost" small icon="mail" title="שליחת מייל פתיחה עם קישור כניסה" onClick=${() => welcome(u)} />`}
-              <${Button} kind="ghost" small icon="edit" title="עריכה" onClick=${() => setEditing(u)} />
-              ${u.id !== me.id && !u.is_super && html`<${Button} kind="ghost" small icon="trash" title="מחיקה" onClick=${() => remove(u)} />`}
+              ${mayManage(u) && system?.mail_ready && u.email && html`<${Button} kind="ghost" small icon="mail" title="שליחת פרטי כניסה במייל" onClick=${() => welcome(u)} />`}
+              ${(mayManage(u) || u.id === me.id) && html`<${Button} kind="ghost" small icon="edit" title="עריכה" onClick=${() => setEditing(u)} />`}
+              ${mayManage(u) && u.id !== me.id && !u.is_super && html`<${Button} kind="ghost" small icon="trash" title="מחיקה" onClick=${() => remove(u)} />`}
             </td>
           </tr>`)}</tbody></table></div>`}
     ${editing && html`<${UserModal} user=${editing === 'new' ? null : editing} me=${me} mailReady=${system?.mail_ready} synagogues=${data.synagogues}
@@ -71,11 +73,13 @@ function UserModal({ user, me, mailReady, synagogues, onClose, onSaved }) {
     is_active: user?.is_active ?? true, password: '', synagogue_ids: user?.synagogues.map((s) => s.id) ?? [],
     send_welcome: !user && Boolean(mailReady), send_password: false,
     must_change_password: user?.must_change_password ?? false,
+    admin_perms: user?.perms ?? DEFAULT_PERMS,
     can_edit_email: user?.can_edit_email ?? true, can_edit_password: user?.can_edit_password ?? true, can_message: user?.can_message ?? true,
   };
   const save = (v) => {
     const body = { ...v, email: v.email || null, phone: v.phone || null };
     if (!body.password) { delete body.password; body.send_password = false; }
+    if (!me.is_super || v.role !== 'admin') delete body.admin_perms;
     if (self) { delete body.role; delete body.is_active; delete body.can_edit_email; delete body.can_edit_password; delete body.can_message; delete body.must_change_password; }
     return isNew ? api.post('/admin/users', body) : api.patch(`/admin/users/${user.id}`, body);
   };
@@ -106,7 +110,17 @@ function UserModal({ user, me, mailReady, synagogues, onClose, onSaved }) {
       ${v.role === 'manager'
         ? html`<${Field} group label="בתי הכנסת שהוא מנהל" error=${errors.synagogue_ids}>
             <${CheckList} searchable options=${synagogues.map((s) => ({ value: s.id, label: s.name, sub: s.area_name || '' }))} value=${v.synagogue_ids} onChange=${set('synagogue_ids')} empty="אין בתי כנסת" /><//>`
-        : html`<div class="alert alert-info">מנהל מערכת מנהל את כל בתי הכנסת, המשתמשים וההגדרות.</div>`}
+        : user?.is_super
+          ? html`<div class="alert alert-info">מנהל העל יכול לעשות הכל.</div>`
+          : me.is_super
+            ? html`<${Field} group label="מה מנהל המערכת הזה יכול לעשות" hint="צפייה בכל בתי הכנסת והמשתמשים מותרת תמיד. מה שלא מסומן חסום, גם באתר וגם בטלפון">
+                <${CheckList} options=${Object.entries(PERMS).map(([value, label]) => ({ value, label }))} value=${v.admin_perms} onChange=${set('admin_perms')} />
+                <div class="row gap-sm pad-top">
+                  <button type="button" class="link" onClick=${() => set('admin_perms')(Object.keys(PERMS))}>הכל</button>
+                  <button type="button" class="link" onClick=${() => set('admin_perms')(DEFAULT_PERMS)}>ברירת מחדל</button>
+                  <button type="button" class="link" onClick=${() => set('admin_perms')([])}>צפייה בלבד</button>
+                </div><//>`
+            : html`<div class="alert alert-info">את ההרשאות של מנהלי מערכת קובע מנהל העל.</div>`}
       ${!self && html`<${Toggle} checked=${v.is_active} onChange=${set('is_active')} label="משתמש פעיל" hint="השבתה מנתקת את המשתמש מיד ומונעת כניסה" />`}
       ${!self && html`<${Toggle} checked=${v.must_change_password} onChange=${set('must_change_password')}
         label="חיוב החלפת סיסמה בכניסה הבאה" hint="המשתמש לא יוכל לעשות שום דבר עד שיבחר סיסמה משלו" />`}
@@ -124,6 +138,19 @@ function UserModal({ user, me, mailReady, synagogues, onClose, onSaved }) {
         ${me.is_super && html`<${Toggle} checked=${v.can_message} onChange=${set('can_message')} label="שליחת פניות לצוות הפיתוח" />`}`}`}
   <//>`;
 }
+
+// Same list as the server (api/src/auth.js PERMS).
+const PERMS = {
+  synagogues: 'הוספה ועריכה של בתי כנסת והגדרותיהם',
+  synagogues_delete: 'מחיקת בתי כנסת',
+  minyanim: 'עדכון זמנים, מיקומים ופרטים בכל בית כנסת',
+  managers: 'ניהול מנהלי בתי כנסת (משתמשים)',
+  admins: 'ניהול מנהלי מערכת אחרים',
+  catalog: 'הגדרות ורשימות (תפילות, זמני ייחוס, עונות, אזורים)',
+  phone: 'הגדרות שלוחות הטלפון',
+  registrations: 'אישור בקשות הצטרפות של בתי כנסת',
+};
+const DEFAULT_PERMS = Object.keys(PERMS).filter((p) => p !== 'registrations');
 
 function randomPassword() {
   const chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';

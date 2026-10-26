@@ -13,19 +13,20 @@ const KINDS = {
   areas: { title: 'אזורים', one: 'אזור', hint: 'לחלוקת בתי הכנסת לפי שכונה או עיר, ולסינון בממשק הציבורי.' },
 };
 
-export function AdminCatalog() {
+export function AdminCatalog({ perms = [] }) {
   const [kind, setKind] = useState('prayers');
   return html`<div class="page">
     <header class="page-head"><div><h1>הגדרות ורשימות</h1><p class="muted">רשימות משותפות לכל בתי הכנסת</p></div></header>
     <div class="tabs">
       ${Object.entries(KINDS).map(([k, d]) => html`<button class=${cx('tab', kind === k && 'active')} onClick=${() => setKind(k)}>${d.title}</button>`)}
-      <button class=${cx('tab', kind === 'phone' && 'active')} onClick=${() => setKind('phone')}>שלוחת טלפון</button>
+      ${perms.includes('phone') && html`<button class=${cx('tab', kind === 'phone' && 'active')} onClick=${() => setKind('phone')}>שלוחת טלפון</button>`}
     </div>
-    ${kind === 'phone' ? html`<${PhonePanel} />` : html`<${CatalogList} key=${kind} kind=${kind} />`}
+    ${kind === 'phone' ? html`<${PhonePanel} />` : html`<${CatalogList} key=${kind} kind=${kind} canEdit=${perms.includes('catalog')} />`}
+    ${!perms.includes('catalog') && html`<p class="muted small">צפייה בלבד: אין לך הרשאה לשנות את הרשימות.</p>`}
   </div>`;
 }
 
-function CatalogList({ kind }) {
+function CatalogList({ kind, canEdit = true }) {
   const def = KINDS[kind];
   const { data, error, loading, reload } = useLoad(() => api.get(`/admin/catalog/${kind}`), [kind]);
   const prayers = useLoad(() => (kind === 'anchors' || kind === 'seasons' ? api.get('/admin/catalog/prayers') : Promise.resolve([])), [kind]).data || [];
@@ -51,15 +52,15 @@ function CatalogList({ kind }) {
   }
 
   return html`<section class="narrow-section">
-    <div class="toolbar"><p class="muted grow">${def.hint}</p>${kind === 'seasons' && data.length > 1 && html`<${Button} icon="copy" onClick=${() => setCopying(true)}>העתקה בין עונות בכל בתי הכנסת<//>`}
-      <${Button} kind="primary" icon="plus" onClick=${() => setEditing('new')}>הוספת ${def.one}<//></div>
+    <div class="toolbar"><p class="muted grow">${def.hint}</p>${canEdit && kind === 'seasons' && data.length > 1 && html`<${Button} icon="copy" onClick=${() => setCopying(true)}>העתקה בין עונות בכל בתי הכנסת<//>`}
+      ${canEdit && html`<${Button} kind="primary" icon="plus" onClick=${() => setEditing('new')}>הוספת ${def.one}<//>`}</div>
     ${data.length === 0
       ? html`<${Empty} title="הרשימה ריקה" />`
       : html`<div class="card list">${data.map((r, i) => html`<div class="list-row" key=${r.id}>
-          <div class="order-btns">
+          ${canEdit && html`<div class="order-btns">
             <${Button} kind="ghost" small icon="up" title="למעלה" disabled=${i === 0} onClick=${() => move(i, -1)} />
             <${Button} kind="ghost" small icon="down" title="למטה" disabled=${i === data.length - 1} onClick=${() => move(i, 1)} />
-          </div>
+          </div>`}
           <div class="grow"><b>${r.name}</b>
             ${kind === 'prayers' && (r.earliest || r.latest) && html` <span class="muted small" dir="ltr">${r.earliest || '00:00'}–${r.latest || '23:59'}</span>`}
             ${r.is_default && html` <${Badge}>ברירת מחדל<//>`}
@@ -69,8 +70,8 @@ function CatalogList({ kind }) {
             ${kind === 'anchors' && html` <span class="muted small">${r.prayer_ids?.length ? `ל${prayers.filter((p) => r.prayer_ids.includes(p.id)).map((p) => p.name).join(', ')} בלבד` : 'לכל התפילות'}</span>`}
           </div>
           <span class="muted small">${r.used ? `בשימוש: ${r.used}` : 'לא בשימוש'}</span>
-          <${Button} kind="ghost" small icon="edit" title="עריכה" onClick=${() => setEditing(r)} />
-          <${Button} kind="ghost" small icon="trash" title=${r.used ? 'לא ניתן למחוק ערך שבשימוש' : 'מחיקה'} disabled=${r.used > 0} onClick=${() => remove(r)} />
+          ${canEdit && html`<${Button} kind="ghost" small icon="edit" title="עריכה" onClick=${() => setEditing(r)} />`}
+          ${canEdit && html`<${Button} kind="ghost" small icon="trash" title=${r.used ? 'לא ניתן למחוק ערך שבשימוש' : 'מחיקה'} disabled=${r.used > 0} onClick=${() => remove(r)} />`}
         </div>`)}</div>`}
     ${editing && html`<${CatalogModal} kind=${kind} prayers=${prayers} row=${editing === 'new' ? null : editing} count=${data.length}
         onClose=${() => setEditing(null)} onSaved=${reload} />`}

@@ -387,3 +387,25 @@ select.input { padding-inline-end: 8px; }
 .season-bar .segmented button { font-weight: 600; }
 .justify-center { justify-content: center; }
 section > .alert { margin-bottom: 12px; }
+
+/* self-service registration */
+.hp { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; opacity: 0; pointer-events: none; }
+.badge-success { background: var(--success-soft, #e3f5ea); color: var(--success, #1f8a4c); border-color: transparent; }
+.steps { display: grid; gap: 10px; margin: 6px 0 14px; }
+.step { display: flex; align-items: center; gap: 10px; color: var(--muted); }
+.step b { display: grid; place-items: center; width: 28px; height: 28px; flex: none; border-radius: 50%; border: 2px solid var(--border-strong); font-size: 13px; }
+.step.done b { background: var(--primary); border-color: var(--primary); color: #fff; }
+.step.on { color: var(--text); font-weight: 600; }
+.step.on b { border-color: var(--primary); color: var(--primary); }
+.reg-cards { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+.reg-card { display: flex; flex-direction: column; gap: 12px; padding: 18px; }
+.reg-card h3 { margin: 0; font-size: 17px; }
+.reg-dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; font-size: 14px; }
+.reg-dl dt { color: var(--muted); }
+.reg-dl dd { margin: 0; overflow-wrap: anywhere; }
+.reg-msg { margin: 0; padding: 10px 14px; border-inline-start: 3px solid var(--primary); background: var(--surface-2); border-radius: 8px; white-space: pre-wrap; font-size: 14px; }
+.nav-count { margin-inline-start: auto; min-width: 20px; padding: 0 6px; border-radius: 999px; background: var(--danger, #d64545); color: #fff; font-size: 12px; font-weight: 700; text-align: center; }
+
+.auth-register { text-align: center; font-size: 14px; color: var(--muted); padding-top: 4px; border-top: 1px solid var(--border); margin-top: 4px; padding-top: 14px; }
+.pad-top { padding-top: 8px; }
+fieldset.plain { border: 0; padding: 0; margin: 0; min-width: 0; }

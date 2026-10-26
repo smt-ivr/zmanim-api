@@ -50,6 +50,22 @@ Write fields: `prayer_id` (required), `time_kind` (`fixed`|`relative`, required)
 | `GET /public/synagogues/:id` | Synagogue + its active minyanim |
 | `GET /public/minyanim?area_id=&synagogue_id=&prayer_id=&season_id=&day=0..6` | Active minyanim across synagogues (only the current season, unless the admin opened the season choice; `day`: 0 = Sunday … 6 = Shabbat) |
 
+## Self-service registration
+
+| | |
+|---|---|
+| `GET /public/registrations/form` | `{ enabled, form_token }`: the token is signed and must be at least 4 seconds old when sent back |
+| `POST /public/registrations` | `{ synagogue_name, area_id?, address?, contact_name, email, phone, message?, form_token, website }` (`website` is a honeypot and must stay empty) → `202`. Sends a verification e-mail. Spam is answered `202` too, and silently dropped |
+| `POST /public/registrations/verify` `{ token }` | The request becomes `pending`, and the approvers get an e-mail |
+| `GET /admin/registrations` | (permission `registrations`) `{ items, unverified }` |
+| `POST /admin/registrations/:id/approve` | `{ synagogue_name?, area_id?, address? }`: creates the synagogue and the manager (or links an existing user), then e-mails the login details |
+| `POST /admin/registrations/:id/reject` | `{ reason?, notify?, block? }` (`block` adds the e-mail to the blocklist) |
+| `DELETE /admin/registrations/:id` | |
+
+## Admin permissions
+
+`user.perms` lists what an admin may do: `synagogues`, `synagogues_delete`, `minyanim`, `managers`, `admins`, `catalog`, `phone`, `registrations`. The super admin has all of them. An admin without a stored list gets everything except `registrations`. Only the super admin sets `admin_perms` (on `POST`/`PATCH /admin/users`). A missing permission answers `403`. Reading is always allowed.
+
 ## Phone extension (Yemot HaMashiach)
 
 | | |

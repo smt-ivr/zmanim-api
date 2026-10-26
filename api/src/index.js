@@ -1,5 +1,5 @@
 // Entry point. Every API path lives under /api; anything else is the admin UI (static assets).
-import { authenticate, cleanup, requireAdmin, requireSuper } from './auth.js';
+import { authenticate, cleanup, requireAdmin, requirePerm, requireSuper } from './auth.js';
 import { HttpError, errorResponse, json } from './http.js';
 import { Router } from './router.js';
 import * as admin from './routes/admin.js';
@@ -9,10 +9,12 @@ import * as ws from './routes/workspace.js';
 import { handleIvr } from './ivr/flow.js';
 import { handleListen } from './ivr/listen.js';
 import * as control from './routes/control.js';
+import * as reg from './routes/registrations.js';
 
 const PUBLIC = { auth: 'none' };
 const ADMIN = { auth: 'admin' };
 const SUPER = { auth: 'super' };
+const perm = (p) => ({ auth: 'admin', perm: p });
 const ALLOWED_BEFORE_NEW_PASSWORD = new Set(['GET /me', 'PUT /me/password', 'POST /auth/logout']);
 
 export const router = new Router()
@@ -22,6 +24,10 @@ export const router = new Router()
   .get('/public/synagogues', pub.synagogues, PUBLIC)
   .get('/public/synagogues/:id', pub.synagogue, PUBLIC)
   .get('/public/minyanim', pub.minyanim, PUBLIC)
+  // self-service synagogue registration
+  .get('/public/registrations/form', reg.form, PUBLIC)
+  .post('/public/registrations', reg.submit, PUBLIC)
+  .post('/public/registrations/verify', reg.verify, PUBLIC)
   // Yemot HaMashiach phone extension (own key check; always answers in Yemot format)
   .get('/ivr', handleIvr, PUBLIC)
   .post('/ivr', handleIvr, PUBLIC)
@@ -59,22 +65,26 @@ export const router = new Router()
   .post('/synagogues/:sid/seasons/copy', ws.copySeasonRoute)
   // admin
   .get('/admin/stats', admin.stats, ADMIN)
-  .get('/admin/ivr', admin.getIvr, ADMIN)
-  .post('/admin/ivr/rotate', admin.rotateIvrKey, ADMIN)
+  .get('/admin/ivr', admin.getIvr, perm('phone'))
+  .post('/admin/ivr/rotate', admin.rotateIvrKey, perm('phone'))
   .get('/admin/synagogues', admin.listSynagogues, ADMIN)
-  .post('/admin/synagogues', admin.createSynagogue, ADMIN)
+  .post('/admin/synagogues', admin.createSynagogue, perm('synagogues'))
   .get('/admin/synagogues/:id', admin.getSynagogue, ADMIN)
-  .patch('/admin/synagogues/:id', admin.patchSynagogue, ADMIN)
-  .delete('/admin/synagogues/:id', admin.deleteSynagogue, ADMIN)
+  .patch('/admin/synagogues/:id', admin.patchSynagogue, perm('synagogues'))
+  .delete('/admin/synagogues/:id', admin.deleteSynagogue, perm('synagogues_delete'))
   .get('/admin/users', admin.listUsers, ADMIN)
   .post('/admin/users', admin.createUser, ADMIN)
   .patch('/admin/users/:id', admin.patchUser, ADMIN)
   .delete('/admin/users/:id', admin.deleteUser, ADMIN)
-  .post('/admin/seasons/copy', admin.copySeasonAll, ADMIN)
+  .post('/admin/seasons/copy', admin.copySeasonAll, perm('catalog'))
+  .get('/admin/registrations', reg.list, perm('registrations'))
+  .post('/admin/registrations/:id/approve', reg.approve, perm('registrations'))
+  .post('/admin/registrations/:id/reject', reg.reject, perm('registrations'))
+  .delete('/admin/registrations/:id', reg.remove, perm('registrations'))
   .get('/admin/catalog/:kind', admin.listCatalog, ADMIN)
-  .post('/admin/catalog/:kind', admin.createCatalog, ADMIN)
-  .patch('/admin/catalog/:kind/:id', admin.patchCatalog, ADMIN)
-  .delete('/admin/catalog/:kind/:id', admin.deleteCatalog, ADMIN)
+  .post('/admin/catalog/:kind', admin.createCatalog, perm('catalog'))
+  .patch('/admin/catalog/:kind/:id', admin.patchCatalog, perm('catalog'))
+  .delete('/admin/catalog/:kind/:id', admin.deleteCatalog, perm('catalog'))
   // super admin
   .get('/admin/control', control.getControl, SUPER)
   .patch('/admin/control', control.patchControl, SUPER)
@@ -110,6 +120,10 @@ async function handleApi(request, env, path) {
     ctx.actor = await authenticate(env, request);
     if (route.options.auth === 'admin') requireAdmin(ctx.actor);
     if (route.options.auth === 'super') requireSuper(ctx.actor);
+    if (route.options.perm) requirePerm(ctx.actor, route.options.perm);
+    // Admins edit a synagogue's minyanim, locations and details only with the 'minyanim' permission
+    // (its own managers always can).
+    if (ctx.actor.role === 'admin' && request.method !== 'GET' && /^\/synagogues\/\d+\//.test(path + '/')) requirePerm(ctx.actor, 'minyanim');
     // A user who must choose a new password can do only that (and see who they are, or log out).
     if (ctx.actor.must_change_password && !ALLOWED_BEFORE_NEW_PASSWORD.has(`${request.method} ${path}`)) {
       throw new HttpError(403, 'PASSWORD_CHANGE_REQUIRED', 'יש לבחור סיסמה חדשה לפני שממשיכים');

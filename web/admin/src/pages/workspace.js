@@ -67,7 +67,7 @@ export function Workspace({ id, user, system, onChanged }) {
 
     ${tab === 'minyanim' && html`<${MinyanimTab} data=${data} update=${update} shabbat=${shabbat} />`}
     ${tab === 'locations' && html`<${LocationsTab} data=${data} update=${update} />`}
-    ${tab === 'info' && html`<${InfoTab} data=${data} isAdmin=${isAdmin} onSaved=${(d) => { setData(d); onChanged(); }} />`}
+    ${tab === 'info' && html`<${InfoTab} data=${data} isAdmin=${isAdmin && !settings.read_only} onSaved=${(d) => { setData(d); onChanged(); }} />`}
   </div>`;
 }
 
@@ -132,7 +132,9 @@ function MinyanimTab({ data, update, shabbat }) {
       </div>
       <span class="muted small">כדי לקבוע מניינים לעונה, בחרו אותה כאן והוסיפו בה</span>
     </div>`}
-    ${!seasonEditable && html`<div class="alert alert-info">אפשר לעדכן רק את זמני העונה הנוכחית. לעדכון זמני ${seasonName} פנו למנהל המערכת.</div>`}
+    ${settings.read_only
+      ? html`<div class="alert alert-info">צפייה בלבד: אין לך הרשאה לעדכן זמנים בבתי כנסת. לשינוי פנו למנהל העל.</div>`
+      : !seasonEditable && html`<div class="alert alert-info">אפשר לעדכן רק את זמני העונה הנוכחית. לעדכון זמני ${seasonName} פנו למנהל המערכת.</div>`}
     <div class="toolbar">
       <div class="search"><${Icon} name="search" /><input class="input" placeholder="חיפוש מניין…" value=${q} onInput=${(e) => setQ(e.currentTarget.value)} /></div>
       ${locations.length > 0 && html`<${Select} value=${location} onChange=${setLocation} placeholder="כל המיקומים"
@@ -427,6 +429,7 @@ function LocationsTab({ data, update }) {
   }
 
   return html`<section class="narrow-section">
+    <fieldset class="plain" disabled=${settings.read_only}>
     <form class="toolbar" onSubmit=${add}>
       <input class="input grow" placeholder=${full ? `הגעתם למכסה של ${settings.max_locations} מיקומים` : 'שם מיקום חדש, למשל: היכל ראשי, עזרת נשים, מניין עליון'}
         value=${name} onInput=${(e) => setName(e.currentTarget.value)} disabled=${full} maxlength="80" />
@@ -450,6 +453,7 @@ function LocationsTab({ data, update }) {
                 <${Button} kind="ghost" small icon="trash" title="מחיקה" onClick=${() => remove(l)} />`}
         </div>`)}
       </div>`}
+    </fieldset>
   </section>`;
 }
 

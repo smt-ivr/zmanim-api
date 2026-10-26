@@ -168,7 +168,35 @@ export const cleanup = (env) =>
     env.DB.prepare(`DELETE FROM login_attempts WHERE locked_until < ?1 AND window_start < ?1 - 86400`).bind(nowSec()),
     env.DB.prepare(`DELETE FROM login_log WHERE created_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-180 days')`),
     env.DB.prepare(`DELETE FROM email_tokens WHERE expires_at < ?`).bind(nowSec() - 86400),
+    env.DB.prepare(`DELETE FROM registrations WHERE status = 'unverified' AND token_expires < ?`).bind(nowSec() - 86400),
   ]);
+
+// ------------------------------------------------------------------ admin permissions
+/** What an admin can be allowed to do. The super admin can always do everything. */
+export const PERMS = {
+  synagogues: 'הוספה ועריכה של בתי כנסת והגדרותיהם',
+  synagogues_delete: 'מחיקת בתי כנסת',
+  minyanim: 'עדכון זמנים, מיקומים ופרטים בכל בית כנסת',
+  managers: 'ניהול מנהלי בתי כנסת (משתמשים)',
+  admins: 'ניהול מנהלי מערכת אחרים',
+  catalog: 'הגדרות ורשימות (תפילות, זמני ייחוס, עונות, אזורים)',
+  phone: 'הגדרות שלוחות הטלפון',
+  registrations: 'אישור בקשות לפתיחת בית כנסת',
+};
+/** Admins without a stored list get everything except approving registrations (that stays with the super admin). */
+export const DEFAULT_PERMS = Object.keys(PERMS).filter((p) => p !== 'registrations');
+
+function permsOf(u) {
+  if (u.role !== 'admin') return [];
+  if (u.is_super === 1) return Object.keys(PERMS);
+  if (u.admin_perms == null) return DEFAULT_PERMS;
+  try { return JSON.parse(u.admin_perms).filter((p) => PERMS[p]); } catch { return DEFAULT_PERMS; }
+}
+
+export function requirePerm(actor, perm) {
+  requireAdmin(actor);
+  if (!actor.perms.includes(perm)) throw forbidden(`אין לך הרשאה לפעולה זו (${PERMS[perm]}). לשינוי פנו למנהל העל`);
+}
 
 export function publicUser(u) {
   return {
@@ -184,6 +212,7 @@ export function publicUser(u) {
     can_message: u.can_message !== 0,
     phone_requires_password: u.phone_requires_password === 1,
     must_change_password: u.must_change_password === 1,
+    perms: permsOf(u),
     role: u.role,
     is_active: u.is_active === 1,
     created_at: u.created_at,

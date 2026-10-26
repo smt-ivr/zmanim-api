@@ -563,7 +563,7 @@ describe('e-mail (Resend mocked)', () => {
   test('control hides the key; test mail; options follow the switches', async () => {
     const admin = await setupAdmin();
     await env.DB.prepare(`UPDATE users SET is_super = 1`).run();
-    assert.deepEqual((await call('GET', '/auth/options')).body, { magic_link: false, password_reset: false, google_client_id: '89500817024-tbvsuu4dci6bqh173l65ua9lc65pe24p.apps.googleusercontent.com', system_name: 'מערכת זמני התפילות' });
+    assert.deepEqual((await call('GET', '/auth/options')).body, { magic_link: false, password_reset: false, google_client_id: '89500817024-tbvsuu4dci6bqh173l65ua9lc65pe24p.apps.googleusercontent.com', system_name: 'מערכת זמני התפילות', registration: false });
     await enableMail();
     const ctl = await call('GET', '/admin/control', { token: admin });
     assert.equal(ctl.body.resend_api_key, '••••1234');
@@ -572,7 +572,7 @@ describe('e-mail (Resend mocked)', () => {
     assert.equal((await call('POST', '/admin/control/test-mail', { token: admin })).status, 200);
     assert.equal(sent[0].headers.Authorization, 'Bearer re_secret_1234');
     assert.deepEqual(sent[0].body.to, ['admin@x.com']);
-    assert.deepEqual((await call('GET', '/auth/options')).body, { magic_link: true, password_reset: true, google_client_id: '89500817024-tbvsuu4dci6bqh173l65ua9lc65pe24p.apps.googleusercontent.com', system_name: 'מערכת זמני התפילות' });
+    assert.deepEqual((await call('GET', '/auth/options')).body, { magic_link: true, password_reset: true, google_client_id: '89500817024-tbvsuu4dci6bqh173l65ua9lc65pe24p.apps.googleusercontent.com', system_name: 'מערכת זמני התפילות', registration: false });
     await setSetting('magic_link_enabled', '0');
     assert.equal((await call('POST', '/auth/email-link', { body: { login: 'admin@x.com' } })).status, 403);
   });
@@ -720,5 +720,116 @@ describe('e-mail (Resend mocked)', () => {
     await call('POST', '/admin/control/test-mail', { token: admin });
     assert.match(sent.at(-1).body.subject, /זמני תפילה בעיר/);
     assert.match(sent.at(-1).body.html, /זמני תפילה בעיר/);
+  });
+
+  describe('self-service registration', () => {
+    const open = async () => { await enableMail(); await setSetting('registration_enabled', '1'); };
+    const formToken = async () => {
+      const f = await call('GET', '/public/registrations/form');
+      assert.equal(f.body.enabled, true);
+      // pretend the form was opened a minute ago (the server rejects forms sent back within seconds)
+      const ts = String(Math.floor(Date.now() / 1000) - 60);
+      const { createHmac } = await import('node:crypto');
+      const secret = (await env.DB.prepare(`SELECT value FROM settings WHERE key = 'form_secret'`).first()).value;
+      return `${ts}.${createHmac('sha256', secret).update(ts).digest('hex').slice(0, 32)}`;
+    };
+    const request = async (extra = {}) => call('POST', '/public/registrations', { body: {
+      synagogue_name: 'פאר הנצח', area_id: 1, address: 'רחוב הנביאים 5', contact_name: 'נחמן', email: 'nachman@x.com', phone: '0527143567',
+      message: 'נשמח להצטרף', form_token: await formToken(), ...extra } });
+    const verifyToken = () => /#\/verify\?t=([0-9a-f]+)/.exec(sent.at(-1).body.text)[1];
+
+    test('closed by default; open needs mail', async () => {
+      assert.equal((await call('GET', '/public/registrations/form')).body.enabled, false);
+      await setSetting('registration_enabled', '1');
+      assert.equal((await call('GET', '/public/registrations/form')).body.enabled, false, 'no mail, no verification, closed');
+      await enableMail();
+      assert.equal((await call('GET', '/public/registrations/form')).body.enabled, true);
+    });
+
+    test('verify e-mail, super admin approves: synagogue + manager who must choose a password', async () => {
+      const admin = await setupAdmin();
+      await env.DB.prepare(`UPDATE users SET is_super = 1`).run();
+      await call('POST', '/admin/catalog/areas', { token: admin, body: { name: 'רמות' } });
+      await open();
+      const r = await request();
+      assert.equal(r.status, 202);
+      assert.match(sent.at(-1).body.subject, /אימות המייל/);
+      assert.equal((await call('GET', '/admin/registrations', { token: admin })).body.items.length, 0, 'unverified is not a request yet');
+      const before = sent.length;
+      const v = await call('POST', '/public/registrations/verify', { body: { token: verifyToken() } });
+      assert.equal(v.body.status, 'pending');
+      assert.equal(sent.length, before + 1, 'approver notified');
+      assert.match(sent.at(-1).body.subject, /בקשה חדשה/);
+
+      const list = (await call('GET', '/admin/registrations', { token: admin })).body.items;
+      assert.equal(list.length, 1);
+      assert.equal((await request()).status, 409, 'one open request per e-mail');
+      const ok = await call('POST', `/admin/registrations/${list[0].id}/approve`, { token: admin, body: {} });
+      assert.equal(ok.status, 200, JSON.stringify(ok.body));
+      assert.equal(ok.body.user_created, true);
+      assert.equal(ok.body.mail, 'sent');
+      assert.match(sent.at(-1).body.html, /כניסה ישירה למערכת/);
+      const u = await env.DB.prepare(`SELECT * FROM users WHERE email = 'nachman@x.com'`).first();
+      assert.equal(u.must_change_password, 1);
+      const syn = await env.DB.prepare(`SELECT * FROM synagogue_managers WHERE user_id = ?`).bind(u.id).first();
+      assert.equal(syn.synagogue_id, ok.body.synagogue_id);
+      assert.equal((await call('POST', `/admin/registrations/${list[0].id}/approve`, { token: admin, body: {} })).status, 409, 'already handled');
+    });
+
+    test('spam is dropped silently; limits; blocklist; reject and block', async () => {
+      const admin = await setupAdmin();
+      await env.DB.prepare(`UPDATE users SET is_super = 1`).run();
+      await open();
+      const count = async () => (await env.DB.prepare(`SELECT COUNT(*) AS n FROM registrations`).first()).n;
+      assert.equal((await request({ website: 'http://spam' })).status, 202, 'honeypot');
+      const fresh = (await call('GET', '/public/registrations/form')).body.form_token;
+      assert.equal((await request({ form_token: fresh })).status, 202, 'too fast');
+      assert.equal((await request({ form_token: '1.forged' })).status, 202, 'forged token');
+      assert.equal((await request({ synagogue_name: 'buy now www.spam.com' })).status, 202, 'links');
+      assert.equal(await count(), 0);
+
+      await setSetting('registration_blocklist', '@bad.com\n0501231234');
+      await request({ email: 'x@bad.com' });
+      await request({ email: 'y@ok.com', phone: '050-123-1234' });
+      assert.equal(await count(), 0, 'blocked by domain and phone');
+
+      await request({ email: 'a@x.com' });
+      await call('POST', '/public/registrations/verify', { body: { token: verifyToken() } });
+      const [item] = (await call('GET', '/admin/registrations', { token: admin })).body.items;
+      const rej = await call('POST', `/admin/registrations/${item.id}/reject`, { token: admin, body: { reason: 'לא מוכר', block: true } });
+      assert.equal(rej.body.status, 'rejected');
+      assert.match((await call('GET', '/admin/control', { token: admin })).body.registration_blocklist, /a@x\.com/);
+
+      // per-IP limit: 3 an hour (the earlier tries in this test counted too)
+      let last;
+      for (let i = 0; i < 4; i++) last = await request({ email: `n${i}@ok.com`, phone: `05271435${60 + i}` });
+      assert.equal(last.status, 429);
+    });
+  });
+
+  test('admin permissions: only the super admin sets them; each action checks its permission', async () => {
+    const superT = await setupAdmin();
+    await env.DB.prepare(`UPDATE users SET is_super = 1`).run();
+    const mk = await call('POST', '/admin/users', { token: superT, body: { name: 'עוזר', email: 'help@x.com', phone: '0531112233', password: 'help1234', role: 'admin', admin_perms: ['managers'] } });
+    assert.equal(mk.status, 201, JSON.stringify(mk.body));
+    assert.deepEqual(mk.body.perms, ['managers']);
+    const t = (await call('POST', '/auth/login', { body: { login: 'help@x.com', password: 'help1234' } })).body.token;
+    assert.deepEqual((await call('GET', '/me', { token: t })).body.user.perms, ['managers']);
+
+    assert.equal((await call('POST', '/admin/catalog/areas', { token: t, body: { name: 'חדש' } })).status, 403);
+    assert.equal((await call('POST', '/admin/synagogues', { token: t, body: { name: 'x', area_id: 1 } })).status, 403);
+    assert.equal((await call('GET', '/admin/ivr', { token: t })).status, 403);
+    assert.equal((await call('GET', '/admin/registrations', { token: t })).status, 403);
+    assert.equal((await call('POST', '/admin/users', { token: t, body: { name: 'מ', email: 'm@x.com', phone: '0531112244', password: 'pass1234', role: 'manager' } })).status, 201, 'managers: allowed');
+    assert.equal((await call('POST', '/admin/users', { token: t, body: { name: 'א', email: 'a2@x.com', phone: '0531112255', password: 'pass1234', role: 'admin' } })).status, 403, 'admins: not allowed');
+    assert.equal((await call('PATCH', `/admin/users/${mk.body.id}`, { token: t, body: { admin_perms: ['catalog'] } })).status, 403, 'cannot grant itself');
+
+    const s = await call('POST', '/admin/synagogues', { token: superT, body: { name: 'בדיקה', area_id: 1 } });
+    assert.equal((await call('POST', `/synagogues/${s.body.id}/minyanim`, { token: t, body: { prayer_id: 1, time_kind: 'fixed', time: '07:00', season_id: 1 } })).status, 403, 'no minyanim permission');
+    assert.equal((await call('GET', `/synagogues/${s.body.id}`, { token: t })).status, 200, 'can still look');
+
+    // standard set for admins without a stored list: everything but approving registrations
+    const std = await call('POST', '/admin/users', { token: superT, body: { name: 'רגיל', email: 'std@x.com', phone: '0531112266', password: 'pass1234', role: 'admin' } });
+    assert.ok(std.body.perms.includes('catalog') && !std.body.perms.includes('registrations'));
   });
 });

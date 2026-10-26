@@ -19,6 +19,9 @@ export const SETTINGS = {
   password_reset_enabled: { type: 'bool', default: true },
   google_login_enabled: { type: 'bool', default: true },  // "Sign in with Google" (matched by the user's e-mail)
   google_client_id: { type: 'text', default: '89500817024-tbvsuu4dci6bqh173l65ua9lc65pe24p.apps.googleusercontent.com', max: 200 },
+  registration_enabled: { type: 'bool', default: false }, // synagogues may ask to join (verified e-mail + approval)
+  registration_notify: { type: 'bool', default: true },   // e-mail the approvers about each verified request
+  registration_blocklist: { type: 'text', default: '', max: 5000 }, // one per line: e-mail, @domain, phone or IP
   zmanim_lat: { type: 'text', default: '31.778', max: 12 }, // where sunrise/sunset are computed (default Jerusalem)
   zmanim_lng: { type: 'text', default: '35.235', max: 12 },
 };

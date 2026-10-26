@@ -97,6 +97,12 @@ async function anchorsFor(c, prayerId) {
 
 /** Spoken minyan; Shabbat is not mentioned while Shabbat is switched off. */
 // The caller always works inside one season (announced in the menu), so it is not repeated per minyan.
+/** Managers may always edit their own synagogues; admins need the permission. */
+const can = (c, perm) => c.actor.role !== 'admin' || c.actor.perms.includes(perm);
+
+/** A new admin added by phone gets the standard set from the super admin, otherwise at most the adder's own. */
+const passOnPerms = (c) => (c.actor.is_super ? null : JSON.stringify(c.actor.perms));
+
 const speakMinyanFor = (c) => (m) => speakFull({ ...m, season_name: null, days: visibleDays(m.days, c.settings) || m.days });
 
 /** Admins visible to this caller (a hidden super admin is visible only to himself). */
@@ -129,8 +135,10 @@ const SCREENS = {
     async prompt(c) {
       if (c.actor.role === 'admin') {
         return menu(c, 'תפריט ראשי', [
-          ['1', 'כניסה לבית כנסת לפי מספר'], ['2', 'שמיעת רשימת בתי הכנסת'], ['3', 'הוספת בית כנסת'],
-          ['4', 'ניהול מנהלי מערכת'], ['5', 'דרישת סיסמה בשיחה'],
+          ['1', 'כניסה לבית כנסת לפי מספר'], ['2', 'שמיעת רשימת בתי הכנסת'],
+          ...(can(c, 'synagogues') ? [['3', 'הוספת בית כנסת']] : []),
+          ...(can(c, 'admins') ? [['4', 'ניהול מנהלי מערכת']] : []),
+          ['5', 'דרישת סיסמה בשיחה'],
         ], { star: false });
       }
       const list = await mySynagogues(c);
@@ -150,8 +158,8 @@ const SCREENS = {
         for (const s of list.slice(0, 40)) c.say.push(text(`בית כנסת מספר ${s.id}, ${s.name}`));
         return go(c, 'home');
       }
-      if (input === '3') return go(c, 'synNewName');
-      if (input === '4') return go(c, 'admins');
+      if (input === '3') return can(c, 'synagogues') ? go(c, 'synNewName') : invalid(c);
+      if (input === '4') return can(c, 'admins') ? go(c, 'admins') : invalid(c);
       if (input === '5') return go(c, 'phonePw');
       return invalid(c);
     },
@@ -204,14 +212,17 @@ const SCREENS = {
     async prompt(c) {
       const s = await synagogue(c);
       const season = await workSeason(c);
-      const items = [['1', 'שמיעת המניינים'], ['2', 'הוספת מניין'], ['3', 'עריכת מניין'], ['4', 'ניהול מיקומים']];
-      if (c.actor.role === 'admin') items.push(['5', 'הגדרות בית הכנסת'], ['6', 'מנהלי בית הכנסת']);
+      const items = [['1', 'שמיעת המניינים']];
+      if (can(c, 'minyanim')) items.push(['2', 'הוספת מניין'], ['3', 'עריכת מניין'], ['4', 'ניהול מיקומים']);
+      if (c.actor.role === 'admin' && can(c, 'synagogues')) items.push(['5', 'הגדרות בית הכנסת']);
+      if (c.actor.role === 'admin' && can(c, 'managers')) items.push(['6', 'מנהלי בית הכנסת']);
       if ((await seasonsFor(c)).length > 1) items.push(['7', 'מעבר לעונה אחרת']);
       if (c.state.data.single) items.push(['9', 'דרישת סיסמה בשיחה']);
       return menu(c, season ? `${s.name}, זמני ${season.name}` : s.name, items, { star: !c.state.data.single });
     },
     async handle(c, input) {
       const admin = c.actor.role === 'admin';
+      if (['2', '3', '4'].includes(input) && !can(c, 'minyanim')) return invalid(c);
       switch (input) {
         case '1': {
           const list = await seasonMinyanim(c);
@@ -228,8 +239,8 @@ const SCREENS = {
         }
         case '3': return go(c, 'mEditPick');
         case '4': return go(c, 'locs');
-        case '5': return admin ? go(c, 'synSettings') : invalid(c);
-        case '6': return admin ? go(c, 'synManagers') : invalid(c);
+        case '5': return admin && can(c, 'synagogues') ? go(c, 'synSettings') : invalid(c);
+        case '6': return admin && can(c, 'managers') ? go(c, 'synManagers') : invalid(c);
         case '7': return (await seasonsFor(c)).length > 1 ? go(c, 'synSeason') : invalid(c);
         case '9': return c.state.data.single ? go(c, 'phonePw') : invalid(c);
         default: return invalid(c);
@@ -629,10 +640,10 @@ const SCREENS = {
       const u = await first(c.env, `SELECT id, is_super FROM users WHERE phone = ?`, phone);
       if (u?.is_super) { c.say.push(text('מספר זה כבר מנהל מערכת')); return go(c, 'admins'); }
       if (u) {
-        await run(c.env, `UPDATE users SET role = 'admin', is_active = 1, updated_at = ? WHERE id = ?`, nowIso(), u.id);
+        await run(c.env, `UPDATE users SET role = 'admin', is_active = 1, admin_perms = ?, updated_at = ? WHERE id = ?`, passOnPerms(c), nowIso(), u.id);
         await run(c.env, `DELETE FROM synagogue_managers WHERE user_id = ?`, u.id);
       } else {
-        await run(c.env, `INSERT INTO users (name, phone, role) VALUES (?, ?, 'admin')`, `מנהל ${phone}`, phone);
+        await run(c.env, `INSERT INTO users (name, phone, role, admin_perms) VALUES (?, ?, 'admin', ?)`, `מנהל ${phone}`, phone, passOnPerms(c));
       }
       c.say.push(text('מנהל המערכת נוסף'));
       return go(c, 'admins');

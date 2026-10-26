@@ -5,7 +5,7 @@ import {
   confirm, toast, toastError, useLoad,
 } from '../ui.js';
 
-export function AdminSynagogues({ onChanged }) {
+export function AdminSynagogues({ onChanged, perms = [] }) {
   const { data, error, loading, reload, setData } = useLoad(() =>
     Promise.all([api.get('/admin/synagogues'), api.get('/admin/users'), api.get('/admin/catalog/areas'), api.get('/admin/catalog/prayers')])
       .then(([synagogues, users, areas, prayers]) => ({ synagogues, users, areas, prayers }))
@@ -41,7 +41,7 @@ export function AdminSynagogues({ onChanged }) {
   return html`<div class="page">
     <header class="page-head">
       <div><h1>בתי כנסת</h1><p class="muted">${data.synagogues.length} בתי כנסת במערכת</p></div>
-      <${Button} kind="primary" icon="plus" onClick=${() => setEditing('new')}>בית כנסת חדש<//>
+      ${perms.includes('synagogues') && html`<${Button} kind="primary" icon="plus" onClick=${() => setEditing('new')}>בית כנסת חדש<//>`}
     </header>
     <div class="toolbar">
       <div class="search"><${Icon} name="search" /><input class="input" placeholder="חיפוש לפי שם, כתובת או מנהל…" value=${q} onInput=${(e) => setQ(e.currentTarget.value)} /></div>
@@ -66,8 +66,8 @@ export function AdminSynagogues({ onChanged }) {
             </td>
             <td class="actions">
               <${Button} kind="ghost" small icon="external" title="כניסה לבית הכנסת" onClick=${() => (location.hash = `/s/${s.id}`)} />
-              <${Button} kind="ghost" small icon="edit" title="עריכה" onClick=${() => setEditing(s)} />
-              <${Button} kind="ghost" small icon="trash" title="מחיקה" onClick=${() => remove(s)} />
+              ${perms.includes('synagogues') && html`<${Button} kind="ghost" small icon="edit" title="עריכה" onClick=${() => setEditing(s)} />`}
+              ${perms.includes('synagogues_delete') && html`<${Button} kind="ghost" small icon="trash" title="מחיקה" onClick=${() => remove(s)} />`}
             </td>
           </tr>`)}</tbody>
         </table>

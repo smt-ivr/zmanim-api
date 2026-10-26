@@ -7,6 +7,7 @@ import { AdminSynagogues } from './pages/admin-synagogues.js';
 import { AdminUsers } from './pages/admin-users.js';
 import { ChoosePassword, LinkLogin, Login, ResetPassword, googleLoggedOut } from './pages/login.js';
 import { Profile } from './pages/profile.js';
+import { AdminRegistrations, RegisterPage, VerifyPage } from './pages/registrations.js';
 import { ControlPage, Inbox, MyFeedback } from './pages/control.js';
 import { SynagoguePicker, Workspace } from './pages/workspace.js';
 import { Button, Icon, Spinner, toast } from './ui.js';
@@ -80,12 +81,15 @@ function App() {
   const linkToken = new URLSearchParams(location.hash.split('?')[1] || '').get('t');
   if (path === '/link' && linkToken) return html`<${LinkLogin} token=${linkToken} onDone=${signedIn} />`;
   if (path === '/reset' && linkToken) return html`<${ResetPassword} token=${linkToken} onDone=${signedIn} />`;
+  if (path === '/verify' && linkToken) return html`<${VerifyPage} token=${linkToken} />`;
+  if (path === '/register' && session.status !== 'ready') return html`<${RegisterPage} />`;
   if (session.status === 'loading') return html`<div class="boot"><${Spinner} /></div>`;
   if (session.status === 'anon') return html`<${Login} onDone=${signedIn} />`;
 
   const { user, synagogues, system } = session;
   const isAdmin = user.role === 'admin';
   const appName = system.name || 'מערכת זמני התפילות';
+  const can = (perm) => isAdmin && (user.perms || []).includes(perm);
   document.title = `ניהול · ${appName}`;
 
   async function logout() {
@@ -105,9 +109,10 @@ function App() {
   else if (path === '/feedback') page = html`<${MyFeedback} />`;
   else if (user.is_super && path === '/admin/control') page = html`<${ControlPage} onChanged=${refreshMe} />`;
   else if (user.is_super && path === '/admin/inbox') page = html`<${Inbox} />`;
-  else if (isAdmin && path === '/admin/synagogues') page = html`<${AdminSynagogues} onChanged=${refreshMe} />`;
+  else if (can('registrations') && path === '/admin/registrations') page = html`<${AdminRegistrations} onChanged=${refreshMe} />`;
+  else if (isAdmin && path === '/admin/synagogues') page = html`<${AdminSynagogues} onChanged=${refreshMe} perms=${user.perms} />`;
   else if (isAdmin && path === '/admin/users') page = html`<${AdminUsers} me=${user} system=${system} />`;
-  else if (isAdmin && path === '/admin/catalog') page = html`<${AdminCatalog} />`;
+  else if (isAdmin && path === '/admin/catalog') page = html`<${AdminCatalog} perms=${user.perms} />`;
   else if (isAdmin) page = html`<${AdminDashboard} />`;
   else if (synagogues.length === 1) {
     page = html`<${Workspace} key=${synagogues[0].id} id=${synagogues[0].id} user=${user} system=${system} onChanged=${refreshMe} />`;
@@ -125,7 +130,9 @@ function App() {
           ${link('/', 'home', 'לוח בקרה', path === '/')}
           ${link('/admin/synagogues', 'building', 'בתי כנסת', path === '/admin/synagogues')}
           ${link('/admin/users', 'users', 'משתמשים', path === '/admin/users')}
-          ${link('/admin/catalog', 'list', 'הגדרות ורשימות', path === '/admin/catalog')}`}
+          ${link('/admin/catalog', 'list', 'הגדרות ורשימות', path === '/admin/catalog')}
+          ${can('registrations') && html`<a href="#/admin/registrations" class=${cx('nav-link', path === '/admin/registrations' && 'active')}>
+            <${Icon} name="plus" /><span>בקשות הצטרפות</span>${system.pending_registrations > 0 && html`<b class="nav-count">${system.pending_registrations}</b>`}</a>`}`}
         ${user.is_super && html`
           <div class="nav-section">מנהל על</div>
           ${link('/admin/control', 'settings', 'הגדרות שליטה', path === '/admin/control')}

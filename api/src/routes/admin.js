@@ -1,5 +1,5 @@
 // Admin-only: synagogues (with their manager settings), users, catalog and stats.
-import { hashPassword, publicUser, revokeSessions } from '../auth.js';
+import { PERMS, hashPassword, publicUser, requirePerm, revokeSessions } from '../auth.js';
 import { all, batch, first, marks, nowIso, q, run, setClause } from '../db.js';
 import { conflict, forbidden, invalid, json, noContent, notFound, readJson } from '../http.js';
 import { adminUrl, createEmailToken, sendMail, siteUrl } from '../mail.js';
@@ -161,6 +161,19 @@ function guardSuper(actor, target) {
   if (target.is_super && !actor.is_super) throw notFound('המשתמש לא נמצא');
 }
 
+/** Managing a manager needs 'managers'; managing an admin (or making someone admin) needs 'admins'. */
+const requireUserPerm = (actor, ...roles) => requirePerm(actor, roles.includes('admin') ? 'admins' : 'managers');
+
+/**
+ * Stored permissions for an admin. Only the super admin chooses them; an admin who creates another
+ * admin passes on at most their own permissions.
+ */
+function permsToStore(actor, requested, role) {
+  if (role !== 'admin') return null;
+  if (actor.is_super) return requested === undefined ? undefined : requested === null ? null : JSON.stringify(requested);
+  return requested === undefined ? JSON.stringify(actor.perms) : JSON.stringify(requested.filter((p) => actor.perms.includes(p)));
+}
+
 export async function listUsers({ env, actor }) {
   const rows = await all(
     env,
@@ -188,6 +201,7 @@ function parseUser(body, partial) {
     .bool('must_change_password', { default: false }) // must choose a new password at the next login
     .bool('send_welcome', { default: false }) // e-mail the login details with a direct-login link
     .bool('send_password', { default: false }) // ...including the password just set (only when one is set now)
+    .subset('admin_perms', Object.keys(PERMS), { nullable: true }) // admins only; null = the standard set
     .done();
 }
 
@@ -201,6 +215,7 @@ async function checkUnique(env, d, exceptId = 0) {
 export async function createUser(ctx) {
   const { env, request } = ctx;
   const d = parseUser(await readJson(request), false);
+  requireUserPerm(ctx.actor, d.role);
   await checkUnique(env, d);
   await assertIdsExist(env, 'synagogues', d.synagogue_ids, 'synagogue_ids');
   const res = await run(
@@ -209,6 +224,8 @@ export async function createUser(ctx) {
     d.name, d.email, d.phone, d.role, d.is_active ? 1 : 0, await hashPassword(d.password), d.can_edit_email ? 1 : 0, d.can_edit_password ? 1 : 0, d.can_message ? 1 : 0, d.must_change_password ? 1 : 0
   );
   const uid = res.meta.last_row_id;
+  const perms = permsToStore(ctx.actor, d.admin_perms, d.role);
+  if (perms !== undefined) await run(env, `UPDATE users SET admin_perms = ? WHERE id = ?`, perms, uid);
   if (d.role === 'manager' && d.synagogue_ids.length) {
     await batch(env, replaceLinks(env, 'synagogue_managers', 'user_id', uid, 'synagogue_id', d.synagogue_ids));
   }
@@ -226,6 +243,8 @@ export async function patchUser(ctx) {
   if (!current) throw notFound('המשתמש לא נמצא');
   guardSuper(actor, current);
   const d = parseUser(await readJson(request), true);
+  if (uid !== actor.id) requireUserPerm(actor, current.role, d.role);
+  if (d.admin_perms !== undefined && !actor.is_super) throw forbidden('רק מנהל העל קובע הרשאות של מנהלים');
   if (current.is_super && d.role && d.role !== 'admin') throw forbidden('מנהל העל נשאר מנהל מערכת');
 
   if (uid === actor.id && ((d.role && d.role !== 'admin') || d.is_active === false)) {
@@ -237,7 +256,13 @@ export async function patchUser(ctx) {
   const role = d.role ?? current.role;
   const data = { ...d, updated_at: nowIso() };
   if (d.password) data.password_hash = await hashPassword(d.password);
-  const set = setClause(data, ['name', 'email', 'phone', 'role', 'is_active', 'password_hash', 'can_edit_email', 'can_edit_password', 'can_message', 'must_change_password', 'updated_at']);
+  // Permissions: set by the super admin; a promotion by another admin passes on at most their own; managers have none.
+  if (role !== 'admin') data.admin_perms = null;
+  else if (d.admin_perms !== undefined || current.role !== 'admin') {
+    const stored = permsToStore(actor, d.admin_perms, role);
+    if (stored !== undefined) data.admin_perms = stored;
+  }
+  const set = setClause(data, ['name', 'email', 'phone', 'role', 'is_active', 'password_hash', 'can_edit_email', 'can_edit_password', 'can_message', 'must_change_password', 'admin_perms', 'updated_at']);
   const statements = [q(env, `UPDATE users SET ${set.sql} WHERE id = ?`, ...set.params, uid)];
   if (role === 'admin') statements.push(q(env, `DELETE FROM synagogue_managers WHERE user_id = ?`, uid));
   else if (d.synagogue_ids) statements.push(...replaceLinks(env, 'synagogue_managers', 'user_id', uid, 'synagogue_id', d.synagogue_ids));
@@ -259,6 +284,7 @@ export async function deleteUser({ env, actor, params }) {
   if (!target) throw notFound('המשתמש לא נמצא');
   guardSuper(actor, target);
   if (target.is_super) throw forbidden('לא ניתן למחוק את מנהל העל');
+  requireUserPerm(actor, target.role);
   const res = await run(env, `DELETE FROM users WHERE id = ?`, uid);
   if (!res.meta.changes) throw notFound('המשתמש לא נמצא');
   return noContent();
@@ -416,7 +442,7 @@ export async function rotateIvrKey({ env, actor }) {
  * Login details by e-mail: a button for direct login (no username or password), the username,
  * and the password itself only when the admin chose to send the one just set.
  */
-async function welcomeMail({ env, url }, uid, { password = null } = {}) {
+export async function welcomeMail({ env, url }, uid, { password = null } = {}) {
   const u = await first(env, `SELECT * FROM users WHERE id = ?`, uid);
   if (!u?.email) throw invalid({ email: 'למשתמש אין מייל' });
   const token = await createEmailToken(env, u.id, 'welcome');
@@ -453,6 +479,7 @@ export async function sendWelcome(ctx) {
   const target = await first(ctx.env, `SELECT * FROM users WHERE id = ?`, uid);
   if (!target) throw notFound('המשתמש לא נמצא');
   guardSuper(ctx.actor, target);
+  requireUserPerm(ctx.actor, target.role);
   await welcomeMail(ctx, uid);
   return json({ sent_to: target.email });
 }

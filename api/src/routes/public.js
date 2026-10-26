@@ -50,6 +50,7 @@ export async function catalog({ env }) {
     phone_enabled: settings.listen_enabled,
     shabbat_enabled: settings.shabbat_enabled,
     season_choice: settings.public_season_choice,
+    registration: settings.registration_enabled && Boolean(settings.mail_enabled && settings.resend_api_key && settings.mail_from),
   };
   const current = await currentSeason(env);
   const [areas, prayers, seasons, anchors] = await Promise.all([

@@ -97,7 +97,9 @@ export async function get({ env, actor, params }) {
   ]);
   const allowed = settings.allowed_prayer_ids;
   // Which seasons this user may edit: the current one (and all-year), unless the synagogue allows more.
-  settings.editable_season_ids = actor.role === 'admin' || settings.allow_other_seasons ? null : current ? [current.id] : [];
+  // An admin without the 'minyanim' permission only looks.
+  settings.read_only = actor.role === 'admin' && !actor.perms.includes('minyanim');
+  settings.editable_season_ids = settings.read_only ? [] : actor.role === 'admin' || settings.allow_other_seasons ? null : current ? [current.id] : [];
   settings.notes_enabled = system.minyan_notes_enabled;
   return json({
     synagogue: synagogueInfo({ ...s, area_name: area?.name }),

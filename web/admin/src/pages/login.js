@@ -2,7 +2,7 @@ import { ApiError, api } from '../api.js';
 import { html, useEffect, useRef, useState } from '../lib.js';
 import { Button, Field, Icon, Input } from '../ui.js';
 
-function AuthCard({ title, subtitle, children }) {
+export function AuthCard({ title, subtitle, children }) {
   return html`<div class="auth">
     <div class="auth-card">
       <div class="auth-brand"><span class="brand-mark lg"><${Icon} name="clock" size=${26} /></span></div>
@@ -13,7 +13,7 @@ function AuthCard({ title, subtitle, children }) {
   </div>`;
 }
 
-function useSubmit(fn) {
+export function useSubmit(fn) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [fields, setFields] = useState({});
@@ -167,6 +167,7 @@ export function Login({ onDone }) {
         ${mode !== 'link' && options.magic_link && html`<button type="button" class="link" onClick=${() => switchTo('link')}>כניסה עם קישור למייל</button>`}
         ${mode !== 'reset' && options.password_reset && html`<button type="button" class="link" onClick=${() => switchTo('reset')}>שכחתי סיסמה</button>`}
       </div>
+      ${mode === 'password' && options.registration && html`<div class="auth-register">בית כנסת חדש? <a class="link" href="#/register">הצטרפות למערכת</a></div>`}
     </form>
   <//>`;
 }

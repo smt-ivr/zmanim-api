@@ -178,6 +178,7 @@ function App() {
       <div class="wrap foot-row">
         <span>${name}</span>
         ${phone && html`<a href=${`tel:${phone}`}>שמיעה בטלפון: <span dir="ltr">${formatPhone(phone)}</span></a>`}
+        ${data?.catalog?.site?.registration && html`<a href="admin/#/register">הוספת בית כנסת</a>`}
         <a href="admin/" class="foot-admin"><${Icon} name="lock" size=${14} /> כניסת מנהלים</a>
       </div>
     </footer>`;

@@ -32,11 +32,13 @@ export async function getMe({ env, actor }) {
         );
   const settings = await getSettings(env);
   const user = publicUser(await first(env, `SELECT * FROM users WHERE id = ?`, actor.id));
+  const pending = user.perms.includes('registrations')
+    ? (await first(env, `SELECT COUNT(*) AS n FROM registrations WHERE status = 'pending'`)).n : 0;
   return json({
     user,
     synagogues,
     // What the UI needs to know about the system
-    system: { name: settings.system_name, shabbat_enabled: settings.shabbat_enabled, feedback_enabled: settings.feedback_enabled, mail_ready: await mailReady(env) },
+    system: { name: settings.system_name, pending_registrations: pending, shabbat_enabled: settings.shabbat_enabled, feedback_enabled: settings.feedback_enabled, mail_ready: await mailReady(env) },
   });
 }
 
@@ -103,6 +105,7 @@ export async function getOptions({ env }) {
     password_reset: ready && s.password_reset_enabled,
     google_client_id: s.google_login_enabled && s.google_client_id ? s.google_client_id : null,
     system_name: s.system_name,
+    registration: s.registration_enabled && ready, // "new synagogue? register" link
   });
 }
 
