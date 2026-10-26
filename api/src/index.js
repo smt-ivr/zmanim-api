@@ -10,6 +10,7 @@ import { handleIvr } from './ivr/flow.js';
 import { handleListen } from './ivr/listen.js';
 import * as control from './routes/control.js';
 import * as reg from './routes/registrations.js';
+import * as security from './routes/security.js';
 
 const PUBLIC = { auth: 'none' };
 const ADMIN = { auth: 'admin' };
@@ -81,6 +82,9 @@ export const router = new Router()
   .post('/admin/registrations/:id/approve', reg.approve, perm('registrations'))
   .post('/admin/registrations/:id/reject', reg.reject, perm('registrations'))
   .delete('/admin/registrations/:id', reg.remove, perm('registrations'))
+  .post('/admin/registrations/:id/resend', reg.resend, perm('registrations'))
+  .post('/admin/registrations/:id/verify', reg.verifyByHand, perm('registrations'))
+  .post('/admin/registrations/:id/block', reg.block, perm('registrations'))
   .get('/admin/catalog/:kind', admin.listCatalog, ADMIN)
   .post('/admin/catalog/:kind', admin.createCatalog, perm('catalog'))
   .patch('/admin/catalog/:kind/:id', admin.patchCatalog, perm('catalog'))
@@ -90,6 +94,10 @@ export const router = new Router()
   .patch('/admin/control', control.patchControl, SUPER)
   .post('/admin/control/test-mail', control.testMail, SUPER)
   .post('/admin/users/:id/welcome', admin.sendWelcome, ADMIN)
+  .get('/admin/locks', security.list, SUPER)
+  .post('/admin/locks', security.lock, SUPER)
+  .delete('/admin/locks', security.unlock, SUPER)
+  .post('/admin/users/:id/unlock', security.unlockUser, perm('managers'))
   .get('/admin/feedback', control.listFeedback, SUPER)
   .patch('/admin/feedback/:id', control.patchFeedback, SUPER)
   .delete('/admin/feedback/:id', control.deleteFeedback, SUPER);

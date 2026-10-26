@@ -1,6 +1,6 @@
 import { all, first, nowIso, nowSec, run } from './db.js';
 import { forbidden, notFound, tooMany, unauthorized } from './http.js';
-import { normalizeEmail, normalizePhone } from './validate.js';
+import { clean, normalizeEmail, normalizePhone } from './validate.js';
 
 const enc = new TextEncoder();
 
@@ -71,7 +71,7 @@ export async function recordFailure(env, key, { max, window, lock }) {
 export async function login(env, request, identifier, password) {
   const ip = request.headers.get('CF-Connecting-IP') || 'local';
   const phone = normalizePhone(identifier);
-  const id = phone || String(identifier).trim().toLowerCase();
+  const id = phone || normalizeEmail(identifier) || clean(identifier).toLowerCase();
   const keys = { email: `login:${id}`, ip: `ip:${ip}` };
   await checkLock(env, keys.ip);
   await checkLock(env, keys.email);

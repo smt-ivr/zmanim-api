@@ -181,7 +181,10 @@ export async function listUsers({ env, actor }) {
                     FROM synagogue_managers sm JOIN synagogues s ON s.id = sm.synagogue_id WHERE sm.user_id = u.id) AS synagogues_json
      FROM users u ${actor.is_super ? '' : 'WHERE NOT (u.is_super = 1 AND u.is_hidden = 1)'} ORDER BY u.is_super DESC, u.role, u.name`
   );
-  return json(rows.map((u) => ({ ...publicUser(u), synagogues: JSON.parse(u.synagogues_json || '[]') })));
+  const locks = await all(env, `SELECT key, locked_until FROM login_attempts WHERE locked_until > ?`, Math.floor(Date.now() / 1000));
+  const lockedUntil = (u) => Math.max(0, ...locks.filter((l) =>
+    [`login:${u.email}`, `login:${u.phone}`, `phone:${u.id}`, `google:${u.email}`, `mail:${u.id}`].includes(l.key)).map((l) => l.locked_until)) || null;
+  return json(rows.map((u) => ({ ...publicUser(u), synagogues: JSON.parse(u.synagogues_json || '[]'), locked_until: lockedUntil(u) })));
 }
 
 // Every user has e-mail, phone and password. Login on the web: e-mail or phone + password.

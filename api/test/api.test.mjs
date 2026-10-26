@@ -754,7 +754,8 @@ describe('e-mail (Resend mocked)', () => {
       const r = await request();
       assert.equal(r.status, 202);
       assert.match(sent.at(-1).body.subject, /אימות המייל/);
-      assert.equal((await call('GET', '/admin/registrations', { token: admin })).body.items.length, 0, 'unverified is not a request yet');
+      const waiting = (await call('GET', '/admin/registrations', { token: admin })).body;
+      assert.deepEqual([waiting.unverified, waiting.items[0].status], [1, 'unverified'], 'unverified is shown to the approver');
       const before = sent.length;
       const v = await call('POST', '/public/registrations/verify', { body: { token: verifyToken() } });
       assert.equal(v.body.status, 'pending');
@@ -762,7 +763,7 @@ describe('e-mail (Resend mocked)', () => {
       assert.match(sent.at(-1).body.subject, /בקשה חדשה/);
 
       const list = (await call('GET', '/admin/registrations', { token: admin })).body.items;
-      assert.equal(list.length, 1);
+      assert.equal(list[0].status, 'pending');
       assert.equal((await request()).status, 409, 'one open request per e-mail');
       const ok = await call('POST', `/admin/registrations/${list[0].id}/approve`, { token: admin, body: {} });
       assert.equal(ok.status, 200, JSON.stringify(ok.body));
@@ -795,7 +796,7 @@ describe('e-mail (Resend mocked)', () => {
 
       await request({ email: 'a@x.com' });
       await call('POST', '/public/registrations/verify', { body: { token: verifyToken() } });
-      const [item] = (await call('GET', '/admin/registrations', { token: admin })).body.items;
+      const [item] = (await call('GET', '/admin/registrations', { token: admin })).body.items.filter((r) => r.status === 'pending');
       const rej = await call('POST', `/admin/registrations/${item.id}/reject`, { token: admin, body: { reason: 'לא מוכר', block: true } });
       assert.equal(rej.body.status, 'rejected');
       assert.match((await call('GET', '/admin/control', { token: admin })).body.registration_blocklist, /a@x\.com/);
@@ -831,5 +832,65 @@ describe('e-mail (Resend mocked)', () => {
     // standard set for admins without a stored list: everything but approving registrations
     const std = await call('POST', '/admin/users', { token: superT, body: { name: 'רגיל', email: 'std@x.com', phone: '0531112266', password: 'pass1234', role: 'admin' } });
     assert.ok(std.body.perms.includes('catalog') && !std.body.perms.includes('registrations'));
+  });
+
+  test('approver controls unverified requests: resend, verify by hand, block', async () => {
+    const admin = await setupAdmin();
+    await env.DB.prepare(`UPDATE users SET is_super = 1`).run();
+    await enableMail();
+    await setSetting('registration_enabled', '1');
+    const ts = String(Math.floor(Date.now() / 1000) - 60);
+    await call('GET', '/public/registrations/form');
+    const { createHmac } = await import('node:crypto');
+    const secret = (await env.DB.prepare(`SELECT value FROM settings WHERE key = 'form_secret'`).first()).value;
+    const token = `${ts}.${createHmac('sha256', secret).update(ts).digest('hex').slice(0, 32)}`;
+    const send = (email, phone) => call('POST', '/public/registrations', { body: { synagogue_name: 'בית אל', contact_name: 'יוסף', email, phone, form_token: token } });
+    await send('one@x.com', '0521000001');
+    await send('two@spam.com', '0521000002');
+    const items = (await call('GET', '/admin/registrations', { token: admin })).body.items;
+    const one = items.find((r) => r.email === 'one@x.com');
+    const two = items.find((r) => r.email === 'two@spam.com');
+
+    const before = sent.length;
+    assert.equal((await call('POST', `/admin/registrations/${one.id}/resend`, { token: admin })).body.sent_to, 'one@x.com');
+    assert.equal(sent.length, before + 1);
+    assert.equal((await call('POST', `/admin/registrations/${one.id}/verify`, { token: admin })).body.status, 'pending');
+    assert.equal((await call('POST', `/admin/registrations/${one.id}/resend`, { token: admin })).status, 409, 'already verified');
+
+    const b = await call('POST', `/admin/registrations/${two.id}/block`, { token: admin, body: { what: ['domain', 'phone'] } });
+    assert.deepEqual(b.body.blocked, ['@spam.com', '0521000002']);
+    const after = (await call('GET', '/admin/registrations', { token: admin })).body.items.find((r) => r.id === two.id);
+    assert.equal(after.status, 'rejected');
+    assert.equal(after.blocked, true);
+    assert.match((await call('GET', '/admin/control', { token: admin })).body.registration_blocklist, /@spam\.com\n0521000002/);
+  });
+
+  test('locks: see who is locked, unlock one user or everything, lock by hand', async () => {
+    const admin = await setupAdmin();
+    await env.DB.prepare(`UPDATE users SET is_super = 1`).run();
+    const m = await call('POST', '/admin/users', { token: admin, body: { name: 'יעקב', email: 'yaakov@x.com', phone: '0541234567', password: 'right123', role: 'manager' } });
+    for (let i = 0; i < 5; i++) await call('POST', '/auth/login', { body: { login: '‏Yaakov@x.com', password: 'wrong' } });
+    assert.equal((await call('POST', '/auth/login', { body: { login: 'yaakov@x.com', password: 'right123' } })).status, 429, 'locked');
+
+    const locks = (await call('GET', '/admin/locks', { token: admin })).body;
+    const mine = locks.find((l) => l.kind === 'login');
+    assert.equal(mine.user.name, 'יעקב');
+    assert.equal(mine.locked, true);
+    assert.ok(locks.some((l) => l.kind === 'ip'));
+    const users = (await call('GET', '/admin/users', { token: admin })).body;
+    assert.ok(users.find((u) => u.id === m.body.id).locked_until, 'users page shows the lock');
+
+    assert.equal((await call('POST', `/admin/users/${m.body.id}/unlock`, { token: admin })).status, 204);
+    assert.equal((await call('POST', '/auth/login', { body: { login: 'yaakov@x.com', password: 'right123' } })).status, 200);
+
+    const l = await call('POST', '/admin/locks', { token: admin, body: { type: 'ip', value: '10.0.0.9', hours: 2 } });
+    assert.equal(l.body.key, 'ip:10.0.0.9');
+    assert.ok((await call('GET', '/admin/locks', { token: admin })).body.find((x) => x.key === 'ip:10.0.0.9').locked);
+    assert.equal((await call('DELETE', '/admin/locks?key=ip%3A10.0.0.9', { token: admin })).status, 204);
+    await call('POST', '/admin/locks', { token: admin, body: { type: 'login', value: '054-123-4567', hours: 1 } });
+    assert.equal((await call('POST', '/auth/login', { body: { login: '0541234567', password: 'right123' } })).status, 429, 'locked by hand');
+    assert.equal((await call('DELETE', '/admin/locks', { token: admin })).status, 204, 'unlock everything');
+    assert.equal((await call('POST', '/auth/login', { body: { login: '0541234567', password: 'right123' } })).status, 200);
+    assert.equal((await call('GET', '/admin/locks', { token: m.body.token })).status, 401);
   });
 });

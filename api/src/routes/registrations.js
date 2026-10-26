@@ -104,16 +104,21 @@ export async function submit({ env, request, url }) {
   } else {
     await run(env, `INSERT INTO registrations (synagogue_name, area_id, address, contact_name, email, phone, message, ip, token_hash, token_expires) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, ...values);
   }
+  await verificationMail(env, url, d, token);
+  return accepted;
+}
+
+async function verificationMail(env, url, r, token) {
+  const s = await getSettings(env);
   await sendMail(env, {
-    to: d.email,
+    to: r.email,
     subject: `אימות המייל - ${s.system_name}`,
-    title: `שלום ${d.contact_name}`,
+    title: `שלום ${r.contact_name}`,
     site: siteUrl(env, url),
-    paragraphs: [`קיבלנו בקשה להוסיף את ${d.synagogue_name} ל${s.system_name}.`, 'כדי שהבקשה תעבור לאישור, אמתו את כתובת המייל בלחיצה על הכפתור.'],
+    paragraphs: [`קיבלנו בקשה להוסיף את ${r.synagogue_name} ל${s.system_name}.`, 'כדי שהבקשה תעבור לאישור, אמתו את כתובת המייל בלחיצה על הכפתור.'],
     button: { label: 'אימות המייל', url: adminUrl(env, url, `/verify?t=${token}`), hint: 'הכפתור תקף ל-24 שעות.' },
     note: 'אחרי האימות הבקשה תועבר למנהל המערכת, ונעדכן אותך במייל כשתאושר. אם לא ביקשת, אפשר להתעלם מהמייל.',
   });
-  return accepted;
 }
 
 /** POST /public/registrations/verify { token } */
@@ -157,11 +162,62 @@ const LIST_SQL = `SELECT r.*, a.name AS area_name, u.name AS decided_by_name, s.
   LEFT JOIN synagogues s ON s.id = r.synagogue_id`;
 const serialize = ({ token_hash, token_expires, ...r }) => ({ ...r, existing_user: Boolean(r.existing_user_id) });
 
-/** GET /admin/registrations: everything except unverified (those are not real requests yet). */
+/** GET /admin/registrations: every request, including those still waiting for e-mail verification. */
 export async function list({ env }) {
-  const rows = await all(env, `${LIST_SQL} WHERE r.status != 'unverified' ORDER BY r.status = 'pending' DESC, r.id DESC LIMIT 300`);
-  const { n } = await first(env, `SELECT COUNT(*) AS n FROM registrations WHERE status = 'unverified'`);
-  return json({ items: rows.map(serialize), unverified: n });
+  const rows = await all(env, `${LIST_SQL} ORDER BY r.status = 'pending' DESC, r.status = 'unverified' DESC, r.id DESC LIMIT 500`);
+  const s = await getSettings(env);
+  return json({
+    items: rows.map((r) => ({ ...serialize(r), expired: r.status === 'unverified' && r.token_expires < nowSec(), blocked: blocked(s.registration_blocklist, { email: r.email, phone: r.phone, ip: r.ip }) })),
+    unverified: rows.filter((r) => r.status === 'unverified').length,
+  });
+}
+
+async function unverified(env, rid) {
+  const r = await first(env, `SELECT * FROM registrations WHERE id = ?`, rid);
+  if (!r) throw notFound('הבקשה לא נמצאה');
+  if (r.status !== 'unverified') throw conflict('המייל של הבקשה כבר אומת');
+  return r;
+}
+
+/** POST /admin/registrations/:id/resend: a fresh verification link (24 hours). */
+export async function resend({ env, params, url }) {
+  const r = await unverified(env, id(params.id));
+  const token = randomHex(24);
+  await run(env, `UPDATE registrations SET token_hash = ?, token_expires = ? WHERE id = ?`, await sha256(token), nowSec() + VERIFY_TTL, r.id);
+  await verificationMail(env, url, r, token);
+  return json({ sent_to: r.email });
+}
+
+/** POST /admin/registrations/:id/verify: the approver vouches for the e-mail; the request waits for approval. */
+export async function verifyByHand({ env, params }) {
+  const r = await unverified(env, id(params.id));
+  await run(env, `UPDATE registrations SET status = 'pending', verified_at = ?, token_hash = NULL WHERE id = ?`, nowIso(), r.id);
+  return json({ status: 'pending' });
+}
+
+/**
+ * POST /admin/registrations/:id/block { what: ['email','phone','ip','domain'] }: adds the request's details
+ * to the blocklist and rejects it (open requests) without e-mailing.
+ */
+export async function block({ env, actor, params, request }) {
+  const r = await first(env, `SELECT * FROM registrations WHERE id = ?`, id(params.id));
+  if (!r) throw notFound('הבקשה לא נמצאה');
+  const d = fields(await readJson(request)).subset('what', ['email', 'domain', 'phone', 'ip'], { default: ['email'] }).done();
+  const entries = d.what.map((w) => ({ email: r.email, domain: `@${r.email.split('@')[1]}`, phone: r.phone, ip: r.ip }[w])).filter(Boolean);
+  await addToBlocklist(env, entries);
+  if (r.status === 'unverified' || r.status === 'pending') {
+    await run(env, `UPDATE registrations SET status = 'rejected', decided_at = ?, decided_by = ?, reason = COALESCE(reason, 'ספאם'), token_hash = NULL WHERE id = ?`, nowIso(), actor.id, r.id);
+  }
+  return json({ blocked: entries });
+}
+
+/** Adds lines to the registration blocklist (no duplicates). */
+export async function addToBlocklist(env, entries) {
+  const s = await getSettings(env);
+  const lines = s.registration_blocklist.split(/\r?\n/).map((l) => clean(l)).filter(Boolean);
+  const have = new Set(lines.map((l) => l.toLowerCase()));
+  const add = entries.map((e) => clean(e)).filter((e) => e && !have.has(e.toLowerCase()));
+  if (add.length) await saveSettings(env, { registration_blocklist: [...lines, ...add].join('\n') });
 }
 
 async function pending(env, rid) {
@@ -216,12 +272,7 @@ export async function reject({ env, actor, params, request, url }) {
   const r = await pending(env, id(params.id));
   const d = fields(await readJson(request)).str('reason', { max: 500 }).bool('notify', { default: true }).bool('block', { default: false }).done();
   await run(env, `UPDATE registrations SET status = 'rejected', decided_at = ?, decided_by = ?, reason = ? WHERE id = ?`, nowIso(), actor.id, d.reason || null, r.id);
-  if (d.block) {
-    const s = await getSettings(env);
-    if (!blocked(s.registration_blocklist, { email: r.email, phone: '', ip: '' })) {
-      await saveSettings(env, { registration_blocklist: [s.registration_blocklist.trim(), r.email].filter(Boolean).join('\n') });
-    }
-  }
+  if (d.block) await addToBlocklist(env, [r.email]);
   let mail = null;
   if (d.notify && !d.block) {
     const s = await getSettings(env);

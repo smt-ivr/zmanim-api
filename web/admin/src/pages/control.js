@@ -70,7 +70,7 @@ export function ControlPage({ onChanged }) {
       ${!data.mail_ready && html`<p class="muted small">ההצטרפות דורשת אימות מייל, ולכן פועלת רק כששליחת המיילים מוגדרת.</p>`}
       ${toggle('registration_enabled', 'פתוח להצטרפות', 'קישור "הצטרפות" באתר ובמסך הכניסה. כל בקשה עוברת אימות מייל ואחר כך אישור שלך (או של מנהל שקיבל הרשאה)')}
       ${toggle('registration_notify', 'מייל על כל בקשה חדשה', 'נשלח למי שמאשר בקשות, אחרי שהמבקש אימת את המייל')}
-      <${BlocklistEditor} value=${data.registration_blocklist} onSave=${(v) => save({ registration_blocklist: v }, 'רשימת החסומים נשמרה')} />
+      <p class="small">את רשימת החסומים ואת כל הנעילות מנהלים בעמוד <a class="link" href="#/admin/security">חסימות ונעילות</a>.</p>
       <p class="muted small">הגנה מספאם פועלת תמיד: שדה נסתר לרובוטים, חסימה של טופס שנשלח מהר מדי, עד 3 בקשות בשעה מאותה כתובת IP ו-3 ביום מאותו מייל, וחסימת קישורים בשדות. בקשה שנחסמה מקבלת אותה תשובה כמו בקשה רגילה, כך שהשולח לא יודע שנחסם.</p>
     </section>
 
@@ -138,15 +138,6 @@ function PlaceEditor({ data, onSave }) {
       <${Field} label="קו רוחב"><${Input} dir="ltr" value=${lat} onInput=${setLat} /><//>
       <${Field} label="קו אורך"><${Input} dir="ltr" value=${lng} onInput=${setLng} /><//>
     </div>
-    <div><${Button} kind="primary" small type="submit">שמירה<//></div>
-  </form>`;
-}
-
-function BlocklistEditor({ value, onSave }) {
-  const [v, setV] = useState(value || '');
-  return html`<form class="form setting-form" onSubmit=${(e) => (e.preventDefault(), onSave(v))}>
-    <${Field} label="חסומים מהצטרפות" hint="שורה לכל אחד: מייל (a@b.com), דומיין שלם (@spam.com), טלפון או כתובת IP">
-      <${TextArea} dir="ltr" rows="4" value=${v} onInput=${setV} placeholder=${'spam@example.com\n@spam-domain.com\n0501234567'} /><//>
     <div><${Button} kind="primary" small type="submit">שמירה<//></div>
   </form>`;
 }

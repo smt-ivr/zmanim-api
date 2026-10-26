@@ -25,6 +25,11 @@ export function AdminUsers({ me, system }) {
     try { await api.post(`/admin/users/${u.id}/welcome`); toast('המייל נשלח'); } catch (e) { toastError(e); }
   }
 
+  async function unlock(u) {
+    try { await api.post(`/admin/users/${u.id}/unlock`); saved({ ...u, locked_until: null }, false); toast(`הנעילה של ${u.name} שוחררה`); }
+    catch (e) { toastError(e); }
+  }
+
   async function remove(u) {
     if (!(await confirm({ title: `מחיקת ${u.name}`, body: 'המשתמש יימחק וינותק מכל המכשירים. בתי הכנסת שלו לא יימחקו.', confirmLabel: 'מחיקה', danger: true }))) return;
     try { await api.del(`/admin/users/${u.id}`); setData((d) => ({ ...d, users: d.users.filter((x) => x.id !== u.id) })); toast('המשתמש נמחק'); }
@@ -50,12 +55,13 @@ export function AdminUsers({ me, system }) {
           <tbody>${shown.map((u) => html`<tr key=${u.id} class=${u.is_active ? '' : 'inactive'}>
             <td><b>${u.name}</b>${u.is_super && html` <${Badge} tone="info">מנהל על<//>`}${u.is_super && u.is_hidden && html` <${Badge}>מוסתר<//>`}${u.id === me.id && html` <${Badge} tone="info">זה אתה<//>`}${!u.is_active && html` <${Badge} tone="warn">מושבת<//>`}
               <div class="muted small" dir="ltr">${[u.email, u.phone].filter(Boolean).join(' · ')}</div>
-              <div class="row gap-sm">${u.role === 'admin' && !u.is_super && u.perms.length < Object.keys(PERMS).length - 1 && html`<${Badge} tone="info">${u.perms.length ? `הרשאות חלקיות (${u.perms.length})` : 'צפייה בלבד'}<//>`}${u.must_change_password && html`<${Badge} tone="warn">חייב להחליף סיסמה<//>`}${u.phone_requires_password && html`<${Badge}>סיסמה בטלפון<//>`}${!u.can_message && html`<${Badge} tone="warn">חסום מפניות<//>`}</div></td>
+              <div class="row gap-sm">${u.locked_until && html`<${Badge} tone="warn">נעול עד ${new Date(u.locked_until * 1000).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}<//>`}${u.role === 'admin' && !u.is_super && u.perms.length < Object.keys(PERMS).length - 1 && html`<${Badge} tone="info">${u.perms.length ? `הרשאות חלקיות (${u.perms.length})` : 'צפייה בלבד'}<//>`}${u.must_change_password && html`<${Badge} tone="warn">חייב להחליף סיסמה<//>`}${u.phone_requires_password && html`<${Badge}>סיסמה בטלפון<//>`}${!u.can_message && html`<${Badge} tone="warn">חסום מפניות<//>`}</div></td>
             <td><${Badge} tone=${u.role === 'admin' ? 'info' : 'neutral'}>${ROLE[u.role]}<//></td>
             <td class="small">${u.role === 'admin' ? html`<span class="muted">כולם</span>` : u.synagogues.length ? u.synagogues.map((s) => s.name).join(', ') : html`<${Badge} tone="warn">לא שויך<//>`}</td>
             <td class="small muted">${formatDate(u.last_login_at)}</td>
             <td class="actions">
               ${mayManage(u) && system?.mail_ready && u.email && html`<${Button} kind="ghost" small icon="mail" title="שליחת פרטי כניסה במייל" onClick=${() => welcome(u)} />`}
+              ${mayManage(u) && u.locked_until && html`<${Button} kind="ghost" small icon="key" title="שחרור הנעילה" onClick=${() => unlock(u)} />`}
               ${(mayManage(u) || u.id === me.id) && html`<${Button} kind="ghost" small icon="edit" title="עריכה" onClick=${() => setEditing(u)} />`}
               ${mayManage(u) && u.id !== me.id && !u.is_super && html`<${Button} kind="ghost" small icon="trash" title="מחיקה" onClick=${() => remove(u)} />`}
             </td>

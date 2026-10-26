@@ -409,3 +409,14 @@ section > .alert { margin-bottom: 12px; }
 .auth-register { text-align: center; font-size: 14px; color: var(--muted); padding-top: 4px; border-top: 1px solid var(--border); margin-top: 4px; padding-top: 14px; }
 .pad-top { padding-top: 8px; }
 fieldset.plain { border: 0; padding: 0; margin: 0; min-width: 0; }
+
+/* locks and blocks */
+.section-card { padding: 18px; margin-bottom: 18px; display: flex; flex-direction: column; gap: 12px; }
+.section-card h3 { margin: 0; }
+.form-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.form-row > .input { flex: 1; min-width: 160px; width: auto; }
+.manual-lock summary { cursor: pointer; color: var(--primary); font-weight: 600; font-size: 14px; }
+.manual-lock[open] summary { margin-bottom: 10px; }
+.block-list { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.block-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; }
+.block-item + .block-item { border-top: 1px solid var(--border); }

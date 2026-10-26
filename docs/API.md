@@ -61,6 +61,20 @@ Write fields: `prayer_id` (required), `time_kind` (`fixed`|`relative`, required)
 | `POST /admin/registrations/:id/approve` | `{ synagogue_name?, area_id?, address? }`: creates the synagogue and the manager (or links an existing user), then e-mails the login details |
 | `POST /admin/registrations/:id/reject` | `{ reason?, notify?, block? }` (`block` adds the e-mail to the blocklist) |
 | `DELETE /admin/registrations/:id` | |
+| `POST /admin/registrations/:id/resend` | A fresh verification e-mail (unverified only) |
+| `POST /admin/registrations/:id/verify` | Verify by hand: the request moves to `pending` |
+| `POST /admin/registrations/:id/block` | `{ what: ['email','domain','phone','ip'] }` adds them to the blocklist; an open request is rejected without e-mail |
+
+`GET /admin/registrations` returns every status, including `unverified` (with `expired`), and `blocked` per item.
+
+## Locks (super admin)
+
+| | |
+|---|---|
+| `GET /admin/locks` | Active locks and the last 24 hours of failed attempts: `{ key, kind, kind_label, value, user, failures, locked, locked_until }` |
+| `DELETE /admin/locks?key=…` | Unlock one (or reset its counter). Without `key`: every active lock |
+| `POST /admin/locks` | `{ type: ip\|login\|reg_email\|reg_ip, value, hours }`: lock by hand |
+| `POST /admin/users/:id/unlock` | (permission `managers` / `admins`) clears every lock of the user. `GET /admin/users` has `locked_until` |
 
 ## Admin permissions
 

@@ -8,6 +8,7 @@ import { AdminUsers } from './pages/admin-users.js';
 import { ChoosePassword, LinkLogin, Login, ResetPassword, googleLoggedOut } from './pages/login.js';
 import { Profile } from './pages/profile.js';
 import { AdminRegistrations, RegisterPage, VerifyPage } from './pages/registrations.js';
+import { SecurityPage } from './pages/security.js';
 import { ControlPage, Inbox, MyFeedback } from './pages/control.js';
 import { SynagoguePicker, Workspace } from './pages/workspace.js';
 import { Button, Icon, Spinner, toast } from './ui.js';
@@ -109,7 +110,8 @@ function App() {
   else if (path === '/feedback') page = html`<${MyFeedback} />`;
   else if (user.is_super && path === '/admin/control') page = html`<${ControlPage} onChanged=${refreshMe} />`;
   else if (user.is_super && path === '/admin/inbox') page = html`<${Inbox} />`;
-  else if (can('registrations') && path === '/admin/registrations') page = html`<${AdminRegistrations} onChanged=${refreshMe} />`;
+  else if (can('registrations') && path === '/admin/registrations') page = html`<${AdminRegistrations} onChanged=${refreshMe} isSuper=${user.is_super} />`;
+  else if (user.is_super && path === '/admin/security') page = html`<${SecurityPage} />`;
   else if (isAdmin && path === '/admin/synagogues') page = html`<${AdminSynagogues} onChanged=${refreshMe} perms=${user.perms} />`;
   else if (isAdmin && path === '/admin/users') page = html`<${AdminUsers} me=${user} system=${system} />`;
   else if (isAdmin && path === '/admin/catalog') page = html`<${AdminCatalog} perms=${user.perms} />`;
@@ -136,7 +138,8 @@ function App() {
         ${user.is_super && html`
           <div class="nav-section">מנהל על</div>
           ${link('/admin/control', 'settings', 'הגדרות שליטה', path === '/admin/control')}
-          ${link('/admin/inbox', 'mail', 'פניות לצוות', path === '/admin/inbox')}`}
+          ${link('/admin/inbox', 'mail', 'פניות לצוות', path === '/admin/inbox')}
+          ${link('/admin/security', 'shield', 'חסימות ונעילות', path === '/admin/security')}`}
         ${synagogues.length > 0 && html`<div class="nav-section">${isAdmin ? 'כניסה לבית כנסת' : 'בתי הכנסת שלי'}</div>
           <div class="nav-scroll">
             ${synagogues.slice(0, isAdmin ? 12 : 100).map((s) => link(`/s/${s.id}`, 'building', s.name, sMatch ? Number(sMatch[1]) === s.id : !isAdmin && synagogues.length === 1 && path === '/'))}
