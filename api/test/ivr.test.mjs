@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, test } from 'node:test';
 import { hashPassword } from '../src/auth.js';
 import { isRoshChodesh } from '../src/settings.js';
 import { relativeClock, zmanTime } from '../src/zmanim.js';
-import { speakClock } from '../src/ivr/yemot.js';
 import worker from '../src/index.js';
 import { D1Shim } from './d1-shim.mjs';
 
@@ -318,7 +317,7 @@ describe('ivr listening line', () => {
     assert.match(body, /אין מניינים מהשעה 6 31/);
   });
 
-  test('0 = everything soon; Rosh Chodesh time only on Rosh Chodesh; relative times get today\'s clock', async () => {
+  test('0 = everything soon; Rosh Chodesh time only on Rosh Chodesh; relative minyanim said as set, placed by today\'s sunset', async () => {
     await q(`UPDATE minyanim SET rosh_chodesh_time = '06:15' WHERE id = 1`).run();
     const plain = findDay(false);
     env.FIXED_NOW = at(plain, '06:20');
@@ -327,7 +326,8 @@ describe('ivr listening line', () => {
     await call.start();
     await call.press('0'); // all areas
     let body = await call.press('0'); // all prayers, from now
-    assert.ok(body.includes(`t-שחרית בשעה 6 30 באהל משה.t-שחרית בשעה 7 בזכרון משה.t-מנחה בשעה ${speakClock(mincha)} באהל משה`), body);
+    assert.ok(mincha > '07:00');
+    assert.ok(body.includes('t-שחרית בשעה 6 30 באהל משה.t-שחרית בשעה 7 בזכרון משה.t-מנחה 15 דקות לפני שקיעה באהל משה'), body); // said as set, placed by today's sunset
     assert.doesNotMatch(body, /ראש חודש|6 15/);
 
     env.FIXED_NOW = at(findDay(true), '06:10');
@@ -350,9 +350,14 @@ describe('ivr listening line', () => {
     await call.press('1'); // שחרית
     let body = await call.press('00');
     assert.match(body, /t-שחרית בשעה 6 30 באהל משה\.t-שחרית בשעה 7 בזכרון משה\.t-שחרית 30 דקות לפני סוף זמן קריאת שמע באהל משה/);
+    await q(`INSERT INTO minyanim (synagogue_id, prayer_id, time_kind, time, days, season_id) VALUES (2, 2, 'fixed', '13:30', 127, 1), (2, 2, 'fixed', '19:30', 127, 1)`).run();
     await call.press('2'); // מנחה
-    body = await call.press('20');
-    assert.match(body, /אין מניינים מהשעה 20/, 'mincha before sunset is earlier than 20:00');
+    body = await call.press('00');
+    assert.match(body, /t-מנחה בשעה 13 30 בזכרון משה\.t-מנחה 15 דקות לפני שקיעה באהל משה\.t-מנחה בשעה 19 30 בזכרון משה/, 'ordered by today\'s sunset');
+    await call.press('2');
+    body = await call.press('19');
+    assert.match(body, /t-מנחה בשעה 19 30 בזכרון משה/);
+    assert.doesNotMatch(body, /לפני שקיעה/, 'mincha before sunset is earlier than 19:00');
   });
 
   test('long lists are read in pages', async () => {

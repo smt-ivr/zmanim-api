@@ -40,8 +40,9 @@ function isRoshChodesh(offset = 0) {
 }
 
 /**
- * Adds `clock` to minyanim set relative to a computed time of day (sunset, ...): the clock time on the day
- * `offset` days from today, from the server's zmanim. Null offset (whole week) or an uncomputed anchor: no clock.
+ * Adds `clock` to minyanim set relative to a computed time of day (sunset, ...): the time on the day `offset`
+ * days from today, from the server's zmanim. Used only for order and "upcoming"; the minyan is shown as set
+ * ("15 דק׳ לפני שקיעה"). Null offset (whole week) or an uncomputed anchor: no clock.
  */
 function withClock(list, catalog, offset) {
   const times = offset === null ? null : catalog.zmanim?.[offset]?.times;
@@ -71,7 +72,6 @@ function TimeCell({ m, rc, cls = 'time' }) {
       ? html`<span class=${cls}>${m.rosh_chodesh_time}<small class="rc">ר״ח</small></span>`
       : html`<span class=${cls}>${m.time}<small class="rc-hint">ר״ח ${m.rosh_chodesh_time}</small></span>`;
   }
-  if (m.clock) return html`<span class=${cls}>${m.clock}<small class="rc-hint">${m.time_label}</small></span>`;
   return html`<span class=${cx(cls, m.time_kind === 'relative' && 'rel', m.time_kind === 'interval' && 'interval')}>${m.time_label}</span>`;
 }
 
@@ -263,8 +263,10 @@ function Home({ data, season: pickedSeason, setSeason }) {
         const mins = next - toMinutes(now.time);
         const s = byId.get(m.synagogue_id);
         return html`<a class="up-card" href=${`#/s/${s.id}`}>
-          <span class="up-in">${mins === 0 ? 'עכשיו' : mins < 60 ? `בעוד ${mins} דק׳` : `בעוד ${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, '0')} שע׳`}</span>
-          <b class="up-time">${hhmm(next)}</b><span>${m.prayer_name}</span><small>${s.name}</small></a>`;
+          ${m.clock
+            ? html`<b class="up-time up-rel">${m.time_label}</b>`
+            : html`<span class="up-in">${mins === 0 ? 'עכשיו' : mins < 60 ? `בעוד ${mins} דק׳` : `בעוד ${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, '0')} שע׳`}</span>
+              <b class="up-time">${hhmm(next)}</b>`}<span>${m.prayer_name}</span><small>${s.name}</small></a>`;
       })}</div>
     </section>`}
 

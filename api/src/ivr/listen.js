@@ -1,6 +1,6 @@
 // Public listening line: anyone can call and hear today's minyan times.
 // Area (or 0 = all) -> prayer (or 0 = everything soon) -> from what time (0 = from now, 00 = the whole day).
-// Minyanim set relative to sunrise / sunset get today's clock time, so they sort and filter like the rest.
+// Minyanim set relative to sunrise / sunset are spoken as set, but placed (and filtered) by today's computed time.
 // Each minyan is one short sentence: "מנחה בשעה 13 30 באהל משה בעזרת נשים".
 // No identification; uses the same engine as the management line.
 import { all } from '../db.js';
@@ -68,11 +68,16 @@ async function todaysMinyanim(c, now, prayerId) {
 /**
  * One sentence per minyan starting at `from` or later, in time order. The Rosh Chodesh time is used only
  * on Rosh Chodesh; an interval minyan gives one sentence per start; a minyan relative to a computed time
- * of day (sunset, ...) gets today's clock time. Relative to an anchor that is not computed: last.
+ * of day (sunset, ...) is placed by today's time but spoken as set. Relative to an anchor that is not computed: last.
  */
 function sentences(rows, now, from, place) {
   const zman = (kind) => (CALCS[kind] ? zmanTime(now.date, kind, place) : null);
   const where = (r) => `ב${r.synagogue_name}${r.location_name ? ` ב${r.location_name}` : ''}`;
+  // Relative minyanim are spoken as set ("15 דקות לפני שקיעה"); today's computed time only places them in order.
+  const relativeWords = (r) => {
+    const n = Math.abs(r.offset_minutes);
+    return n ? `${n} דקות ${r.offset_minutes < 0 ? 'לפני' : 'אחרי'} ${r.anchor_name}` : `ב${r.anchor_name}`;
+  };
   const timed = [];
   const relative = [];
   for (const r of rows) {
@@ -84,14 +89,13 @@ function sentences(rows, now, from, place) {
     } else if (zman(r.anchor_calc)) {
       const base = zman(r.anchor_calc);
       const t = toMinutes(base) + (r.offset_minutes || 0);
-      if (t >= from) timed.push({ t, r });
+      if (t >= from) timed.push({ t, r, words: relativeWords(r) });
     } else {
-      const n = Math.abs(r.offset_minutes);
-      relative.push(`${r.prayer_name} ${n ? `${n} דקות ${r.offset_minutes < 0 ? 'לפני' : 'אחרי'} ${r.anchor_name}` : `ב${r.anchor_name}`} ${where(r)}`);
+      relative.push(`${r.prayer_name} ${relativeWords(r)} ${where(r)}`);
     }
   }
   timed.sort((a, b) => a.t - b.t);
-  return [...timed.map(({ t, r }) => `${r.prayer_name} בשעה ${speakClock(hhmm(t))} ${where(r)}`), ...relative];
+  return [...timed.map(({ t, r, words }) => `${r.prayer_name} ${words ?? `בשעה ${speakClock(hhmm(t))}`} ${where(r)}`), ...relative];
 }
 
 /** Reads one page and keeps the rest for "continue". */
