@@ -5,7 +5,7 @@ import { AdminCatalog } from './pages/admin-catalog.js';
 import { AdminDashboard } from './pages/admin-dashboard.js';
 import { AdminSynagogues } from './pages/admin-synagogues.js';
 import { AdminUsers } from './pages/admin-users.js';
-import { LinkLogin, Login, ResetPassword, googleLoggedOut } from './pages/login.js';
+import { ChoosePassword, LinkLogin, Login, ResetPassword, googleLoggedOut } from './pages/login.js';
 import { Profile } from './pages/profile.js';
 import { ControlPage, Inbox, MyFeedback } from './pages/control.js';
 import { SynagoguePicker, Workspace } from './pages/workspace.js';
@@ -85,6 +85,8 @@ function App() {
 
   const { user, synagogues, system } = session;
   const isAdmin = user.role === 'admin';
+  const appName = system.name || 'מערכת זמני התפילות';
+  document.title = `ניהול · ${appName}`;
 
   async function logout() {
     await api.post('/auth/logout').catch(() => {});
@@ -93,6 +95,7 @@ function App() {
     setSession({ status: 'anon' });
     navigate('/');
   }
+  if (user.must_change_password) return html`<${ChoosePassword} user=${user} onDone=${refreshMe} onLogout=${logout} />`;
 
   // Resolve page
   let page;
@@ -115,7 +118,7 @@ function App() {
 
   return html`<div class=${cx('shell', menuOpen && 'menu-open')}>
     <aside class="sidebar">
-      <div class="brand"><span class="brand-mark"><${Icon} name="clock" /></span><div><b>זמני מניינים</b><small>${user.is_super ? 'מנהל על' : isAdmin ? 'מנהל מערכת' : 'מנהל בית כנסת'}</small></div></div>
+      <div class="brand"><span class="brand-mark"><${Icon} name="clock" /></span><div><b>${appName}</b><small>${user.is_super ? 'מנהל על' : isAdmin ? 'מנהל מערכת' : 'מנהל בית כנסת'}</small></div></div>
       <nav>
         ${isAdmin && html`
           <div class="nav-section">ניהול כללי</div>
@@ -146,7 +149,7 @@ function App() {
     </aside>
     <div class="scrim" onClick=${() => setMenuOpen(false)} />
     <main class="main">
-      <div class="topbar"><${Button} kind="ghost" icon="menu" aria-label="תפריט" onClick=${() => setMenuOpen(true)} /><b>זמני מניינים</b></div>
+      <div class="topbar"><${Button} kind="ghost" icon="menu" aria-label="תפריט" onClick=${() => setMenuOpen(true)} /><b>${appName}</b></div>
       ${page}
     </main>
   </div>`;

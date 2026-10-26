@@ -48,7 +48,7 @@ export function AdminUsers({ me, system }) {
           <tbody>${shown.map((u) => html`<tr key=${u.id} class=${u.is_active ? '' : 'inactive'}>
             <td><b>${u.name}</b>${u.is_super && html` <${Badge} tone="info">מנהל על<//>`}${u.is_super && u.is_hidden && html` <${Badge}>מוסתר<//>`}${u.id === me.id && html` <${Badge} tone="info">זה אתה<//>`}${!u.is_active && html` <${Badge} tone="warn">מושבת<//>`}
               <div class="muted small" dir="ltr">${[u.email, u.phone].filter(Boolean).join(' · ')}</div>
-              <div class="row gap-sm">${u.phone_requires_password && html`<${Badge}>סיסמה בטלפון<//>`}${!u.can_message && html`<${Badge} tone="warn">חסום מפניות<//>`}</div></td>
+              <div class="row gap-sm">${u.must_change_password && html`<${Badge} tone="warn">חייב להחליף סיסמה<//>`}${u.phone_requires_password && html`<${Badge}>סיסמה בטלפון<//>`}${!u.can_message && html`<${Badge} tone="warn">חסום מפניות<//>`}</div></td>
             <td><${Badge} tone=${u.role === 'admin' ? 'info' : 'neutral'}>${ROLE[u.role]}<//></td>
             <td class="small">${u.role === 'admin' ? html`<span class="muted">כולם</span>` : u.synagogues.length ? u.synagogues.map((s) => s.name).join(', ') : html`<${Badge} tone="warn">לא שויך<//>`}</td>
             <td class="small muted">${formatDate(u.last_login_at)}</td>
@@ -69,22 +69,23 @@ function UserModal({ user, me, mailReady, synagogues, onClose, onSaved }) {
   const initial = {
     name: user?.name ?? '', email: user?.email ?? '', phone: user?.phone ?? '', role: user?.role ?? 'manager',
     is_active: user?.is_active ?? true, password: '', synagogue_ids: user?.synagogues.map((s) => s.id) ?? [],
-    send_welcome: !user && Boolean(mailReady),
+    send_welcome: !user && Boolean(mailReady), send_password: false,
+    must_change_password: user?.must_change_password ?? false,
     can_edit_email: user?.can_edit_email ?? true, can_edit_password: user?.can_edit_password ?? true, can_message: user?.can_message ?? true,
   };
   const save = (v) => {
     const body = { ...v, email: v.email || null, phone: v.phone || null };
-    if (!body.password) delete body.password;
-    if (!isNew) delete body.send_welcome;
-    if (self) { delete body.role; delete body.is_active; delete body.can_edit_email; delete body.can_edit_password; delete body.can_message; }
+    if (!body.password) { delete body.password; body.send_password = false; }
+    if (self) { delete body.role; delete body.is_active; delete body.can_edit_email; delete body.can_edit_password; delete body.can_message; delete body.must_change_password; }
     return isNew ? api.post('/admin/users', body) : api.patch(`/admin/users/${user.id}`, body);
   };
 
   return html`<${FormModal} title=${isNew ? 'משתמש חדש' : `עריכת ${user.name}`} initial=${initial} save=${save} onClose=${onClose}
       onSaved=${(u) => {
         onSaved(u, isNew);
-        if (u.welcome_error) toast(`המשתמש נוצר, אבל מייל הפתיחה לא נשלח: ${u.welcome_error}`, 'error');
-        else toast(isNew ? (u.welcome_sent ? 'המשתמש נוצר ונשלח לו מייל פתיחה' : 'המשתמש נוצר') : 'השינויים נשמרו');
+        if (u.welcome_error) toast(`${isNew ? 'המשתמש נוצר' : 'השינויים נשמרו'}, אבל המייל לא נשלח: ${u.welcome_error}`, 'error');
+        else if (u.welcome_sent) toast(isNew ? 'המשתמש נוצר ונשלחו לו פרטי הכניסה במייל' : 'השינויים נשמרו ונשלחו פרטי הכניסה במייל');
+        else toast(isNew ? 'המשתמש נוצר' : 'השינויים נשמרו');
       }}>
     ${({ values: v, set, errors }) => html`
       <div class="grid-2">
@@ -107,8 +108,16 @@ function UserModal({ user, me, mailReady, synagogues, onClose, onSaved }) {
             <${CheckList} searchable options=${synagogues.map((s) => ({ value: s.id, label: s.name, sub: s.area_name || '' }))} value=${v.synagogue_ids} onChange=${set('synagogue_ids')} empty="אין בתי כנסת" /><//>`
         : html`<div class="alert alert-info">מנהל מערכת מנהל את כל בתי הכנסת, המשתמשים וההגדרות.</div>`}
       ${!self && html`<${Toggle} checked=${v.is_active} onChange=${set('is_active')} label="משתמש פעיל" hint="השבתה מנתקת את המשתמש מיד ומונעת כניסה" />`}
-      ${isNew && html`<${Toggle} checked=${v.send_welcome} onChange=${set('send_welcome')} disabled=${!mailReady}
-        label="לשלוח מייל פתיחה" hint=${mailReady ? 'עם שם המשתמש וקישור כניסה ישיר (תקף לשבוע)' : 'שליחת מיילים לא מוגדרת. הגדירו אותה בהגדרות השליטה'} />`}
+      ${!self && html`<${Toggle} checked=${v.must_change_password} onChange=${set('must_change_password')}
+        label="חיוב החלפת סיסמה בכניסה הבאה" hint="המשתמש לא יוכל לעשות שום דבר עד שיבחר סיסמה משלו" />`}
+      ${!self && html`<div class="sub-option">
+        <${Toggle} checked=${v.send_welcome} onChange=${set('send_welcome')} disabled=${!mailReady}
+          label=${isNew ? 'לשלוח למשתמש את פרטי הכניסה במייל' : 'לשלוח שוב את פרטי הכניסה במייל'}
+          hint=${mailReady ? 'שם המשתמש וכפתור לכניסה ישירה בלי סיסמה (תקף לשבוע)' : 'שליחת מיילים לא מוגדרת. הגדירו אותה בהגדרות השליטה'} />
+        ${v.send_welcome && html`<${Toggle} checked=${v.send_password && Boolean(v.password)} onChange=${set('send_password')} disabled=${!v.password}
+          label="לכלול במייל גם את הסיסמה"
+          hint=${v.password ? 'מומלץ יחד עם חיוב החלפת סיסמה' : isNew ? 'הקלידו סיסמה כדי לשלוח אותה' : 'רק סיסמה חדשה שמקלידים עכשיו אפשר לשלוח (הסיסמה הקיימת שמורה מוצפנת)'} />`}
+      </div>`}
       ${!self && html`<h4>מה המשתמש יכול לשנות בעצמו</h4>
         <${Toggle} checked=${v.can_edit_email} onChange=${set('can_edit_email')} label="שינוי מייל" />
         <${Toggle} checked=${v.can_edit_password} onChange=${set('can_edit_password')} label="שינוי סיסמה" />

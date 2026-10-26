@@ -160,11 +160,13 @@ function App() {
 
   const { phone } = sitePhone(data);
   const notice = data?.catalog?.site?.notice;
+  const name = data?.catalog?.site?.name || 'מערכת זמני התפילות';
+  if (data?.catalog) document.title = name;
   return html`
     ${notice && html`<div class="notice">${notice}</div>`}
     <header class="top">
       <div class="wrap top-row">
-        <a class="brand" href="#/"><span class="brand-mark"><${Icon} name="clock" /></span><span>זמני מניינים</span></a>
+        <a class="brand" href="#/"><span class="brand-mark"><${Icon} name="clock" /></span><span>${name}</span></a>
         <div class="top-actions">
           ${phone && html`<a class="phone-pill" href=${`tel:${phone}`}><${Icon} name="phone" size=${16} /><span dir="ltr">${formatPhone(phone)}</span></a>`}
           <button class="icon-btn" onClick=${toggleTheme} aria-label=${dark ? 'מצב בהיר' : 'מצב כהה'}><${Icon} name=${dark ? 'sun' : 'moon'} /></button>
@@ -174,7 +176,7 @@ function App() {
     <main class="wrap">${page}</main>
     <footer class="foot">
       <div class="wrap foot-row">
-        <span>זמני מניינים</span>
+        <span>${name}</span>
         ${phone && html`<a href=${`tel:${phone}`}>שמיעה בטלפון: <span dir="ltr">${formatPhone(phone)}</span></a>`}
         <a href="admin/" class="foot-admin"><${Icon} name="lock" size=${14} /> כניסת מנהלים</a>
       </div>
@@ -220,7 +222,7 @@ function Home({ data, season: pickedSeason, setSeason }) {
 
   return html`
     <section class="hero">
-      <h1>זמני מניינים</h1>
+      <h1>${catalog.site?.name || 'מערכת זמני התפילות'}</h1>
       <p>${seasonName ? html`<span class="season-tag">זמני ${seasonName}</span> ` : ''}כל המניינים בבתי הכנסת, לפי אזור, תפילה ויום.${rc && offset === 0 ? ' היום ראש חודש.' : ''}</p>
       ${phone.phone && html`<a class="hero-phone" href=${`tel:${phone.phone}`}>
         <span class="hero-phone-icon"><${Icon} name="phone" size=${20} /></span>

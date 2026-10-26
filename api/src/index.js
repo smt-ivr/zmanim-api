@@ -13,6 +13,7 @@ import * as control from './routes/control.js';
 const PUBLIC = { auth: 'none' };
 const ADMIN = { auth: 'admin' };
 const SUPER = { auth: 'super' };
+const ALLOWED_BEFORE_NEW_PASSWORD = new Set(['GET /me', 'PUT /me/password', 'POST /auth/logout']);
 
 export const router = new Router()
   // public
@@ -109,6 +110,10 @@ async function handleApi(request, env, path) {
     ctx.actor = await authenticate(env, request);
     if (route.options.auth === 'admin') requireAdmin(ctx.actor);
     if (route.options.auth === 'super') requireSuper(ctx.actor);
+    // A user who must choose a new password can do only that (and see who they are, or log out).
+    if (ctx.actor.must_change_password && !ALLOWED_BEFORE_NEW_PASSWORD.has(`${request.method} ${path}`)) {
+      throw new HttpError(403, 'PASSWORD_CHANGE_REQUIRED', 'יש לבחור סיסמה חדשה לפני שממשיכים');
+    }
   }
   return route.handler(ctx);
 }

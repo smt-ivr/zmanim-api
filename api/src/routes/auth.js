@@ -36,7 +36,7 @@ export async function getMe({ env, actor }) {
     user,
     synagogues,
     // What the UI needs to know about the system
-    system: { shabbat_enabled: settings.shabbat_enabled, feedback_enabled: settings.feedback_enabled, mail_ready: await mailReady(env) },
+    system: { name: settings.system_name, shabbat_enabled: settings.shabbat_enabled, feedback_enabled: settings.feedback_enabled, mail_ready: await mailReady(env) },
   });
 }
 
@@ -76,14 +76,17 @@ export async function putPhonePassword({ env, actor, request }) {
 
 /** Changing the password signs out every other device. */
 export async function putPassword({ env, actor, request }) {
-  if (!actor.can_edit_password) throw forbidden('שינוי הסיסמה חסום. לשינוי פנו למנהל המערכת');
-  const d = fields(await readJson(request)).str('current_password', { required: true, max: 200 }).password('new_password', { required: true }).done();
+  // Required by the admin: no current password needed (the user may have come in by link or Google).
+  const forced = actor.must_change_password;
+  if (!actor.can_edit_password && !forced) throw forbidden('שינוי הסיסמה חסום. לשינוי פנו למנהל המערכת');
+  const d = fields(await readJson(request)).str('current_password', { required: !forced, max: 200 }).password('new_password', { required: true }).done();
   const row = await first(env, `SELECT password_hash, phone_requires_password FROM users WHERE id = ?`, actor.id);
   if (row.phone_requires_password && !/^\d{4,}$/.test(d.new_password)) {
     throw invalid({ new_password: 'הסיסמה נדרשת גם בטלפון, ולכן חייבת להכיל ספרות בלבד (או בטלו קודם את הדרישה בטלפון)' });
   }
-  if (!row.password_hash || !(await verifyPassword(d.current_password, row.password_hash))) throw invalid({ current_password: 'הסיסמה הנוכחית שגויה' });
-  await run(env, `UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?`, await hashPassword(d.new_password), nowIso(), actor.id);
+  if (!forced && (!row.password_hash || !(await verifyPassword(d.current_password, row.password_hash)))) throw invalid({ current_password: 'הסיסמה הנוכחית שגויה' });
+  if (forced && row.password_hash && (await verifyPassword(d.new_password, row.password_hash))) throw invalid({ new_password: 'יש לבחור סיסמה שונה מהסיסמה שקיבלת' });
+  await run(env, `UPDATE users SET password_hash = ?, must_change_password = 0, updated_at = ? WHERE id = ?`, await hashPassword(d.new_password), nowIso(), actor.id);
   await revokeSessions(env, actor.id, actor.session_id);
   return noContent();
 }
@@ -99,6 +102,7 @@ export async function getOptions({ env }) {
     magic_link: ready && s.magic_link_enabled,
     password_reset: ready && s.password_reset_enabled,
     google_client_id: s.google_login_enabled && s.google_client_id ? s.google_client_id : null,
+    system_name: s.system_name,
   });
 }
 
@@ -145,12 +149,12 @@ async function sendLink(ctx, purpose) {
   const token = await createEmailToken(env, user.id, purpose);
   const link = adminUrl(env, url, `/${purpose === 'login' ? 'link' : 'reset'}?t=${token}`);
   await sendMail(env, purpose === 'login'
-    ? { to: user.email, subject: 'קישור כניסה לזמני מניינים', title: `שלום ${user.name}`, site: siteUrl(env, url),
-        paragraphs: ['ביקשת להיכנס למערכת בלי סיסמה. לחיצה על הכפתור מכניסה אותך ישר.'],
+    ? { to: user.email, subject: `קישור לכניסה ישירה - ${s.system_name}`, title: `שלום ${user.name}`, site: siteUrl(env, url),
+        paragraphs: ['ביקשת להיכנס בלי סיסמה. לכניסה ישירה למערכת לחצו על הכפתור. אין צורך להקליד שם משתמש או סיסמה.'],
         details: [['תוקף הקישור', '30 דקות'], ['שימוש', 'פעם אחת']],
-        button: { label: 'כניסה למערכת', url: link },
-        note: 'אם לא ביקשת להיכנס, אפשר להתעלם מהמייל. בלי הקישור אי אפשר להיכנס לחשבון שלך.' }
-    : { to: user.email, subject: 'איפוס סיסמה - זמני מניינים', title: `שלום ${user.name}`, site: siteUrl(env, url),
+        button: { label: 'כניסה ישירה למערכת', url: link },
+        note: 'הקישור אישי, אל תעבירו אותו לאחרים. אם לא ביקשת להיכנס, אפשר להתעלם מהמייל.' }
+    : { to: user.email, subject: `איפוס סיסמה - ${s.system_name}`, title: `שלום ${user.name}`, site: siteUrl(env, url),
         paragraphs: ['ביקשת לאפס את הסיסמה. בכפתור בוחרים סיסמה חדשה ונכנסים למערכת.'],
         details: [['תוקף הקישור', 'שעה'], ['שימוש', 'פעם אחת']],
         button: { label: 'בחירת סיסמה חדשה', url: link },
@@ -178,7 +182,7 @@ export async function postReset({ env, request }) {
   if (user.phone_requires_password && !/^\d{4,}$/.test(d.new_password)) {
     throw invalid({ new_password: 'הסיסמה נדרשת גם בטלפון, ולכן חייבת להכיל ספרות בלבד' });
   }
-  await run(env, `UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?`, await hashPassword(d.new_password), nowIso(), user.id);
+  await run(env, `UPDATE users SET password_hash = ?, must_change_password = 0, updated_at = ? WHERE id = ?`, await hashPassword(d.new_password), nowIso(), user.id);
   await revokeSessions(env, user.id);
-  return json(await createSession(env, request, user, 'איפוס סיסמה'));
+  return json(await createSession(env, request, { ...user, must_change_password: 0 }, 'איפוס סיסמה'));
 }

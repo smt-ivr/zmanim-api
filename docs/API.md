@@ -76,7 +76,7 @@ All routes also work under `BASE_PATH` (`/zmanim/api/...`).
 | | |
 |---|---|
 | `PATCH /me` | `{ email? }` (unless blocked), `{ is_hidden? }` (super admin only). Name and phone are set by the admin |
-| `PUT /me/password` | `{ current_password, new_password }` (unless blocked) |
+| `PUT /me/password` | `{ current_password, new_password }` (unless blocked). When the admin required a new password (`user.must_change_password`), `current_password` is not needed, and every other call answers `403 PASSWORD_CHANGE_REQUIRED` until it is done |
 | `PUT /me/phone-password` | `{ enabled, password }`: require the (numeric) password on management calls |
 | `GET /me/logins` | Last 50 logins: `{ channel: web\|phone, detail, created_at }` |
 | `GET /me/feedback` · `POST /me/feedback` | Messages to the developers: `{ blocked, items }` / `{ body }` |
@@ -128,7 +128,7 @@ All routes also work under `BASE_PATH` (`/zmanim/api/...`).
 | `POST /admin/synagogues` | `{ name, area_id?, address?, phone?, notes?, is_active?, can_edit_info?, max_locations?, max_minyanim?, restrict_prayers?, allowed_prayer_ids?, manager_ids? }` |
 | `GET / PATCH / DELETE /admin/synagogues/:id` | PATCH takes any subset of the above; DELETE removes locations and minyanim too |
 | `GET /admin/users` | All users with their synagogues |
-| `POST /admin/users` | `{ name, email, phone, password, role: admin\|manager, is_active?, synagogue_ids? }`: e-mail, phone and password are required |
+| `POST /admin/users` | `{ name, email, phone, password, role: admin\|manager, is_active?, synagogue_ids?, must_change_password?, send_welcome?, send_password? }` (also on PATCH: `send_welcome` e-mails the login details; `send_password` adds the password set in the same call): e-mail, phone and password are required |
 | `PATCH /admin/users/:id` | Any subset; a new `password` or `is_active: false` signs the user out everywhere. You cannot demote, deactivate or delete yourself |
 | `DELETE /admin/users/:id` | |
 | `GET /admin/catalog/:kind` | `kind` = `prayers` · `anchors` · `seasons` · `areas`; rows include `used` |

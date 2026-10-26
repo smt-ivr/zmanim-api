@@ -145,7 +145,7 @@ export function Login({ onDone }) {
     <//>`;
   }
 
-  const titles = { password: ['כניסה למערכת', 'ניהול זמני המניינים של בית הכנסת'], link: ['כניסה בקישור למייל', 'נשלח לכם קישור כניסה, בלי סיסמה'], reset: ['איפוס סיסמה', 'נשלח לכם קישור לבחירת סיסמה חדשה'] };
+  const titles = { password: ['כניסה למערכת', options.system_name || 'ניהול זמני התפילות של בית הכנסת'], link: ['כניסה בקישור למייל', 'נשלח לכם קישור כניסה, בלי סיסמה'], reset: ['איפוס סיסמה', 'נשלח לכם קישור לבחירת סיסמה חדשה'] };
   return html`<${AuthCard} title=${titles[mode][0]} subtitle=${titles[mode][1]}>
     <form class="form" onSubmit=${submit}>
       ${(error || googleError) && html`<div class="alert alert-error">${error || googleError}</div>`}
@@ -171,14 +171,72 @@ export function Login({ onDone }) {
   <//>`;
 }
 
-/** #/link?t=... : one-time login link from an e-mail. */
+/**
+ * #/link?t=... : direct login from an e-mail button. Signs in at once, greets by name and continues;
+ * an expired or used link explains why and can send a fresh one right here.
+ */
 export function LinkLogin({ token, onDone }) {
-  const [error, setError] = useState(null);
+  const [state, setState] = useState({ step: 'working' }); // working | done | failed | sent
+  const [login, setLogin] = useState('');
+  const [canResend, setCanResend] = useState(false);
   useEffect(() => {
-    api.post('/auth/email-link/verify', { token }).then(onDone).catch((e) => setError(e.message));
+    api.post('/auth/email-link/verify', { token })
+      .then((session) => { setState({ step: 'done', name: session.user.name }); setTimeout(() => onDone(session), 900); })
+      .catch((e) => setState({ step: 'failed', error: e.message }));
+    api.get('/auth/options').then((o) => setCanResend(o.magic_link)).catch(() => {});
   }, [token]);
-  return html`<${AuthCard} title="כניסה בקישור" subtitle=${error ? '' : 'מתחברים…'}>
-    ${error ? html`<div class="alert alert-error">${error}</div><a class="btn btn-secondary btn-block" href="#/">למסך הכניסה</a>` : html`<div class="loading"><span class="spinner" /></div>`}
+  const { busy, error, fields, submit } = useSubmit(async () => {
+    await api.post('/auth/email-link', { login });
+    setState({ step: 'sent' });
+  });
+
+  if (state.step === 'working') {
+    return html`<${AuthCard} title="כניסה ישירה" subtitle="מתחברים למערכת…"><div class="loading"><span class="spinner" /></div><//>`;
+  }
+  if (state.step === 'done') {
+    return html`<${AuthCard} title=${`שלום ${state.name}`} subtitle="נכנסת בהצלחה">
+      <div class="auth-success"><${Icon} name="check" size=${30} /></div><//>`;
+  }
+  if (state.step === 'sent') {
+    return html`<${AuthCard} title="שלחנו קישור חדש" subtitle="בדקו את המייל ולחצו על הכפתור לכניסה ישירה">
+      <p class="muted small center">הקישור תקף ל-30 דקות. לא הגיע? בדקו בתיקיית הספאם.</p>
+      <a class="btn btn-secondary btn-block" href="#/">למסך הכניסה</a><//>`;
+  }
+  return html`<${AuthCard} title="הקישור כבר לא תקף" subtitle="כל קישור לכניסה ישירה עובד פעם אחת ולזמן מוגבל">
+    <div class="alert alert-info">${state.error}</div>
+    ${canResend ? html`<form class="form" onSubmit=${submit}>
+        ${error && html`<div class="alert alert-error">${error}</div>`}
+        <${Field} label="לקבלת קישור חדש: מייל או טלפון" error=${fields.login}>
+          <${Input} dir="ltr" autocomplete="username" value=${login} onInput=${setLogin} required autofocus /><//>
+        <${Button} kind="primary" class="btn-block" loading=${busy} type="submit">שליחת קישור חדש<//>
+        <a class="link center" href="#/">כניסה עם סיסמה</a>
+      </form>`
+      : html`<a class="btn btn-primary btn-block" href="#/">למסך הכניסה</a>`}
+  <//>`;
+}
+
+/** Shown right after login when the admin requires a new password; nothing else works until then. */
+export function ChoosePassword({ user, onDone, onLogout }) {
+  const [password, setPassword] = useState('');
+  const [again, setAgain] = useState('');
+  const [show, setShow] = useState(false);
+  const { busy, error, fields, submit } = useSubmit(async () => {
+    if (password !== again) throw new Error('הסיסמאות אינן זהות');
+    await api.put('/me/password', { new_password: password });
+    await onDone();
+  });
+  return html`<${AuthCard} title=${`שלום ${user.name}`} subtitle="לפני שממשיכים, בחרו סיסמה משלכם">
+    <form class="form" onSubmit=${submit}>
+      ${error && html`<div class="alert alert-error">${error}</div>`}
+      <${Field} label="סיסמה חדשה" hint=${user.phone_requires_password ? 'ספרות בלבד, 4 לפחות (משמשת גם בטלפון)' : '4 תווים לפחות'} error=${fields.new_password}>
+        <div class="input-group">
+          <${Input} type=${show ? 'text' : 'password'} dir="ltr" autocomplete="new-password" value=${password} onInput=${setPassword} required autofocus />
+          <${Button} kind="ghost" icon=${show ? 'eyeOff' : 'eye'} aria-label="הצגת סיסמה" onClick=${() => setShow(!show)} />
+        </div><//>
+      <${Field} label="שוב, לאימות"><${Input} type=${show ? 'text' : 'password'} dir="ltr" autocomplete="new-password" value=${again} onInput=${setAgain} required /><//>
+      <${Button} kind="primary" class="btn-block" loading=${busy} type="submit">שמירה והמשך<//>
+      <button type="button" class="link center" onClick=${onLogout}>יציאה</button>
+    </form>
   <//>`;
 }
 

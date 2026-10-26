@@ -43,6 +43,7 @@ async function shownSeason(env, settings, url) {
 export async function catalog({ env }) {
   const settings = await getSettings(env);
   const site = {
+    name: settings.system_name,
     enabled: settings.public_site_enabled,
     notice: settings.site_notice,
     phone: settings.listen_phone,

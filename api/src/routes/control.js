@@ -34,7 +34,7 @@ export async function testMail({ env, actor, url }) {
   const me = await first(env, `SELECT email, name FROM users WHERE id = ?`, actor.id);
   if (!me.email) throw invalid({ email: 'למשתמש שלך אין מייל' });
   await sendMail(env, {
-    to: me.email, subject: 'בדיקת מייל - זמני מניינים', title: `שלום ${me.name}`, site: siteUrl(env, url),
+    to: me.email, subject: `בדיקת מייל - ${(await getSettings(env)).system_name}`, title: `שלום ${me.name}`, site: siteUrl(env, url),
     paragraphs: ['זהו מייל בדיקה. אם הוא הגיע אליך, שליחת המיילים מוגדרת ועובדת.'],
     details: [['נשלח אל', me.email]],
   });
@@ -86,7 +86,7 @@ export async function patchFeedback({ env, params, request, url }) {
     if (d.reply && d.send_email) {
       if (!f.email) throw invalid({ send_email: 'למשתמש אין מייל' });
       await sendMail(env, {
-        to: f.email, subject: 'תשובה לפנייה שלך - זמני מניינים', title: `שלום ${f.name}`, site: siteUrl(env, url),
+        to: f.email, subject: `תשובה לפנייה שלך - ${(await getSettings(env)).system_name}`, title: `שלום ${f.name}`, site: siteUrl(env, url),
         paragraphs: ['צוות הפיתוח השיב לפנייה ששלחת.'],
         quotes: [{ label: 'הפנייה שלך', text: f.body }, { label: 'התשובה', text: d.reply, accent: true }],
         note: 'אפשר לראות את כל הפניות והתשובות במערכת, בעמוד "פנייה לצוות".',

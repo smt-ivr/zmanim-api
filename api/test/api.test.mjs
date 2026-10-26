@@ -563,7 +563,7 @@ describe('e-mail (Resend mocked)', () => {
   test('control hides the key; test mail; options follow the switches', async () => {
     const admin = await setupAdmin();
     await env.DB.prepare(`UPDATE users SET is_super = 1`).run();
-    assert.deepEqual((await call('GET', '/auth/options')).body, { magic_link: false, password_reset: false, google_client_id: '89500817024-tbvsuu4dci6bqh173l65ua9lc65pe24p.apps.googleusercontent.com' });
+    assert.deepEqual((await call('GET', '/auth/options')).body, { magic_link: false, password_reset: false, google_client_id: '89500817024-tbvsuu4dci6bqh173l65ua9lc65pe24p.apps.googleusercontent.com', system_name: 'מערכת זמני התפילות' });
     await enableMail();
     const ctl = await call('GET', '/admin/control', { token: admin });
     assert.equal(ctl.body.resend_api_key, '••••1234');
@@ -572,7 +572,7 @@ describe('e-mail (Resend mocked)', () => {
     assert.equal((await call('POST', '/admin/control/test-mail', { token: admin })).status, 200);
     assert.equal(sent[0].headers.Authorization, 'Bearer re_secret_1234');
     assert.deepEqual(sent[0].body.to, ['admin@x.com']);
-    assert.deepEqual((await call('GET', '/auth/options')).body, { magic_link: true, password_reset: true, google_client_id: '89500817024-tbvsuu4dci6bqh173l65ua9lc65pe24p.apps.googleusercontent.com' });
+    assert.deepEqual((await call('GET', '/auth/options')).body, { magic_link: true, password_reset: true, google_client_id: '89500817024-tbvsuu4dci6bqh173l65ua9lc65pe24p.apps.googleusercontent.com', system_name: 'מערכת זמני התפילות' });
     await setSetting('magic_link_enabled', '0');
     assert.equal((await call('POST', '/auth/email-link', { body: { login: 'admin@x.com' } })).status, 403);
   });
@@ -644,8 +644,11 @@ describe('e-mail (Resend mocked)', () => {
     assert.equal(u.status, 201);
     const html = sent.at(-1).body.html;
     assert.match(html, /dir="rtl"/);
-    assert.match(html, /זמני מניינים/);
-    assert.match(html, /ברוך הבא, דוד/);
+    assert.match(html, /מערכת זמני התפילות/);
+    assert.match(html, /שלום דוד/);
+    assert.match(html, /כניסה ישירה למערכת/);
+    assert.doesNotMatch(html, /אם הכפתור לא עובד/);
+    assert.match(html, /לא נשלחה במייל/, 'no password unless asked');
     assert.match(html, /שם משתמש/);
     assert.match(html, /כניסה עם חשבון Google/);
     assert.match(html, /href="[^"]*\/admin\/#\/link\?t=[0-9a-f]+"/);
@@ -676,5 +679,46 @@ describe('e-mail (Resend mocked)', () => {
     await call('PATCH', '/admin/control', { token: admin, body: { google_login_enabled: false } });
     assert.equal((await google({ email: 'admin@x.com' })).status, 403);
     assert.equal((await call('GET', '/auth/options')).body.google_client_id, null);
+  });
+
+  test('password by e-mail only when chosen; forced change before anything else', async () => {
+    const admin = await setupAdmin();
+    await enableMail();
+    const u = await call('POST', '/admin/users', { token: admin, body: { name: 'רבקה', email: 'r@x.com', phone: '0529998877', password: 'temp1234', role: 'manager', send_welcome: true, send_password: true, must_change_password: true } });
+    assert.equal(u.status, 201, JSON.stringify(u.body));
+    assert.equal(u.body.must_change_password, true);
+    assert.match(sent.at(-1).body.html, /temp1234/);
+    assert.match(sent.at(-1).body.html, /תתבקשו לבחור סיסמה חדשה/);
+
+    const login = await call('POST', '/auth/login', { body: { login: 'r@x.com', password: 'temp1234' } });
+    const t = login.body.token;
+    assert.equal(login.body.user.must_change_password, true);
+    const blocked = await call('GET', '/synagogues', { token: t });
+    assert.equal(blocked.status, 403);
+    assert.equal(blocked.body.error.code, 'PASSWORD_CHANGE_REQUIRED');
+    assert.equal((await call('GET', '/me', { token: t })).status, 200);
+    assert.ok((await call('PUT', '/me/password', { token: t, body: { new_password: 'temp1234' } })).body.error.fields.new_password, 'must differ');
+    assert.equal((await call('PUT', '/me/password', { token: t, body: { new_password: 'mine-5678' } })).status, 204, 'no current password needed');
+    assert.equal((await call('GET', '/synagogues', { token: t })).status, 200);
+    assert.equal((await call('GET', '/me', { token: t })).body.user.must_change_password, false);
+
+    // admin sets a new password later and sends it, without the password: details only
+    await call('PATCH', `/admin/users/${u.body.id}`, { token: admin, body: { send_welcome: true } });
+    assert.match(sent.at(-1).body.html, /לא נשלחה במייל/);
+    await call('PATCH', `/admin/users/${u.body.id}`, { token: admin, body: { password: 'again999', send_welcome: true, send_password: true } });
+    assert.match(sent.at(-1).body.html, /again999/);
+  });
+
+  test('the system name is a setting used everywhere', async () => {
+    const admin = await setupAdmin();
+    await env.DB.prepare(`UPDATE users SET is_super = 1`).run();
+    await enableMail();
+    await call('PATCH', '/admin/control', { token: admin, body: { system_name: 'זמני תפילה בעיר' } });
+    assert.equal((await call('GET', '/public/catalog')).body.site.name, 'זמני תפילה בעיר');
+    assert.equal((await call('GET', '/auth/options')).body.system_name, 'זמני תפילה בעיר');
+    assert.equal((await call('GET', '/me', { token: admin })).body.system.name, 'זמני תפילה בעיר');
+    await call('POST', '/admin/control/test-mail', { token: admin });
+    assert.match(sent.at(-1).body.subject, /זמני תפילה בעיר/);
+    assert.match(sent.at(-1).body.html, /זמני תפילה בעיר/);
   });
 });

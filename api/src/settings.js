@@ -2,6 +2,7 @@
 import { all, batch, q } from './db.js';
 
 export const SETTINGS = {
+  system_name: { type: 'text', default: 'מערכת זמני התפילות', max: 60 }, // shown on the site, the admin, e-mails and the phone line
   shabbat_enabled: { type: 'bool', default: false },      // Shabbat minyanim visible/editable
   public_site_enabled: { type: 'bool', default: true },   // public site + public API
   site_notice: { type: 'text', default: '', max: 300 },   // banner on the public site

@@ -296,7 +296,7 @@ describe('ivr listening line', () => {
     await q(`UPDATE minyanim SET location_id = 1 WHERE id = 1`).run();
     const call = listen();
     let body = await call.start();
-    assert.match(body, /^id_list_message=t-שלום וברוכים הבאים לקו זמני המניינים&read=t-בחירת אזור\.t-לכל האזורים הקישו 0\.t-לגבעת שאול הקישו 1\.t-לרמות הקישו 2/);
+    assert.match(body, /^id_list_message=t-שלום וברוכים הבאים למערכת זמני התפילות&read=t-בחירת אזור\.t-לכל האזורים הקישו 0\.t-לגבעת שאול הקישו 1\.t-לרמות הקישו 2/);
     body = await call.press('2'); // רמות
     assert.match(body, /לשחרית הקישו 1/);
     assert.match(body, /לכל המניינים הקרובים הקישו 0/);
@@ -374,6 +374,6 @@ describe('ivr listening line', () => {
 
   test('the line can be closed', async () => {
     await q(`INSERT INTO settings (key, value) VALUES ('listen_enabled', '0') ON CONFLICT(key) DO UPDATE SET value = '0'`).run();
-    assert.equal(await listen('0502222222').start(), 'id_list_message=t-קו זמני המניינים אינו פעיל כרגע&');
+    assert.equal(await listen('0502222222').start(), 'id_list_message=t-קו השמיעה אינו פעיל כרגע&');
   });
 });

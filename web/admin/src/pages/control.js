@@ -26,6 +26,11 @@ export function ControlPage({ onChanged }) {
     <header class="page-head"><div><h1>הגדרות שליטה</h1><p class="muted">מתגים כלליים לכל המערכת. השינוי חל מיד.</p></div></header>
 
     <section class="card">
+      <h3><${Icon} name="settings" /> שם המערכת</h3>
+      <${NameEditor} value=${data.system_name} onSave=${(v) => save({ system_name: v }, 'השם עודכן בכל המקומות')} />
+    </section>
+
+    <section class="card">
       <h3><${Icon} name="clock" /> זמנים ועונות</h3>
       ${toggle('shabbat_enabled', 'זמני שבת פעילים', 'כבוי: זמני שבת לא מופיעים בשום מקום, לא באתר, לא בניהול ולא בטלפון')}
       ${toggle('public_season_choice', 'הציבור יכול לבחור עונה', 'כבוי: באתר ובטלפון מוצגת רק העונה הנוכחית. את תאריכי ההחלפה קובעים ב"הגדרות ורשימות ← עונות"')}
@@ -124,6 +129,15 @@ function PlaceEditor({ data, onSave }) {
       <${Field} label="קו רוחב"><${Input} dir="ltr" value=${lat} onInput=${setLat} /><//>
       <${Field} label="קו אורך"><${Input} dir="ltr" value=${lng} onInput=${setLng} /><//>
     </div>
+    <div><${Button} kind="primary" small type="submit">שמירה<//></div>
+  </form>`;
+}
+
+function NameEditor({ value, onSave }) {
+  const [v, setV] = useState(value || '');
+  return html`<form class="form setting-form" onSubmit=${(e) => (e.preventDefault(), v.trim() && onSave(v.trim()))}>
+    <${Field} label="השם שמופיע בכל המקומות" hint="באתר הציבורי, בממשק הניהול, במסך הכניסה, במיילים ובקו השמיעה בטלפון">
+      <${Input} value=${v} onInput=${setV} maxlength="60" required /><//>
     <div><${Button} kind="primary" small type="submit">שמירה<//></div>
   </form>`;
 }

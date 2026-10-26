@@ -21,7 +21,7 @@ const FONT = `system-ui,-apple-system,'Segoe UI',Rubik,Assistant,Arial,sans-seri
  * The HTML of an e-mail in the site's look: header band, card, optional detail rows, quoted blocks and a button.
  * Built with tables and inline styles so it renders the same in Gmail, Outlook and phone apps.
  */
-export function renderMail({ title, preheader = '', paragraphs = [], details = [], quotes = [], button, note, footer }) {
+export function renderMail({ brand = 'מערכת זמני התפילות', title, preheader = '', paragraphs = [], details = [], quotes = [], button, note, footer }) {
   const p = (t) => `<p style="margin:0 0 14px;font-size:16px;line-height:1.7;color:${C.text}">${esc(t)}</p>`;
   const detailRows = details.length
     ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:6px 0 18px;background:${C.soft};border-radius:12px">
@@ -35,13 +35,11 @@ export function renderMail({ title, preheader = '', paragraphs = [], details = [
   const cta = button ? `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:22px 0 8px"><tr>
       <td style="border-radius:10px;background:${C.primary}" bgcolor="${C.primary}">
         <a href="${esc(button.url)}" style="display:inline-block;padding:14px 30px;font-size:16px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:10px;font-family:${FONT}">${esc(button.label)}</a>
-      </td></tr></table>
-      <p style="margin:0 0 6px;font-size:12px;color:${C.muted};line-height:1.6">אם הכפתור לא עובד, העתיקו את הקישור לדפדפן:<br>
-        <a href="${esc(button.url)}" style="color:${C.primary2};word-break:break-all" dir="ltr">${esc(button.url)}</a></p>` : '';
+      </td></tr></table>${button.hint ? `<p style="margin:0;font-size:13px;color:${C.muted}">${esc(button.hint)}</p>` : ''}` : '';
   const noteBox = note ? `<div style="margin-top:18px;padding:12px 16px;border-radius:10px;background:#f9f8f5;border:1px solid ${C.border};font-size:13px;color:${C.muted};line-height:1.6">${esc(note)}</div>` : '';
   const foot = [
     footer?.phone && `שמיעת הזמנים בטלפון: <b dir="ltr" style="color:${C.text}">${esc(footer.phone)}</b>`,
-    footer?.site && `<a href="${esc(footer.site)}" style="color:${C.primary2};text-decoration:none">לאתר זמני המניינים</a>`,
+    footer?.site && `<a href="${esc(footer.site)}" style="color:${C.primary2};text-decoration:none">לאתר ${esc(brand)}</a>`,
   ].filter(Boolean).join(' &nbsp;·&nbsp; ');
 
   return `<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -53,7 +51,7 @@ export function renderMail({ title, preheader = '', paragraphs = [], details = [
     <tr><td style="background:${C.primary};background-image:linear-gradient(135deg,${C.primary},${C.primary2});border-radius:16px 16px 0 0;padding:22px 28px" bgcolor="${C.primary}">
       <table role="presentation" cellpadding="0" cellspacing="0"><tr>
         <td style="width:40px;height:40px;border-radius:10px;background:rgba(255,255,255,.18);text-align:center;vertical-align:middle;font-size:20px;color:#fff">&#128339;</td>
-        <td style="padding-right:12px;font-size:19px;font-weight:700;color:#ffffff;font-family:${FONT}">זמני מניינים</td>
+        <td style="padding-right:12px;font-size:19px;font-weight:700;color:#ffffff;font-family:${FONT}">${esc(brand)}</td>
       </tr></table>
     </td></tr>
     <tr><td style="background:${C.card};border:1px solid ${C.border};border-top:0;border-radius:0 0 16px 16px;padding:28px" dir="rtl">
@@ -62,7 +60,7 @@ export function renderMail({ title, preheader = '', paragraphs = [], details = [
       ${detailRows}${quoteBlocks}${cta}${noteBox}
     </td></tr>
     <tr><td style="padding:18px 8px;text-align:center;font-size:12px;color:${C.muted};line-height:1.8">
-      ${foot ? `${foot}<br>` : ''}מייל זה נשלח אוטומטית ממערכת זמני המניינים
+      ${foot ? `${foot}<br>` : ''}מייל זה נשלח אוטומטית מ${esc(brand)}
     </td></tr>
   </table>
 </td></tr></table></body></html>`;
@@ -71,7 +69,7 @@ export function renderMail({ title, preheader = '', paragraphs = [], details = [
 /**
  * Sends one e-mail. Throws 409 when mail is not configured, 502 when Resend refuses (with its reason).
  * mail: { to, subject, title, preheader?, paragraphs?, details?: [[label, value]], quotes?: [{ label, text, accent? }],
- *         button?: { label, url }, note?, site? (public site address for the footer) }
+ *         button?: { label, url, hint? }, note?, site? (public site address for the footer) }
  */
 export async function sendMail(env, mail) {
   const s = await getSettings(env);
@@ -79,7 +77,7 @@ export async function sendMail(env, mail) {
   const to = normalizeEmail(mail.to);
   if (!to) throw new HttpError(422, 'BAD_EMAIL', `כתובת המייל של הנמען אינה תקינה: ${clean(mail.to)}`);
   const title = mail.title || mail.subject;
-  const html = renderMail({ ...mail, title, preheader: mail.preheader || mail.paragraphs?.[0] || '', footer: { phone: s.listen_enabled ? s.listen_phone : '', site: mail.site } });
+  const html = renderMail({ ...mail, brand: s.system_name, title, preheader: mail.preheader || mail.paragraphs?.[0] || '', footer: { phone: s.listen_enabled ? s.listen_phone : '', site: mail.site } });
   const text = [
     title, ...(mail.paragraphs || []).filter(Boolean),
     ...(mail.details || []).map(([k, v]) => `${k}: ${v}`),

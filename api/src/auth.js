@@ -183,6 +183,7 @@ export function publicUser(u) {
     can_edit_password: u.can_edit_password !== 0,
     can_message: u.can_message !== 0,
     phone_requires_password: u.phone_requires_password === 1,
+    must_change_password: u.must_change_password === 1,
     role: u.role,
     is_active: u.is_active === 1,
     created_at: u.created_at,

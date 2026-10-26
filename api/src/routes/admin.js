@@ -185,7 +185,9 @@ function parseUser(body, partial) {
     .bool('can_edit_email', { default: true })
     .bool('can_edit_password', { default: true })
     .bool('can_message', { default: true })
-    .bool('send_welcome', { default: false }) // e-mail the new user a welcome message with a login link
+    .bool('must_change_password', { default: false }) // must choose a new password at the next login
+    .bool('send_welcome', { default: false }) // e-mail the login details with a direct-login link
+    .bool('send_password', { default: false }) // ...including the password just set (only when one is set now)
     .done();
 }
 
@@ -203,8 +205,8 @@ export async function createUser(ctx) {
   await assertIdsExist(env, 'synagogues', d.synagogue_ids, 'synagogue_ids');
   const res = await run(
     env,
-    `INSERT INTO users (name, email, phone, role, is_active, password_hash, can_edit_email, can_edit_password, can_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    d.name, d.email, d.phone, d.role, d.is_active ? 1 : 0, await hashPassword(d.password), d.can_edit_email ? 1 : 0, d.can_edit_password ? 1 : 0, d.can_message ? 1 : 0
+    `INSERT INTO users (name, email, phone, role, is_active, password_hash, can_edit_email, can_edit_password, can_message, must_change_password) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    d.name, d.email, d.phone, d.role, d.is_active ? 1 : 0, await hashPassword(d.password), d.can_edit_email ? 1 : 0, d.can_edit_password ? 1 : 0, d.can_message ? 1 : 0, d.must_change_password ? 1 : 0
   );
   const uid = res.meta.last_row_id;
   if (d.role === 'manager' && d.synagogue_ids.length) {
@@ -212,12 +214,13 @@ export async function createUser(ctx) {
   }
   const user = await adminUser(env, uid);
   if (d.send_welcome) {
-    try { await welcomeMail(ctx, uid); user.welcome_sent = true; } catch (e) { user.welcome_error = e.message; }
+    try { await welcomeMail(ctx, uid, { password: d.send_password ? d.password : null }); user.welcome_sent = true; } catch (e) { user.welcome_error = e.message; }
   }
   return json(user, 201);
 }
 
-export async function patchUser({ env, actor, params, request }) {
+export async function patchUser(ctx) {
+  const { env, actor, params, request } = ctx;
   const uid = id(params.id);
   const current = await first(env, `SELECT * FROM users WHERE id = ?`, uid);
   if (!current) throw notFound('המשתמש לא נמצא');
@@ -234,7 +237,7 @@ export async function patchUser({ env, actor, params, request }) {
   const role = d.role ?? current.role;
   const data = { ...d, updated_at: nowIso() };
   if (d.password) data.password_hash = await hashPassword(d.password);
-  const set = setClause(data, ['name', 'email', 'phone', 'role', 'is_active', 'password_hash', 'can_edit_email', 'can_edit_password', 'can_message', 'updated_at']);
+  const set = setClause(data, ['name', 'email', 'phone', 'role', 'is_active', 'password_hash', 'can_edit_email', 'can_edit_password', 'can_message', 'must_change_password', 'updated_at']);
   const statements = [q(env, `UPDATE users SET ${set.sql} WHERE id = ?`, ...set.params, uid)];
   if (role === 'admin') statements.push(q(env, `DELETE FROM synagogue_managers WHERE user_id = ?`, uid));
   else if (d.synagogue_ids) statements.push(...replaceLinks(env, 'synagogue_managers', 'user_id', uid, 'synagogue_id', d.synagogue_ids));
@@ -242,7 +245,11 @@ export async function patchUser({ env, actor, params, request }) {
 
   // New password or deactivation signs the user out everywhere.
   if (d.password || d.is_active === false) await revokeSessions(env, uid, uid === actor.id ? actor.session_id : 0);
-  return json(await adminUser(env, uid));
+  const user = await adminUser(env, uid);
+  if (d.send_welcome) {
+    try { await welcomeMail(ctx, uid, { password: d.send_password ? d.password : null }); user.welcome_sent = true; } catch (e) { user.welcome_error = e.message; }
+  }
+  return json(user);
 }
 
 export async function deleteUser({ env, actor, params }) {
@@ -405,30 +412,36 @@ export async function rotateIvrKey({ env, actor }) {
 }
 
 // ------------------------------------------------------------------ welcome e-mail
-async function welcomeMail({ env, url }, uid) {
+/**
+ * Login details by e-mail: a button for direct login (no username or password), the username,
+ * and the password itself only when the admin chose to send the one just set.
+ */
+async function welcomeMail({ env, url }, uid, { password = null } = {}) {
   const u = await first(env, `SELECT * FROM users WHERE id = ?`, uid);
   if (!u?.email) throw invalid({ email: 'למשתמש אין מייל' });
   const token = await createEmailToken(env, u.id, 'welcome');
   const synagogues = await all(env, `SELECT s.name FROM synagogue_managers sm JOIN synagogues s ON s.id = sm.synagogue_id WHERE sm.user_id = ?`, uid);
   const settings = await getSettings(env);
+  const name = settings.system_name;
   await sendMail(env, {
     to: u.email,
-    subject: 'נפתח לך משתמש בזמני מניינים',
-    title: `ברוך הבא, ${u.name}`,
+    subject: `פרטי הכניסה שלך ל${name}`,
+    title: `שלום ${u.name}`,
     site: siteUrl(env, url),
     paragraphs: [
-      u.role === 'admin' ? 'נפתח לך משתמש מנהל במערכת זמני המניינים.' : 'נפתח לך משתמש לעדכון זמני המניינים של בית הכנסת.',
-      'הכפתור למטה מכניס אותך ישר למערכת, בלי סיסמה.',
+      u.role === 'admin' ? `יש לך משתמש מנהל ב${name}.` : `יש לך משתמש לעדכון זמני התפילות של ${synagogues.map((s) => s.name).join(', ') || 'בית הכנסת'}.`,
+      'לכניסה ישירה למערכת לחצו על הכפתור. אין צורך להקליד שם משתמש או סיסמה.',
     ],
+    button: { label: 'כניסה ישירה למערכת', url: adminUrl(env, url, `/link?t=${token}`), hint: 'הכפתור תקף לשבוע ולכניסה אחת.' },
     details: [
-      ...(u.role === 'admin' ? [] : [['בית הכנסת', synagogues.map((s) => s.name).join(', ') || '—']]),
       ['שם משתמש', u.phone ? `${u.phone} או ${u.email}` : u.email],
-      ['סיסמה', 'מקבלים ממנהל המערכת'],
-      ...(settings.google_login_enabled ? [['או', `כניסה עם חשבון Google של ${u.email}`]] : []),
+      ['סיסמה', password ?? 'לא נשלחה במייל. אפשר להיכנס בכפתור ולבחור סיסמה בעמוד הפרופיל'],
+      ...(u.must_change_password ? [['בכניסה הראשונה', 'תתבקשו לבחור סיסמה חדשה']] : []),
+      ...(settings.google_login_enabled ? [['אפשר גם', `כניסה עם חשבון Google של ${u.email}`]] : []),
     ],
-    button: { label: 'כניסה למערכת', url: adminUrl(env, url, `/link?t=${token}`) },
     note: [
-      'הקישור בכפתור תקף לשבוע ולשימוש אחד. אחרי הכניסה אפשר לבחור סיסמה חדשה בעמוד הפרופיל.',
+      'פעם הבאה נכנסים בכתובת המערכת עם שם המשתמש והסיסמה.',
+      password ? ' מומלץ למחוק את המייל הזה אחרי שמחליפים את הסיסמה.' : '',
       u.phone ? ' אפשר לנהל גם בטלפון: מתקשרים מהמספר שלך לשלוחת הניהול.' : '',
     ].join(''),
   });

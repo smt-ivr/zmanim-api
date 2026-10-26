@@ -16,7 +16,7 @@ export async function handleListen({ env, request, url }) {
   try {
     const params = await readParams(request, url);
     const settings = await getSettings(env);
-    if (params.hangup !== 'yes' && !settings.listen_enabled) return reply(goodbye([text('קו זמני המניינים אינו פעיל כרגע')]));
+    if (params.hangup !== 'yes' && !settings.listen_enabled) return reply(goodbye([text('קו השמיעה אינו פעיל כרגע')]));
     const store = callStore(env, 'ivr_listen_calls');
     const flow = { ...store, screens: SCREENS, start, recover: (c) => go(c, 'main') };
     return reply(await runCall(env, params, flow, { settings, store }));
@@ -45,7 +45,7 @@ const hhmm = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String
 
 async function start(c) {
   await c.store.prune();
-  c.say.push(text('שלום וברוכים הבאים לקו זמני המניינים'));
+  c.say.push(text(`שלום וברוכים הבאים ל${c.settings.system_name}`));
   const areas = await all(c.env, `SELECT id FROM areas`);
   return areas.length > 1 ? go(c, 'area') : go(c, 'main', { area: null });
 }

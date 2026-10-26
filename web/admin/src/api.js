@@ -44,6 +44,7 @@ async function request(method, path, body) {
       setToken(null);
       listeners.forEach((fn) => fn(err));
     }
+    if (err.code === 'PASSWORD_CHANGE_REQUIRED') location.reload(); // the admin just required a new password: show that screen
     throw err;
   }
   return data;
