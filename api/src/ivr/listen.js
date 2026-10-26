@@ -1,13 +1,14 @@
-// Public listening line: anyone can call and hear minyan times by area, prayer and day.
+// Public listening line: anyone can call and hear today's minyan times.
+// Area (or 0 = all) -> prayer (or 0 = everything soon) -> from what time (or 0 = from now).
+// Each minyan is one short sentence: "מנחה בשעה 13 30 באהל משה בעזרת נשים".
 // No identification; uses the same engine as the management line.
 import { all } from '../db.js';
-import { MINYAN_ORDER, MINYAN_SELECT, serializeMinyan } from '../minyan.js';
-import { currentSeason, getSettings, visibleDays } from '../settings.js';
+import { MINYAN_ORDER, MINYAN_SELECT } from '../minyan.js';
+import { currentSeason, getSettings, isRoshChodesh, visibleDays } from '../settings.js';
 import { callStore, chosenIndex, go, goodbye, invalid, listChoice, menu, number, readParams, reply, runCall } from './engine.js';
-import { speakMinyanTime, text } from './yemot.js';
+import { speakClock, text } from './yemot.js';
 
-const DAY_WORDS = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
-const MAX_SPOKEN = 30;
+const PAGE = 8;
 
 export async function handleListen({ env, request, url }) {
   try {
@@ -23,15 +24,21 @@ export async function handleListen({ env, request, url }) {
   }
 }
 
-/** Day of week (0 = Sunday) and minutes since midnight, in Israel. */
-function israelNow() {
+/** Day of week (0 = Sunday), minutes since midnight and Rosh Chodesh, in Israel. `env.FIXED_NOW` pins the clock in tests. */
+function israelNow(env) {
+  const date = env.FIXED_NOW ? new Date(env.FIXED_NOW) : new Date();
   const parts = Object.fromEntries(
     new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Jerusalem', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
-      .formatToParts(new Date()).map((p) => [p.type, p.value])
+      .formatToParts(date).map((p) => [p.type, p.value])
   );
-  return { day: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(parts.weekday), minutes: Number(parts.hour) * 60 + Number(parts.minute) };
+  return {
+    day: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(parts.weekday),
+    minutes: Number(parts.hour) * 60 + Number(parts.minute),
+    roshChodesh: isRoshChodesh(date),
+  };
 }
 const toMinutes = (hhmm) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3));
+const hhmm = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
 
 async function start(c) {
   await c.store.prune();
@@ -40,34 +47,74 @@ async function start(c) {
   return areas.length > 1 ? go(c, 'area') : go(c, 'main', { area: null });
 }
 
-/** Active minyanim visible to the public for a day, optionally one area / prayer, in the default season. */
-async function minyanimFor(c, { day, prayerId }) {
-  const where = ['m.is_active = 1', 's.is_active = 1', '(m.days & ?) != 0'];
-  const params = [1 << day];
+/** Today's active public minyanim (current season), optionally one area / prayer. */
+async function todaysMinyanim(c, now, prayerId) {
+  const where = ['m.is_active = 1', 's.is_active = 1', '(m.days & ?) != 0', 'm.season_id = ?'];
+  const params = [1 << now.day, (await currentSeason(c.env))?.id ?? 0];
   if (c.state.data.area) (where.push('s.area_id = ?'), params.push(c.state.data.area));
   if (prayerId) (where.push('m.prayer_id = ?'), params.push(prayerId));
-  const season = await currentSeason(c.env);
-  where.push('m.season_id = ?');
-  params.push(season?.id ?? 0);
   const rows = await all(
     c.env,
     `${MINYAN_SELECT.replace('FROM minyanim m', 'FROM minyanim m JOIN synagogues s ON s.id = m.synagogue_id')
       .replace('SELECT m.*,', 'SELECT m.*, s.name AS synagogue_name,')} WHERE ${where.join(' AND ')} ${MINYAN_ORDER}`,
     ...params
   );
-  return rows
-    .filter((r) => visibleDays(r.days, c.settings) & (1 << day))
-    .map((r) => ({ ...r, notes: '' }))
-    .map((r) => ({ ...serializeMinyan(r), synagogue_name: r.synagogue_name }));
+  return rows.filter((r) => visibleDays(r.days, c.settings) & (1 << now.day));
 }
 
-function speakList(c, list, { withPrayer = false } = {}) {
-  const fixed = list.filter((m) => m.time_kind === 'fixed').sort((a, b) => a.time.localeCompare(b.time));
-  const relative = list.filter((m) => m.time_kind === 'relative');
-  for (const m of [...fixed, ...relative].slice(0, MAX_SPOKEN)) {
-    c.say.push(text([speakMinyanTime(m), withPrayer && m.prayer_name, m.synagogue_name, m.location_name && `ב${m.location_name}`].filter(Boolean).join(', ')));
+/**
+ * One sentence per minyan starting at `from` or later, in time order. The Rosh Chodesh time is used only
+ * on Rosh Chodesh; an interval minyan gives one sentence per start. Minyanim relative to a time of day
+ * come last (their clock time is not computed).
+ */
+function sentences(rows, now, from) {
+  const where = (r) => `ב${r.synagogue_name}${r.location_name ? ` ב${r.location_name}` : ''}`;
+  const timed = [];
+  const relative = [];
+  for (const r of rows) {
+    if (r.time_kind === 'fixed') {
+      const t = toMinutes(now.roshChodesh && r.rosh_chodesh_time ? r.rosh_chodesh_time : r.time);
+      if (t >= from) timed.push({ t, r });
+    } else if (r.time_kind === 'interval') {
+      for (let t = toMinutes(r.time); t <= toMinutes(r.end_time); t += r.every_minutes) if (t >= from) timed.push({ t, r });
+    } else {
+      const n = Math.abs(r.offset_minutes);
+      relative.push(`${r.prayer_name} ${n ? `${n} דקות ${r.offset_minutes < 0 ? 'לפני' : 'אחרי'} ${r.anchor_name}` : `ב${r.anchor_name}`} ${where(r)}`);
+    }
   }
-  if (list.length > MAX_SPOKEN) c.say.push(text('ויש מניינים נוספים. לרשימה המלאה בחרו אזור'));
+  timed.sort((a, b) => a.t - b.t);
+  return [...timed.map(({ t, r }) => `${r.prayer_name} בשעה ${speakClock(hhmm(t))} ${where(r)}`), ...relative];
+}
+
+/** Reads one page and keeps the rest for "continue". */
+function speakPage(c) {
+  const rest = c.state.data.rest;
+  rest.splice(0, PAGE).forEach((s) => c.say.push(text(s)));
+  return rest.length ? go(c, 'more') : go(c, 'main');
+}
+
+async function list(c, prayerId, from) {
+  const now = israelNow(c.env);
+  if (now.day === 6 && !c.settings.shabbat_enabled) {
+    c.say.push(text('אין מניינים להשמעה היום'));
+    return go(c, 'main');
+  }
+  const start = from ?? now.minutes;
+  const rest = sentences(await todaysMinyanim(c, now, prayerId), now, start);
+  if (!rest.length) {
+    c.say.push(text(from === null ? 'אין מניינים נוספים היום' : `אין מניינים מהשעה ${speakClock(hhmm(start))}`));
+    return go(c, 'main');
+  }
+  if (now.roshChodesh) c.say.push(text('היום ראש חודש'));
+  c.state.data.rest = rest;
+  return speakPage(c);
+}
+
+/** "730" / "0730" -> 450 minutes; "7" / "07" -> a whole hour. Null when not a time. */
+function parseClock(input) {
+  if (!/^\d{1,4}$/.test(input)) return null;
+  const [h, m] = input.length <= 2 ? [Number(input), 0] : [Number(input.slice(0, -2)), Number(input.slice(-2))];
+  return h <= 23 && m <= 59 ? h * 60 + m : null;
 }
 
 const SCREENS = {
@@ -90,67 +137,33 @@ const SCREENS = {
     async prompt(c) {
       const prayers = await all(c.env, `SELECT id, name FROM prayers ORDER BY sort, id`);
       c.state.data.prayers = prayers.map((p) => p.id);
-      c.state.data.prayerNames = prayers.map((p) => p.name);
-      return listChoice(c, 'תפריט ראשי', prayers, (p) => `זמני ${p.name}`, { zero: 'המניינים הקרובים' });
+      return listChoice(c, 'בחירת תפילה', prayers, (p) => p.name, { zero: 'כל המניינים הקרובים', star: c.state.data.areas?.length > 1 });
     },
-    async handle(c, input) {
+    handle(c, input) {
       const i = chosenIndex(input, c.state.data.prayers, { zero: true });
       if (i === null) return invalid(c);
-      if (i === -1) {
-        const now = israelNow();
-        // Next start of each fixed or interval minyan from now
-        const list = (await minyanimFor(c, { day: now.day }))
-          .map((m) => ({ ...m, next: nextStart(m, now.minutes) }))
-          .filter((m) => m.next !== null)
-          .sort((a, b) => a.next - b.next)
-          .slice(0, 8)
-          .map((m) => (m.time_kind === 'interval' ? { ...m, time_kind: 'fixed', time: hhmm(m.next) } : m));
-        if (!list.length) c.say.push(text('אין מניינים נוספים היום'));
-        else { c.say.push(text('המניינים הקרובים:')); speakList(c, list, { withPrayer: true }); }
-        return go(c, 'main');
-      }
-      return go(c, 'day', { prayerId: c.state.data.prayers[i], prayerName: c.state.data.prayerNames[i] });
+      if (i === -1) return list(c, null, null);
+      return go(c, 'time', { prayerId: c.state.data.prayers[i] });
     },
   },
 
-  day: {
+  time: {
     back: 'main',
-    prompt: (c) => menu(c, `זמני ${c.state.data.prayerName}`, [['1', 'היום'], ['2', 'מחר'], ['3', 'בחירת יום בשבוע']]),
-    async handle(c, input) {
-      const today = israelNow().day;
-      if (input === '3') return go(c, 'weekday');
-      if (input !== '1' && input !== '2') return invalid(c);
-      return speakDay(c, input === '1' ? today : (today + 1) % 7);
+    prompt: () => number(['הקישו את השעה בארבע ספרות וסולמית, לדוגמה 0 7 3 0. למניינים הקרובים הקישו 0 וסולמית'], { max: 4 }),
+    handle(c, input) {
+      if (input === '0') return list(c, c.state.data.prayerId, null);
+      const from = parseClock(input);
+      return from === null ? invalid(c) : list(c, c.state.data.prayerId, from);
     },
   },
 
-  weekday: {
-    back: 'day',
-    prompt: (c) => menu(c, 'בחירת יום', DAY_WORDS.map((d, i) => [String(i + 1), `יום ${d}`]).filter((_, i) => i < 6 || c.settings.shabbat_enabled)),
+  more: {
+    back: 'main',
+    prompt: (c) => menu(c, '', [['1', 'המשך'], ['2', 'בחירת תפילה']], { star: false }),
     handle(c, input) {
-      const d = Number(input) - 1;
-      if (!Number.isInteger(d) || d < 0 || d > (c.settings.shabbat_enabled ? 6 : 5)) return invalid(c);
-      return speakDay(c, d);
+      if (input === '1') return speakPage(c);
+      if (input === '2') return go(c, 'main');
+      return invalid(c);
     },
   },
 };
-
-const hhmm = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
-function nextStart(m, nowMin) {
-  if (m.time_kind === 'fixed') return toMinutes(m.time) >= nowMin ? toMinutes(m.time) : null;
-  if (m.time_kind === 'interval') {
-    for (let t = toMinutes(m.time); t <= toMinutes(m.end_time); t += m.every_minutes) if (t >= nowMin) return t;
-  }
-  return null;
-}
-
-async function speakDay(c, day) {
-  if (day === 6 && !c.settings.shabbat_enabled) {
-    c.say.push(text('אין מניינים להצגה'));
-    return go(c, 'main');
-  }
-  const list = await minyanimFor(c, { day, prayerId: c.state.data.prayerId });
-  if (!list.length) c.say.push(text(`אין מניינים ל${c.state.data.prayerName} ביום ${DAY_WORDS[day]}`));
-  else { c.say.push(text(`זמני ${c.state.data.prayerName} ליום ${DAY_WORDS[day]}:`)); speakList(c, list); }
-  return go(c, 'main');
-}

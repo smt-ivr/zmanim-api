@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { beforeEach, describe, test } from 'node:test';
+import { afterEach, beforeEach, describe, test } from 'node:test';
 import { hashPassword } from '../src/auth.js';
+import { isRoshChodesh } from '../src/settings.js';
 import worker from '../src/index.js';
 import { D1Shim } from './d1-shim.mjs';
 
@@ -278,32 +279,71 @@ describe('ivr listening line', () => {
     await q(`INSERT INTO minyanim (synagogue_id, prayer_id, time_kind, anchor_id, offset_minutes, days, season_id) VALUES (1, 2, 'relative', 2, -15, 127, 1)`).run();
   });
 
-  test('anyone can call: area, prayer, day; Shabbat hidden while disabled', async () => {
+  // A weekday at 07:10 in Israel, and a weekday that is Rosh Chodesh.
+  const at = (date, clock) => new Date(`${date}T${clock}:00+02:00`).toISOString();
+  const findDay = (rc) => {
+    for (let d = new Date('2026-11-01T12:00:00+02:00'); ; d = new Date(d.getTime() + 86400000)) {
+      const day = d.toISOString().slice(0, 10);
+      if (new Date(`${day}T12:00:00+02:00`).getUTCDay() !== 6 && isRoshChodesh(new Date(`${day}T12:00:00+02:00`)) === rc) return day;
+    }
+  };
+  afterEach(() => { delete env.FIXED_NOW; });
+
+  test('area, prayer, from a time: short sentences, today only', async () => {
+    env.FIXED_NOW = at(findDay(false), '05:00');
+    await q(`INSERT INTO locations (synagogue_id, name) VALUES (1, 'עזרת נשים')`).run();
+    await q(`UPDATE minyanim SET location_id = 1 WHERE id = 1`).run();
     const call = listen();
     let body = await call.start();
     assert.match(body, /^id_list_message=t-שלום וברוכים הבאים לקו זמני המניינים&read=t-בחירת אזור\.t-לכל האזורים הקישו 0\.t-לגבעת שאול הקישו 1\.t-לרמות הקישו 2/);
     body = await call.press('2'); // רמות
-    assert.match(body, /לזמני שחרית הקישו 1/);
-    assert.match(body, /להמניינים הקרובים הקישו 0/);
+    assert.match(body, /לשחרית הקישו 1/);
+    assert.match(body, /לכל המניינים הקרובים הקישו 0/);
     body = await call.press('1'); // שחרית
-    assert.match(body, /להיום הקישו 1/);
-    body = await call.press('3'); // pick a weekday
-    assert.doesNotMatch(body, /יום שבת/);
-    body = await call.press('1'); // Sunday
-    assert.match(body, /זמני שחרית ליום ראשון:\.t-בשעה 6 30, אהל משה/);
+    assert.match(body, /הקישו את השעה/);
+    assert.doesNotMatch(body, /יום/); // no day question
+    body = await call.press('0630');
+    assert.match(body, /t-שחרית בשעה 6 30 באהל משה בעזרת נשים&/);
     assert.doesNotMatch(body, /זכרון משה/); // other area
     assert.doesNotMatch(body, /בשעה 8 בדיוק/); // Shabbat-only minyan
-    assert.match(body, /read=t-תפריט ראשי/); // back to the menu, no hang-up
+    assert.match(body, /read=t-בחירת תפילה/); // back to the menu, no hang-up
+    body = await call.press('1');
+    body = await call.press('0631');
+    assert.match(body, /אין מניינים מהשעה 6 31/);
   });
 
-  test('relative times and closing the line', async () => {
-    const call = listen();
+  test('0 = everything soon; Rosh Chodesh time only on Rosh Chodesh; relative times last', async () => {
+    await q(`UPDATE minyanim SET rosh_chodesh_time = '06:15' WHERE id = 1`).run();
+    env.FIXED_NOW = at(findDay(false), '06:20');
+    let call = listen();
     await call.start();
     await call.press('0'); // all areas
-    await call.press('2'); // מנחה
-    await call.press('3');
-    const body = await call.press('2'); // Monday
-    assert.match(body, /15 דקות לפני שקיעה, אהל משה/);
+    let body = await call.press('0'); // all prayers, from now
+    assert.match(body, /t-שחרית בשעה 6 30 באהל משה\.t-שחרית בשעה 7 בדיוק בזכרון משה\.t-מנחה 15 דקות לפני שקיעה באהל משה/);
+    assert.doesNotMatch(body, /ראש חודש|6 15/);
+
+    env.FIXED_NOW = at(findDay(true), '06:10');
+    call = listen();
+    await call.start();
+    await call.press('0');
+    body = await call.press('0');
+    assert.match(body, /t-היום ראש חודש\.t-שחרית בשעה 6 15 באהל משה\.t-שחרית בשעה 7 בדיוק/);
+    assert.doesNotMatch(body, /6 30/);
+  });
+
+  test('long lists are read in pages', async () => {
+    env.FIXED_NOW = at(findDay(false), '05:00');
+    for (let i = 0; i < 10; i++) await q(`INSERT INTO minyanim (synagogue_id, prayer_id, time_kind, time, days, season_id) VALUES (2, 1, 'fixed', ?, 127, 1)`).bind(`09:${String(i * 5).padStart(2, '0')}`).run();
+    const call = listen();
+    await call.start();
+    await call.press('0');
+    let body = await call.press('0');
+    assert.match(body, /להמשך הקישו 1/);
+    body = await call.press('1');
+    assert.match(body, /בשעה 9 45/);
+  });
+
+  test('the line can be closed', async () => {
     await q(`INSERT INTO settings (key, value) VALUES ('listen_enabled', '0') ON CONFLICT(key) DO UPDATE SET value = '0'`).run();
     assert.equal(await listen('0502222222').start(), 'id_list_message=t-קו זמני המניינים אינו פעיל כרגע&');
   });

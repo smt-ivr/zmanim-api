@@ -55,6 +55,14 @@ export function israelMonthDay(date = new Date()) {
   return `${p.month}-${p.day}`;
 }
 
+/** Rosh Chodesh in Israel on this date: day 30 or day 1 of the Hebrew month (Rosh Hashana is not counted). */
+export function isRoshChodesh(date = new Date()) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-u-ca-hebrew', { timeZone: 'Asia/Jerusalem', day: 'numeric', month: 'long' })
+    .formatToParts(date).map((x) => [x.type, x.value]));
+  const d = Number(p.day);
+  return d === 30 || (d === 1 && !/^Tishri/.test(p.month));
+}
+
 /**
  * The current season: when seasons have start dates (MM-DD), the one that started last (wrapping
  * around the year); otherwise the season marked as default. null when there are no seasons.
