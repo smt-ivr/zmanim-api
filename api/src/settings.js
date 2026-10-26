@@ -9,6 +9,13 @@ export const SETTINGS = {
   listen_enabled: { type: 'bool', default: true },        // public listening phone line
   manage_phone_enabled: { type: 'bool', default: true },  // management phone line
   feedback_enabled: { type: 'bool', default: true },      // messages to the developers
+  minyan_notes_enabled: { type: 'bool', default: false }, // free-text note on a minyan
+  public_season_choice: { type: 'bool', default: false }, // public may view other seasons (default: current only)
+  mail_enabled: { type: 'bool', default: false },         // send e-mail through Resend
+  mail_from: { type: 'text', default: '', max: 200 },     // "זמני מניינים <noreply@example.com>"
+  resend_api_key: { type: 'secret', default: '', max: 200 }, // never returned to the browser in full
+  magic_link_enabled: { type: 'bool', default: true },    // login with a one-time e-mail link
+  password_reset_enabled: { type: 'bool', default: true },
 };
 
 export const SHABBAT_BIT = 64;
@@ -26,9 +33,37 @@ export async function saveSettings(env, values) {
     .filter(([k]) => SETTINGS[k])
     .map(([k, v]) =>
       q(env, `INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-        k, SETTINGS[k].type === 'bool' ? (v ? '1' : '0') : String(v))
+        k, SETTINGS[k].type === 'bool' ? (v ? '1' : '0') : String(v ?? ''))
     );
   if (statements.length) await batch(env, statements);
+}
+
+/** Settings safe to show in the control panel (secrets masked). */
+export function publicView(settings) {
+  const out = { ...settings };
+  for (const [k, def] of Object.entries(SETTINGS)) {
+    if (def.type === 'secret') out[k] = settings[k] ? `••••${settings[k].slice(-4)}` : '';
+  }
+  out.mail_ready = Boolean(settings.mail_enabled && settings.resend_api_key && settings.mail_from);
+  return out;
+}
+
+// ------------------------------------------------------------------ seasons
+/** Today's month-day in Israel, 'MM-DD'. */
+export function israelMonthDay(date = new Date()) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Jerusalem', month: '2-digit', day: '2-digit' }).formatToParts(date).map((x) => [x.type, x.value]));
+  return `${p.month}-${p.day}`;
+}
+
+/**
+ * The current season: when seasons have start dates (MM-DD), the one that started last (wrapping
+ * around the year); otherwise the season marked as default. null when there are no seasons.
+ */
+export async function currentSeason(env, today = israelMonthDay()) {
+  const seasons = await all(env, `SELECT id, name, starts_md, is_default FROM seasons ORDER BY sort, id`);
+  const dated = seasons.filter((s) => s.starts_md).sort((a, b) => a.starts_md.localeCompare(b.starts_md));
+  if (dated.length) return [...dated].reverse().find((s) => s.starts_md <= today) ?? dated.at(-1);
+  return seasons.find((s) => s.is_default) ?? seasons[0] ?? null;
 }
 
 /** Days mask as the public sees it (Shabbat removed while Shabbat is disabled). */

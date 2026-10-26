@@ -28,7 +28,37 @@ function israelNow() {
   const day = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(parts.weekday);
   return { day, time: `${parts.hour}:${parts.minute}` };
 }
-const toMinutes = (hhmm) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3));
+const toMinutes = (t) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3));
+const hhmm = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+
+/** Is the day `offset` days from today Rosh Chodesh (1st or 30th of a Hebrew month, not Rosh Hashana)? */
+function isRoshChodesh(offset = 0) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-u-ca-hebrew', { timeZone: 'Asia/Jerusalem', day: 'numeric', month: 'long' })
+    .formatToParts(new Date(Date.now() + offset * 86400000)).map((x) => [x.type, x.value]));
+  const d = Number(p.day);
+  return d === 30 || (d === 1 && !/^Tishri/.test(p.month));
+}
+
+/** The time a minyan starts on the shown day (Rosh Chodesh time when relevant). */
+const effectiveTime = (m, rc) => (rc && m.rosh_chodesh_time ? m.rosh_chodesh_time : m.time);
+
+function nextStart(m, nowMin, rc) {
+  if (m.time_kind === 'fixed') { const t = toMinutes(effectiveTime(m, rc)); return t >= nowMin ? t : null; }
+  if (m.time_kind === 'interval') {
+    for (let t = toMinutes(m.time); t <= toMinutes(m.end_time); t += m.every_minutes) if (t >= nowMin) return t;
+  }
+  return null;
+}
+
+/** Time cell: Rosh Chodesh time on Rosh Chodesh, otherwise the regular one with the RC time as a hint. */
+function TimeCell({ m, rc, cls = 'time' }) {
+  if (m.time_kind === 'fixed' && m.rosh_chodesh_time) {
+    return rc
+      ? html`<span class=${cls}>${m.rosh_chodesh_time}<small class="rc">ר״ח</small></span>`
+      : html`<span class=${cls}>${m.time}<small class="rc-hint">ר״ח ${m.rosh_chodesh_time}</small></span>`;
+  }
+  return html`<span class=${cx(cls, m.time_kind === 'relative' && 'rel', m.time_kind === 'interval' && 'interval')}>${m.time_label}</span>`;
+}
 
 function dateForDay(offset) {
   const d = new Date(Date.now() + offset * 86400000);
@@ -91,16 +121,19 @@ function App() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
 
+  // The public sees the current season; when the admin allows it, another season can be picked.
+  const [season, setSeason] = useState(null);
   const load = async () => {
     setError(null);
     try {
       const catalog = await get('/catalog');
       if (!catalog.site.enabled) return setData({ catalog, closed: true });
-      const [synagogues, minyanim] = await Promise.all([get('/synagogues'), get('/minyanim')]);
+      const qs = season && catalog.site.season_choice ? `?season_id=${season}` : '';
+      const [synagogues, minyanim] = await Promise.all([get('/synagogues'), get('/minyanim' + qs)]);
       setData({ catalog, synagogues, minyanim, byId: new Map(synagogues.map((s) => [s.id, s])) });
     } catch (e) { setError(e); }
   };
-  useEffect(load, []);
+  useEffect(() => { load(); }, [season]);
 
   const sMatch = path.match(/^\/s\/(\d+)/);
   let page;
@@ -108,7 +141,7 @@ function App() {
   else if (!data) page = html`<div class="state"><span class="spinner" /> טוען את הזמנים…</div>`;
   else if (data.closed) page = html`<div class="state"><b>האתר סגור זמנית</b><span>נסו שוב מאוחר יותר</span></div>`;
   else if (sMatch) page = html`<${SynagoguePage} data=${data} id=${Number(sMatch[1])} />`;
-  else page = html`<${Home} data=${data} />`;
+  else page = html`<${Home} data=${data} season=${season} setSeason=${setSeason} />`;
 
   const { phone } = sitePhone(data);
   const notice = data?.catalog?.site?.notice;
@@ -134,18 +167,19 @@ function App() {
 }
 
 // ------------------------------------------------------------------ home
-function Home({ data }) {
+function Home({ data, season: pickedSeason, setSeason }) {
   const { catalog, minyanim, byId } = data;
   const phone = sitePhone(data);
   const shabbat = catalog.site?.shabbat_enabled !== false;
   const now = israelNow();
-  const defaultSeason = catalog.seasons.find((s) => s.is_default)?.id ?? null;
+  const currentSeason = data.catalog.current_season;
+  const season = pickedSeason ?? currentSeason?.id ?? null;
+  const seasonName = catalog.seasons.find((x) => x.id === season)?.name;
 
   // Days from today; while Shabbat is off, Shabbat itself is skipped (start from Sunday).
   const [offset, setOffset] = useState(() => (!shabbat && now.day === 6 ? 1 : 0));
   const [area, setArea] = useState(() => store.get('area', null));
   const [prayer, setPrayer] = useState(null);
-  const [season, setSeason] = useState(defaultSeason);
   const [q, setQ] = useState('');
   const [view, setView] = useState(() => store.get('view', 'time'));
   useEffect(() => store.set('area', area), [area]);
@@ -159,19 +193,20 @@ function Home({ data }) {
     return s && (m.days & (1 << day)) &&
       (validArea === null || s.area_id === validArea) &&
       (prayer === null || m.prayer_id === prayer) &&
-      (season === null || m.season_id === null || m.season_id === season) &&
       (!q || norm(`${s.name} ${s.address} ${s.area_name || ''} ${m.location_name || ''}`).includes(norm(q)));
-  }), [minyanim, day, validArea, prayer, season, q]);
+  }), [minyanim, day, validArea, prayer, q]);
 
+  // Next start of each minyan from now (interval minyanim: the next slot)
+  const rc = isRoshChodesh(offset);
   const upcoming = offset === 0
-    ? shown.filter((m) => m.time_kind === 'fixed' && toMinutes(m.time) >= toMinutes(now.time))
-        .sort((a, b) => a.time.localeCompare(b.time)).slice(0, 6)
+    ? shown.map((m) => ({ m, next: nextStart(m, toMinutes(now.time), rc) })).filter((x) => x.next !== null)
+        .sort((a, b) => a.next - b.next).slice(0, 6)
     : [];
 
   return html`
     <section class="hero">
       <h1>זמני מניינים</h1>
-      <p>כל המניינים בבתי הכנסת, לפי אזור, תפילה ויום.</p>
+      <p>${seasonName ? html`<span class="season-tag">זמני ${seasonName}</span> ` : ''}כל המניינים בבתי הכנסת, לפי אזור, תפילה ויום.${rc && offset === 0 ? ' היום ראש חודש.' : ''}</p>
       ${phone.phone && html`<a class="hero-phone" href=${`tel:${phone.phone}`}>
         <span class="hero-phone-icon"><${Icon} name="phone" size=${20} /></span>
         <span><small>${phone.ready ? 'שמיעת הזמנים בטלפון' : 'בקרוב: שמיעת הזמנים בטלפון'}</small><b dir="ltr">${formatPhone(phone.phone)}</b></span>
@@ -197,9 +232,8 @@ function Home({ data }) {
           <button class=${cx(prayer === null && 'on')} onClick=${() => setPrayer(null)}>הכל</button>
           ${catalog.prayers.map((p) => html`<button class=${cx(prayer === p.id && 'on')} onClick=${() => setPrayer(p.id)}>${p.name}</button>`)}
         </div>
-        ${catalog.seasons.length > 1 && html`<select class="select" value=${season ?? ''} onChange=${(e) => setSeason(e.currentTarget.value ? Number(e.currentTarget.value) : null)} aria-label="עונה">
-          ${catalog.seasons.map((s) => html`<option value=${s.id}>זמני ${s.name}</option>`)}
-          <option value="">כל העונות</option>
+        ${catalog.site?.season_choice && catalog.seasons.length > 1 && html`<select class="select" value=${season ?? ''} onChange=${(e) => setSeason(Number(e.currentTarget.value))} aria-label="עונה">
+          ${catalog.seasons.map((s) => html`<option value=${s.id}>זמני ${s.name}${s.id === currentSeason?.id ? ' (עכשיו)' : ''}</option>`)}
         </select>`}
         <div class="seg view-toggle" role="group" aria-label="תצוגה">
           <button class=${cx(view === 'time' && 'on')} onClick=${() => setView('time')}><${Icon} name="clock" size=${16} /> לפי שעה</button>
@@ -210,43 +244,43 @@ function Home({ data }) {
 
     ${upcoming.length > 0 && !q && html`<section class="upcoming">
       <h2>המניינים הקרובים</h2>
-      <div class="upcoming-row">${upcoming.map((m) => {
-        const mins = toMinutes(m.time) - toMinutes(now.time);
+      <div class="upcoming-row">${upcoming.map(({ m, next }) => {
+        const mins = next - toMinutes(now.time);
         const s = byId.get(m.synagogue_id);
         return html`<a class="up-card" href=${`#/s/${s.id}`}>
           <span class="up-in">${mins === 0 ? 'עכשיו' : mins < 60 ? `בעוד ${mins} דק׳` : `בעוד ${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, '0')} שע׳`}</span>
-          <b class="up-time">${m.time}</b><span>${m.prayer_name}</span><small>${s.name}</small></a>`;
+          <b class="up-time">${hhmm(next)}</b><span>${m.prayer_name}</span><small>${s.name}</small></a>`;
       })}</div>
     </section>`}
 
     ${shown.length === 0
       ? html`<div class="state"><b>אין מניינים שמתאימים לבחירה</b><span>נסו יום, אזור או תפילה אחרים</span></div>`
-      : view === 'time' ? html`<${ByTime} list=${shown} byId=${byId} catalog=${catalog} />` : html`<${BySynagogue} list=${shown} byId=${byId} />`}
+      : view === 'time' ? html`<${ByTime} list=${shown} byId=${byId} catalog=${catalog} rc=${rc} />` : html`<${BySynagogue} list=${shown} byId=${byId} rc=${rc} />`}
   `;
 }
 
-function groupByPrayer(list, catalog) {
+function groupByPrayer(list, catalog, rc = false) {
   const order = new Map(catalog.prayers.map((p, i) => [p.id, i]));
   const groups = new Map();
   for (const m of list) {
     if (!groups.has(m.prayer_id)) groups.set(m.prayer_id, { name: m.prayer_name, fixed: [], relative: [] });
-    groups.get(m.prayer_id)[m.time_kind === 'fixed' ? 'fixed' : 'relative'].push(m);
+    groups.get(m.prayer_id)[m.time_kind === 'relative' ? 'relative' : 'fixed'].push(m);
   }
   return [...groups.entries()].sort((a, b) => (order.get(a[0]) ?? 99) - (order.get(b[0]) ?? 99)).map(([, g]) => {
-    g.fixed.sort((a, b) => a.time.localeCompare(b.time));
+    g.fixed.sort((a, b) => effectiveTime(a, rc).localeCompare(effectiveTime(b, rc)));
     g.relative.sort((a, b) => a.anchor_id - b.anchor_id || a.offset_minutes - b.offset_minutes);
     return g;
   });
 }
 
-function ByTime({ list, byId, catalog }) {
-  return html`<div class="groups">${groupByPrayer(list, catalog).map((g) => html`<section class="group">
+function ByTime({ list, byId, catalog, rc }) {
+  return html`<div class="groups">${groupByPrayer(list, catalog, rc).map((g) => html`<section class="group">
     <h2>${g.name} <small>${g.fixed.length + g.relative.length}</small></h2>
     <div class="rows">
       ${[...g.fixed, ...g.relative].map((m) => {
         const s = byId.get(m.synagogue_id);
         return html`<a class="row" href=${`#/s/${s.id}`}>
-          <span class=${cx('time', m.time_kind === 'relative' && 'rel')}>${m.time_label}</span>
+          <${TimeCell} m=${m} rc=${rc} />
           <span class="row-main"><b>${s.name}</b>
             <small>${[s.area_name, m.location_name].filter(Boolean).join(' · ')}${m.notes ? ` · ${m.notes}` : ''}</small></span>
         </a>`;
@@ -255,7 +289,7 @@ function ByTime({ list, byId, catalog }) {
   </section>`)}</div>`;
 }
 
-function BySynagogue({ list, byId }) {
+function BySynagogue({ list, byId, rc }) {
   const bySyn = new Map();
   for (const m of list) {
     if (!bySyn.has(m.synagogue_id)) bySyn.set(m.synagogue_id, []);
@@ -271,7 +305,7 @@ function BySynagogue({ list, byId }) {
     return html`<a class="card" href=${`#/s/${s.id}`}>
       <div class="card-head"><b>${s.name}</b><small>${[s.area_name, s.address].filter(Boolean).join(' · ')}</small></div>
       ${[...prayers.entries()].map(([name, ms]) => html`<div class="card-line"><span class="card-prayer">${name}</span>
-        <span class="times">${ms.map((m) => html`<span class=${cx('t', m.time_kind === 'relative' && 'rel')}>${m.time_label}</span>`)}</span></div>`)}
+        <span class="times">${ms.map((m) => html`<${TimeCell} m=${m} rc=${rc} cls="t" />`)}</span></div>`)}
     </a>`;
   })}</div>`;
 }
@@ -286,7 +320,8 @@ function SynagoguePage({ data, id }) {
   if (!s) return html`<div class="state"><b>בית הכנסת לא נמצא</b><a class="btn" href="#/">לכל בתי הכנסת</a></div>`;
   const all = data.minyanim.filter((m) => m.synagogue_id === id);
   const list = day === null ? all : all.filter((m) => m.days & (1 << day));
-  const groups = groupByPrayer(list, data.catalog);
+  const rc = day === null ? false : isRoshChodesh((day - today + 7) % 7);
+  const groups = groupByPrayer(list, data.catalog, rc);
   const mapUrl = s.address ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.address)}` : null;
 
   return html`
@@ -309,7 +344,7 @@ function SynagoguePage({ data, id }) {
       : html`<div class="groups">${groups.map((g) => html`<section class="group">
           <h2>${g.name}</h2>
           <div class="rows">${[...g.fixed, ...g.relative].map((m) => html`<div class="row static">
-            <span class=${cx('time', m.time_kind === 'relative' && 'rel')}>${m.time_label}</span>
+            <${TimeCell} m=${m} rc=${rc} />
             <span class="row-main"><span class="week">${(shabbat ? DAY_SHORT : DAY_SHORT.slice(0, 6)).map((d, i) => html`<i class=${cx(m.days & (1 << i) && 'on', i === today && 'today')}>${d.replace('׳', '')}</i>`)}</span>
               <small>${[m.location_name, m.season_name && `זמני ${m.season_name}`, m.notes].filter(Boolean).join(' · ')}</small></span>
           </div>`)}</div>

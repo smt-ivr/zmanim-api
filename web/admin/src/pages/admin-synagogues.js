@@ -59,8 +59,10 @@ export function AdminSynagogues({ onChanged }) {
             <td dir="ltr" class="start"><span class="num">${s.minyanim_count}</span><span class="muted"> / ${s.settings.max_minyanim}</span></td>
             <td class="small">
               ${s.settings.editable_fields.length > 0 && html`<${Badge} tone="info">עריכת ${s.settings.editable_fields.length} פרטים<//> `}
-              ${s.settings.restrict_prayers && html`<${Badge}>תפילות מוגבלות<//>`}
-              ${!s.settings.editable_fields.length && !s.settings.restrict_prayers && html`<span class="muted">ברירת מחדל</span>`}
+              ${s.settings.restrict_prayers && html`<${Badge}>תפילות מוגבלות<//> `}
+              ${s.settings.allow_interval && html`<${Badge}>שטיבלאך<//> `}
+              ${s.settings.allow_other_seasons && html`<${Badge}>כל העונות<//>`}
+              ${!s.settings.editable_fields.length && !s.settings.restrict_prayers && !s.settings.allow_interval && !s.settings.allow_other_seasons && html`<span class="muted">ברירת מחדל</span>`}
             </td>
             <td class="actions">
               <${Button} kind="ghost" small icon="external" title="כניסה לבית הכנסת" onClick=${() => (location.hash = `/s/${s.id}`)} />
@@ -82,7 +84,7 @@ function SynagogueModal({ synagogue, data, onClose, onSaved }) {
     name: synagogue?.name ?? '', area_id: synagogue?.area_id ?? data.areas[0]?.id ?? null, address: synagogue?.address ?? '', phone: synagogue?.phone ?? '',
     notes: synagogue?.notes ?? '', is_active: synagogue?.is_active ?? true,
     editable_fields: st?.editable_fields ?? [], max_locations: st?.max_locations ?? 5, max_minyanim: st?.max_minyanim ?? 50,
-    restrict_prayers: st?.restrict_prayers ?? false, allowed_prayer_ids: st?.allowed_prayer_ids ?? data.prayers.map((p) => p.id),
+    restrict_prayers: st?.restrict_prayers ?? false, allow_other_seasons: st?.allow_other_seasons ?? false, allow_interval: st?.allow_interval ?? false, allowed_prayer_ids: st?.allowed_prayer_ids ?? data.prayers.map((p) => p.id),
     manager_ids: synagogue?.managers.map((m) => m.id) ?? [],
   };
   const managers = data.users.filter((u) => u.role === 'manager');
@@ -120,6 +122,8 @@ function SynagogueModal({ synagogue, data, onClose, onSaved }) {
             <${Field} label="מקסימום מניינים" error=${errors.max_minyanim}><${Input} type="number" min="0" max="1000" dir="ltr" value=${v.max_minyanim} onInput=${set('max_minyanim')} /><//>
             <${Field} label="מקסימום מיקומים" error=${errors.max_locations}><${Input} type="number" min="0" max="100" dir="ltr" value=${v.max_locations} onInput=${set('max_locations')} /><//>
           </div>
+          <${Toggle} checked=${v.allow_other_seasons} onChange=${set('allow_other_seasons')} label="עדכון עונות אחרות" hint="כבוי: המנהל מעדכן רק את זמני העונה הנוכחית" />
+          <${Toggle} checked=${v.allow_interval} onChange=${set('allow_interval')} label="מניינים בסבב (שטיבלאך)" hint="מניין כל כמה דקות בטווח שעות" />
           <${Toggle} checked=${v.restrict_prayers} onChange=${set('restrict_prayers')} label="הגבלת סוגי תפילה" hint="רק התפילות שנבחרו יהיו זמינות למנהל" />
           ${v.restrict_prayers && html`<${Field} group label="תפילות מותרות" error=${errors.allowed_prayer_ids}>
             <${CheckList} options=${data.prayers.map((p) => ({ value: p.id, label: p.name }))} value=${v.allowed_prayer_ids} onChange=${set('allowed_prayer_ids')} /><//>`}

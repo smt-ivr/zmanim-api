@@ -19,6 +19,7 @@ export function daysLabel(mask) {
 
 export function timeLabel(m) {
   if (m.time_kind === 'fixed') return m.time;
+  if (m.time_kind === 'interval') return `\u2066${m.time}–${m.end_time}\u2069, כל ${m.every_minutes} דק׳`; // LRI/PDI: keep the range left-to-right in RTL text
   const n = Math.abs(m.offset_minutes);
   if (n === 0) return m.anchor_name;
   return `${n} דק׳ ${m.offset_minutes < 0 ? 'לפני' : 'אחרי'} ${m.anchor_name}`;
@@ -26,7 +27,7 @@ export function timeLabel(m) {
 
 export const MINYAN_SELECT = `
   SELECT m.*, p.name AS prayer_name, p.sort AS prayer_sort, l.name AS location_name,
-         se.name AS season_name, a.name AS anchor_name
+         se.name AS season_name, a.name AS anchor_name, p.has_rosh_chodesh
   FROM minyanim m
   JOIN prayers p ON p.id = m.prayer_id
   LEFT JOIN locations l ON l.id = m.location_id
@@ -54,6 +55,9 @@ export function serializeMinyan(r) {
     anchor_id: r.anchor_id,
     anchor_name: r.anchor_name ?? null,
     offset_minutes: r.offset_minutes,
+    end_time: r.end_time ?? null,
+    every_minutes: r.every_minutes ?? null,
+    rosh_chodesh_time: r.rosh_chodesh_time ?? null,
     time_label: timeLabel(r),
     notes: r.notes,
     is_active: r.is_active === 1,
@@ -81,7 +85,7 @@ export async function listMinyanim(env, synagogueId, { activeOnly = false } = {}
  */
 export async function validateMinyan(env, synagogue, m) {
   const errors = {};
-  const [prayer, location, season, anchor, allowed, settings, anchorPrayers] = await Promise.all([
+  const [prayer, location, season, anchor, allowed, settings, anchorPrayers, siblings] = await Promise.all([
     first(env, `SELECT * FROM prayers WHERE id = ?`, m.prayer_id),
     m.location_id ? first(env, `SELECT * FROM locations WHERE id = ?`, m.location_id) : null,
     m.season_id ? first(env, `SELECT id FROM seasons WHERE id = ?`, m.season_id) : null,
@@ -91,6 +95,8 @@ export async function validateMinyan(env, synagogue, m) {
       : { ok: 1 },
     getSettings(env),
     m.time_kind === 'relative' && m.anchor_id ? all(env, `SELECT prayer_id FROM anchor_prayers WHERE anchor_id = ?`, m.anchor_id) : [],
+    // Other active minyanim in the same place, to prevent two minyanim at the same time and location
+    all(env, `SELECT * FROM minyanim WHERE synagogue_id = ? AND location_id IS ? AND id != ? AND is_active = 1`, synagogue.id, m.location_id ?? null, m.id ?? 0),
   ]);
 
   if (!prayer) errors.prayer_id = 'סוג התפילה לא קיים';
@@ -98,13 +104,31 @@ export async function validateMinyan(env, synagogue, m) {
   if (m.location_id && (!location || location.synagogue_id !== synagogue.id)) errors.location_id = 'המיקום לא שייך לבית הכנסת';
   if (m.season_id && !season) errors.season_id = 'העונה לא קיימת';
   if (!m.days || m.days < 1 || m.days > ALL_DAYS) errors.days = 'יש לבחור לפחות יום אחד';
-  else if (!settings.shabbat_enabled && (m.days & ~SHABBAT_BIT) === 0) errors.days = 'זמני שבת מושבתים כרגע, יש לבחור יום חול'; 
+  else if (!settings.shabbat_enabled && (m.days & ~SHABBAT_BIT) === 0) errors.days = 'יש לבחור לפחות יום אחד';
 
   const row = { ...m };
+  const inBounds = (t, field) => {
+    if (prayer?.earliest && t < prayer.earliest) errors[field] = `${prayer.name} לא לפני ${prayer.earliest}`;
+    else if (prayer?.latest && t > prayer.latest) errors[field] = `${prayer.name} לא אחרי ${prayer.latest}`;
+  };
+  if (!settings.minyan_notes_enabled) row.notes = ''; // notes are switched off for now
+  if (m.time_kind !== 'fixed' || !prayer?.has_rosh_chodesh || !m.rosh_chodesh_time) row.rosh_chodesh_time = null;
+  else inBounds(m.rosh_chodesh_time, 'rosh_chodesh_time');
+  if (m.time_kind !== 'interval') (row.end_time = null), (row.every_minutes = null);
+
   if (m.time_kind === 'fixed') {
     if (!m.time) errors.time = 'יש להזין שעה';
-    else if (prayer?.earliest && m.time < prayer.earliest) errors.time = `${prayer.name} לא לפני ${prayer.earliest}`;
-    else if (prayer?.latest && m.time > prayer.latest) errors.time = `${prayer.name} לא אחרי ${prayer.latest}`;
+    else inBounds(m.time, 'time');
+    row.anchor_id = null;
+    row.offset_minutes = null;
+  } else if (m.time_kind === 'interval') {
+    if (!synagogue.allow_interval) errors.time_kind = 'מניינים בסבב (שטיבלאך) לא מאושרים לבית כנסת זה';
+    if (!m.time) errors.time = 'יש להזין שעת התחלה';
+    else inBounds(m.time, 'time');
+    if (!m.end_time) errors.end_time = 'יש להזין שעת סיום';
+    else if (m.time && m.end_time <= m.time) errors.end_time = 'שעת הסיום חייבת להיות אחרי ההתחלה';
+    else inBounds(m.end_time, 'end_time');
+    if (!m.every_minutes || m.every_minutes < 5 || m.every_minutes > 240) errors.every_minutes = 'כל כמה דקות: בין 5 ל-240';
     row.anchor_id = null;
     row.offset_minutes = null;
   } else {
@@ -117,6 +141,29 @@ export async function validateMinyan(env, synagogue, m) {
     row.time = null;
   }
 
+  if (!Object.keys(errors).length && row.is_active !== false && row.is_active !== 0) {
+    const clash = siblings.find((o) => (o.days & m.days) && (!o.season_id || !m.season_id || o.season_id === m.season_id) && sameTime(o, row));
+    if (clash) errors.time = 'כבר קיים מניין באותה שעה ובאותו מיקום';
+  }
   if (Object.keys(errors).length) throw invalid(errors);
   return row;
+}
+
+const toMin = (t) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3));
+/** Minutes a minyan starts at (fixed: one, interval: every slot). Relative: compared by anchor + offset. */
+function slots(m) {
+  if (m.time_kind === 'fixed') return [toMin(m.time)];
+  if (m.time_kind === 'interval') {
+    const out = [];
+    for (let t = toMin(m.time); t <= toMin(m.end_time); t += m.every_minutes) out.push(t);
+    return out;
+  }
+  return [];
+}
+function sameTime(a, b) {
+  if (a.time_kind === 'relative' || b.time_kind === 'relative') {
+    return a.time_kind === b.time_kind && a.anchor_id === b.anchor_id && a.offset_minutes === b.offset_minutes;
+  }
+  const bs = new Set(slots(b));
+  return slots(a).some((t) => bs.has(t));
 }

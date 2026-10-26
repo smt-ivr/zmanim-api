@@ -4,11 +4,11 @@ import { actorFor, checkLock, logLoginStatement, recordFailure, verifyPassword }
 import { all, first, nowIso, run, setClause } from '../db.js';
 import { HttpError } from '../http.js';
 import { getMinyan, listMinyanim, validateMinyan } from '../minyan.js';
-import { INFO_FIELDS, MINYAN_COLUMNS, insertMinyan, parseFields } from '../routes/workspace.js';
-import { getSettings } from '../settings.js';
+import { INFO_FIELDS, MINYAN_COLUMNS, insertMinyan, parseFields, requireSeasonAccess } from '../routes/workspace.js';
+import { currentSeason, getSettings, visibleDays } from '../settings.js';
 import { normalizePhone } from '../validate.js';
 import { callStore, chosenIndex, end, go, goodbye, invalid, listChoice, menu, number, readParams, reply, runCall } from './engine.js';
-import { speakMinyan, speakPhone, text } from './yemot.js';
+import { speakMinyan as speakFull, speakPhone, text } from './yemot.js';
 
 const PASSWORD_LIMIT = { max: 5, window: 30 * 60, lock: 30 * 60 };
 
@@ -94,6 +94,9 @@ async function anchorsFor(c, prayerId) {
     return !own.length || own.some((l) => l.prayer_id === prayerId);
   });
 }
+
+/** Spoken minyan; Shabbat is not mentioned while Shabbat is switched off. */
+const speakMinyanFor = (c) => (m) => speakFull({ ...m, days: visibleDays(m.days, c.settings) || m.days });
 
 /** Admins visible to this caller (a hidden super admin is visible only to himself). */
 const visibleAdmins = (c) =>
@@ -210,7 +213,7 @@ const SCREENS = {
         case '1': {
           const list = await listMinyanim(c.env, c.state.data.sid);
           if (!list.length) c.say.push(text('אין עדיין מניינים'));
-          list.forEach((m, i) => c.say.push(text(`מניין ${i + 1}, ${speakMinyan(m)}`)));
+          list.forEach((m, i) => c.say.push(text(`מניין ${i + 1}, ${speakMinyanFor(c)(m)}`)));
           return go(c, 'syn');
         }
         case '2': {
@@ -339,9 +342,14 @@ const SCREENS = {
   mSeason: {
     back: 'syn',
     async prompt(c) {
-      const seasons = await all(c.env, `SELECT id, name FROM seasons ORDER BY sort, id`);
+      const s = await synagogue(c);
+      let seasons = await all(c.env, `SELECT id, name FROM seasons ORDER BY sort, id`);
+      if (c.actor.role !== 'admin' && !s.allow_other_seasons) {
+        const current = await currentSeason(c.env);
+        seasons = seasons.filter((x) => x.id === current?.id);
+      }
       c.state.data.seasons = seasons.map((x) => x.id);
-      return listChoice(c, 'בחירת עונה', seasons, (x) => x.name, { zero: 'כל השנה' });
+      return listChoice(c, 'בחירת עונה', seasons, (x) => `זמני ${x.name}`, { zero: 'כל השנה' });
     },
     handle(c, input) {
       const i = chosenIndex(input, c.state.data.seasons, { zero: true });
@@ -360,7 +368,7 @@ const SCREENS = {
         d.location_id ? first(c.env, `SELECT name FROM locations WHERE id = ?`, d.location_id) : null,
         d.season_id ? first(c.env, `SELECT name FROM seasons WHERE id = ?`, d.season_id) : null,
       ]);
-      const summary = speakMinyan({ ...d, prayer_name: prayer?.name, anchor_name: anchor?.name, location_name: loc?.name, season_name: season?.name });
+      const summary = speakMinyanFor(c)({ ...d, prayer_name: prayer?.name, anchor_name: anchor?.name, location_name: loc?.name, season_name: season?.name });
       return menu(c, `המניין: ${summary}`, [['1', 'שמירה'], ['2', 'ביטול']]);
     },
     async handle(c, input) {
@@ -368,11 +376,12 @@ const SCREENS = {
       if (input !== '1') return invalid(c);
       const s = await synagogue(c);
       const d = c.state.data.draft;
+      await requireSeasonAccess(c.env, c.actor, s, d.season_id, c.state.data.origSeason);
       if (c.state.data.mode === 'add') {
         await insertMinyan(c.env, s, d);
         c.say.push(text('המניין נשמר'));
       } else {
-        const row = await validateMinyan(c.env, s, d);
+        const row = await validateMinyan(c.env, s, { ...d, id: c.state.data.editId });
         const set = setClause(row, MINYAN_COLUMNS);
         await run(c.env, `UPDATE minyanim SET ${set.sql}, updated_at = ? WHERE id = ? AND synagogue_id = ?`, ...set.params, nowIso(), c.state.data.editId, s.id);
         c.say.push(text('המניין עודכן'));
@@ -400,7 +409,7 @@ const SCREENS = {
     async prompt(c) {
       const m = await getMinyan(c.env, c.state.data.editId);
       if (!m || m.synagogue_id !== c.state.data.sid) { c.say.push(text('המניין לא נמצא')); return SCREENS.syn.prompt((c.state.screen = 'syn', c)); }
-      return menu(c, speakMinyan(m), [
+      return menu(c, speakMinyanFor(c)(m), [
         ['1', 'שינוי שעה'], ['2', 'שינוי ימים'], ['3', 'שינוי מיקום'], ['4', m.is_active ? 'הסתרה מהציבור' : 'הצגה לציבור'],
         ['5', 'שכפול'], ['6', 'מחיקה'],
       ]);
@@ -409,19 +418,22 @@ const SCREENS = {
       const s = await synagogue(c);
       const m = await first(c.env, `SELECT * FROM minyanim WHERE id = ? AND synagogue_id = ?`, c.state.data.editId, s.id);
       if (!m) return go(c, 'syn');
+      await requireSeasonAccess(c.env, c.actor, s, m.season_id); // other seasons are read-only for managers
       c.state.data.mode = 'edit';
+      c.state.data.origSeason = m.season_id;
       c.state.data.draft = { ...Object.fromEntries(MINYAN_COLUMNS.map((k) => [k, m[k]])), is_active: m.is_active === 1 };
       switch (input) {
         case '1': return go(c, 'mKind');
         case '2': return go(c, 'mDays');
         case '3': return go(c, 'mLoc');
         case '4':
+          if (!m.is_active) await validateMinyan(c.env, s, { ...c.state.data.draft, id: m.id, is_active: true }); // no clash when shown
           await run(c.env, `UPDATE minyanim SET is_active = ?, updated_at = ? WHERE id = ?`, m.is_active ? 0 : 1, nowIso(), m.id);
           c.say.push(text(m.is_active ? 'המניין הוסתר מהציבור' : 'המניין מוצג לציבור'));
           return go(c, 'mEdit');
         case '5':
-          await insertMinyan(c.env, s, { ...c.state.data.draft });
-          c.say.push(text('המניין שוכפל, הוא נוסף לסוף הרשימה'));
+          await insertMinyan(c.env, s, { ...c.state.data.draft, is_active: false });
+          c.say.push(text('המניין שוכפל ונשמר מוסתר. שנו את השעה שלו והציגו אותו לציבור'));
           return go(c, 'syn');
         case '6': return go(c, 'mDelete');
         default: return invalid(c);

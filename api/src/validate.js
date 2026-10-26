@@ -81,6 +81,13 @@ export function fields(body, { partial = false } = {}) {
     time(key, opts = {}) {
       return api._field(key, opts, (v) => (typeof v === 'string' && TIME_RE.test(v) ? v : { error: 'שעה בפורמט HH:MM' }));
     },
+    /** 'MM-DD' (a yearly date, e.g. the day a season starts). */
+    monthDay(key, opts = {}) {
+      return api._field(key, opts, (v) => {
+        const m = typeof v === 'string' && /^(\d{2})-(\d{2})$/.exec(v);
+        return m && +m[1] >= 1 && +m[1] <= 12 && +m[2] >= 1 && +m[2] <= 31 ? v : { error: 'תאריך לא תקין' };
+      });
+    },
     oneOf(key, values, opts = {}) {
       return api._field(key, opts, (v) => (values.includes(v) ? v : { error: 'ערך לא חוקי' }));
     },

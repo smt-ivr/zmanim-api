@@ -216,6 +216,9 @@ describe('minyanim', () => {
     const dup = await call('POST', `/synagogues/${s.id}/minyanim/${m.id}/duplicate`, { token: admin });
     assert.equal(dup.status, 201);
     assert.equal(dup.body.location_name, 'היכל');
+    assert.equal(dup.body.is_active, false); // hidden until moved to another time
+    const clash = await call('PATCH', `/synagogues/${s.id}/minyanim/${dup.body.id}`, { token: admin, body: { is_active: true } });
+    assert.match(clash.body.error.fields.time, /באותה שעה ובאותו מיקום/);
     assert.equal((await call('DELETE', `/synagogues/${s.id}/locations/${loc.id}`, { token: admin })).status, 204);
     const ws = await call('GET', `/synagogues/${s.id}`, { token: admin });
     assert.equal(ws.body.minyanim.length, 2);
@@ -404,5 +407,155 @@ describe('super admin, profile, messages, control', () => {
     assert.match(bad.body.error.fields.anchor_id, /אינו מותר/);
     const ws = await call('GET', `/synagogues/${s.id}`, { token: superToken });
     assert.deepEqual(ws.body.catalog.anchors.find((x) => x.id === 2).prayer_ids, [2]);
+  });
+});
+
+describe('seasons, intervals, Rosh Chodesh, notes', () => {
+  test('current season by start date; managers edit only it unless allowed; public sees only it', async () => {
+    const admin = await setupAdmin();
+    // summer from 04-01, winter from 10-01 (today decides which is current)
+    await call('PATCH', '/admin/catalog/seasons/1', { token: admin, body: { starts_md: '04-01' } });
+    await call('PATCH', '/admin/catalog/seasons/2', { token: admin, body: { starts_md: '10-01' } });
+    const md = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Jerusalem', month: '2-digit', day: '2-digit' }).format(new Date()).split('/').reverse().join('-');
+    const current = md >= '10-01' || md < '04-01' ? 2 : 1;
+    const other = current === 1 ? 2 : 1;
+
+    const s = await newSynagogue(admin);
+    const m = await createManager(admin, 'g@x.com', [s.id]);
+    const ws = await call('GET', `/synagogues/${s.id}`, { token: m.token });
+    assert.equal(ws.body.catalog.current_season.id, current);
+    assert.deepEqual(ws.body.settings.editable_season_ids, [current]);
+
+    const post = (token, season_id, time) => call('POST', `/synagogues/${s.id}/minyanim`, { token, body: { prayer_id: 1, time_kind: 'fixed', time, season_id } });
+    assert.equal((await post(m.token, current, '07:00')).status, 201);
+    assert.equal((await post(m.token, null, '07:30')).status, 201); // all year
+    const blocked = await post(m.token, other, '08:00');
+    assert.equal(blocked.status, 403);
+    assert.match(blocked.body.error.message, /ניתן לעדכן רק את זמני/);
+    assert.equal((await post(admin, other, '08:00')).status, 201); // admin may
+    await call('PATCH', `/admin/synagogues/${s.id}`, { token: admin, body: { allow_other_seasons: true } });
+    assert.equal((await post(m.token, other, '08:15')).status, 201);
+
+    const pub = await call('GET', '/public/minyanim');
+    assert.deepEqual(pub.body.map((x) => x.time).sort(), ['07:00', '07:30']);
+    assert.equal((await call('GET', '/public/catalog')).body.current_season.id, current);
+    assert.equal((await call('GET', `/public/minyanim?season_id=${other}`)).body.length, 2, 'choice is closed by default');
+    await setSetting('public_season_choice', '1');
+    assert.deepEqual((await call('GET', `/public/minyanim?season_id=${other}`)).body.map((x) => x.time).sort(), ['07:30', '08:00', '08:15']);
+  });
+
+  test('no two shown minyanim at the same time and place; intervals need approval', async () => {
+    const admin = await setupAdmin();
+    const s = await newSynagogue(admin);
+    const post = (body) => call('POST', `/synagogues/${s.id}/minyanim`, { token: admin, body: { prayer_id: 1, ...body } });
+    assert.equal((await post({ time_kind: 'fixed', time: '07:00' })).status, 201);
+    assert.match((await post({ time_kind: 'fixed', time: '07:00' })).body.error.fields.time, /באותה שעה ובאותו מיקום/);
+    const loc = (await call('POST', `/synagogues/${s.id}/locations`, { token: admin, body: { name: 'עזרה' } })).body;
+    assert.equal((await post({ time_kind: 'fixed', time: '07:00', location_id: loc.id })).status, 201, 'other location is fine');
+    assert.equal((await post({ time_kind: 'fixed', time: '07:00', is_active: false })).status, 201, 'hidden is fine');
+
+    const interval = { time_kind: 'interval', time: '07:15', end_time: '08:00', every_minutes: 15 };
+    assert.ok((await post(interval)).body.error.fields.time_kind, 'needs approval');
+    await call('PATCH', `/admin/synagogues/${s.id}`, { token: admin, body: { allow_interval: true } });
+    const ok = await post(interval);
+    assert.equal(ok.status, 201);
+    assert.equal(ok.body.time_label, '\u206607:15–08:00\u2069, כל 15 דק׳');
+    assert.match((await post({ time_kind: 'fixed', time: '07:45' })).body.error.fields.time, /באותה שעה/, 'falls on an interval slot');
+    assert.equal((await post({ time_kind: 'fixed', time: '07:50' })).status, 201);
+    assert.match((await post({ ...interval, end_time: '07:00' })).body.error.fields.end_time, /אחרי ההתחלה/);
+  });
+
+  test('Rosh Chodesh time only for prayers that have it; notes off by default', async () => {
+    const admin = await setupAdmin();
+    const s = await newSynagogue(admin);
+    const post = (body) => call('POST', `/synagogues/${s.id}/minyanim`, { token: admin, body: { time_kind: 'fixed', notes: 'ותיקין', ...body } });
+    const shacharit = await post({ prayer_id: 1, time: '07:00', rosh_chodesh_time: '06:45' });
+    assert.equal(shacharit.body.rosh_chodesh_time, '06:45');
+    assert.equal(shacharit.body.notes, '', 'notes are switched off');
+    assert.equal((await post({ prayer_id: 3, time: '21:00', rosh_chodesh_time: '20:45' })).body.rosh_chodesh_time, null);
+    await setSetting('minyan_notes_enabled', '1');
+    assert.equal((await post({ prayer_id: 1, time: '08:00' })).body.notes, 'ותיקין');
+  });
+});
+
+describe('e-mail (Resend mocked)', () => {
+  let sent;
+  const realFetch = globalThis.fetch;
+  beforeEach(async () => {
+    sent = [];
+    globalThis.fetch = async (u, init) => {
+      if (String(u).startsWith('https://api.resend.com/')) {
+        sent.push({ headers: init.headers, body: JSON.parse(init.body) });
+        return new Response(JSON.stringify({ id: 'x' }), { status: 200 });
+      }
+      return realFetch(u, init);
+    };
+  });
+  const enableMail = async () => {
+    await setSetting('mail_enabled', '1');
+    await setSetting('mail_from', 'זמני מניינים <noreply@example.com>');
+    await setSetting('resend_api_key', 're_secret_1234');
+  };
+  const linkToken = () => /[#/](?:link|reset)\?t=([0-9a-f]+)/.exec(sent.at(-1).body.text)[1];
+
+  test('control hides the key; test mail; options follow the switches', async () => {
+    const admin = await setupAdmin();
+    await env.DB.prepare(`UPDATE users SET is_super = 1`).run();
+    assert.deepEqual((await call('GET', '/auth/options')).body, { magic_link: false, password_reset: false });
+    await enableMail();
+    const ctl = await call('GET', '/admin/control', { token: admin });
+    assert.equal(ctl.body.resend_api_key, '••••1234');
+    assert.equal(ctl.body.mail_ready, true);
+    await call('PATCH', '/admin/control', { token: admin, body: { resend_api_key: '••••1234' } }); // unchanged
+    assert.equal((await call('POST', '/admin/control/test-mail', { token: admin })).status, 200);
+    assert.equal(sent[0].headers.Authorization, 'Bearer re_secret_1234');
+    assert.deepEqual(sent[0].body.to, ['admin@x.com']);
+    assert.deepEqual((await call('GET', '/auth/options')).body, { magic_link: true, password_reset: true });
+    await setSetting('magic_link_enabled', '0');
+    assert.equal((await call('POST', '/auth/email-link', { body: { login: 'admin@x.com' } })).status, 403);
+  });
+
+  test('login link: one use; unknown user gets the same answer; rate limited', async () => {
+    await setupAdmin();
+    await enableMail();
+    assert.equal((await call('POST', '/auth/email-link', { body: { login: 'nobody@x.com' } })).status, 204);
+    assert.equal(sent.length, 0);
+    assert.equal((await call('POST', '/auth/email-link', { body: { login: '058-320-6823' } })).status, 204);
+    const t = linkToken();
+    const r = await call('POST', '/auth/email-link/verify', { body: { token: t } });
+    assert.equal(r.status, 200);
+    assert.ok(r.body.token);
+    assert.equal((await call('POST', '/auth/email-link/verify', { body: { token: t } })).status, 400);
+    await call('POST', '/auth/email-link', { body: { login: 'admin@x.com' } });
+    await call('POST', '/auth/email-link', { body: { login: 'admin@x.com' } });
+    assert.equal((await call('POST', '/auth/email-link', { body: { login: 'admin@x.com' } })).status, 429);
+  });
+
+  test('password reset sets the password and signs in', async () => {
+    await setupAdmin();
+    await enableMail();
+    await call('POST', '/auth/reset-request', { body: { login: 'admin@x.com' } });
+    const r = await call('POST', '/auth/reset', { body: { token: linkToken(), new_password: '5678' } });
+    assert.equal(r.status, 200);
+    assert.equal((await call('POST', '/auth/login', { body: { login: 'admin@x.com', password: '5678' } })).status, 200);
+  });
+
+  test('welcome mail on user creation; reply to a message by e-mail', async () => {
+    const admin = await setupAdmin();
+    await env.DB.prepare(`UPDATE users SET is_super = 1`).run();
+    await enableMail();
+    const s = await newSynagogue(admin, { name: 'אהל משה' });
+    const u = await call('POST', '/admin/users', { token: admin, body: { name: 'גבאי', email: 'g@x.com', phone: nextPhone(), password: '1234', role: 'manager', synagogue_ids: [s.id], send_welcome: true } });
+    assert.equal(u.body.welcome_sent, true);
+    assert.match(sent.at(-1).body.text, /אהל משה/);
+    const login = await call('POST', '/auth/email-link/verify', { body: { token: linkToken() } });
+    assert.equal(login.body.user.email, 'g@x.com');
+
+    await call('POST', '/me/feedback', { token: login.body.token, body: { body: 'אפשר להוסיף ערבית?' } });
+    const [f] = (await call('GET', '/admin/feedback', { token: admin })).body;
+    const r = await call('PATCH', `/admin/feedback/${f.id}`, { token: admin, body: { reply: 'בטח, נוסיף', send_email: true } });
+    assert.equal(r.body.emailed, true);
+    assert.match(sent.at(-1).body.text, /בטח, נוסיף/);
+    assert.equal((await call('GET', '/me/feedback', { token: login.body.token })).body.items[0].reply, 'בטח, נוסיף');
   });
 });

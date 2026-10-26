@@ -5,7 +5,7 @@ import { AdminCatalog } from './pages/admin-catalog.js';
 import { AdminDashboard } from './pages/admin-dashboard.js';
 import { AdminSynagogues } from './pages/admin-synagogues.js';
 import { AdminUsers } from './pages/admin-users.js';
-import { Login } from './pages/login.js';
+import { LinkLogin, Login, ResetPassword } from './pages/login.js';
 import { Profile } from './pages/profile.js';
 import { ControlPage, Inbox, MyFeedback } from './pages/control.js';
 import { SynagoguePicker, Workspace } from './pages/workspace.js';
@@ -76,6 +76,10 @@ function App() {
   };
   const refreshMe = () => api.get('/me').then((me) => setSession((s) => ({ ...s, ...me })));
 
+  // One-time e-mail links work whether or not someone is signed in on this browser.
+  const linkToken = new URLSearchParams(location.hash.split('?')[1] || '').get('t');
+  if (path === '/link' && linkToken) return html`<${LinkLogin} token=${linkToken} onDone=${signedIn} />`;
+  if (path === '/reset' && linkToken) return html`<${ResetPassword} token=${linkToken} onDone=${signedIn} />`;
   if (session.status === 'loading') return html`<div class="boot"><${Spinner} /></div>`;
   if (session.status === 'anon') return html`<${Login} onDone=${signedIn} />`;
 
@@ -98,7 +102,7 @@ function App() {
   else if (user.is_super && path === '/admin/control') page = html`<${ControlPage} onChanged=${refreshMe} />`;
   else if (user.is_super && path === '/admin/inbox') page = html`<${Inbox} />`;
   else if (isAdmin && path === '/admin/synagogues') page = html`<${AdminSynagogues} onChanged=${refreshMe} />`;
-  else if (isAdmin && path === '/admin/users') page = html`<${AdminUsers} me=${user} />`;
+  else if (isAdmin && path === '/admin/users') page = html`<${AdminUsers} me=${user} system=${system} />`;
   else if (isAdmin && path === '/admin/catalog') page = html`<${AdminCatalog} />`;
   else if (isAdmin) page = html`<${AdminDashboard} />`;
   else if (synagogues.length === 1) {

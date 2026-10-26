@@ -353,3 +353,8 @@ select.input { padding-inline-end: 8px; }
 .login-row:last-child { border-bottom: 0; }
 .readonly-value { padding: 8px 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); }
 @media (min-width: 1001px) { .week.no-shabbat { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+.auth-links { display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; font-size: 14px; }
+.chip:disabled { opacity: .45; cursor: not-allowed; }
+.sub-option { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); }
+.reply { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.toggle.disabled { opacity: .55; cursor: not-allowed; }

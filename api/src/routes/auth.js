@@ -1,6 +1,7 @@
-import { hashPassword, login, logout, publicUser, revokeSessions, verifyPassword } from '../auth.js';
+import { checkLock, createSession, findUserByLogin, hashPassword, login, logout, publicUser, recordFailure, revokeSessions, verifyPassword } from '../auth.js';
+import { adminUrl, consumeEmailToken, createEmailToken, mailReady, sendMail } from '../mail.js';
 import { all, first, nowIso, run } from '../db.js';
-import { forbidden, invalid, json, noContent, readJson } from '../http.js';
+import { forbidden, invalid, json, noContent, readJson, tooMany } from '../http.js';
 import { getSettings } from '../settings.js';
 import { fields } from '../validate.js';
 
@@ -35,7 +36,7 @@ export async function getMe({ env, actor }) {
     user,
     synagogues,
     // What the UI needs to know about the system
-    system: { shabbat_enabled: settings.shabbat_enabled, feedback_enabled: settings.feedback_enabled },
+    system: { shabbat_enabled: settings.shabbat_enabled, feedback_enabled: settings.feedback_enabled, mail_ready: await mailReady(env) },
   });
 }
 
@@ -85,4 +86,67 @@ export async function putPassword({ env, actor, request }) {
   await run(env, `UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?`, await hashPassword(d.new_password), nowIso(), actor.id);
   await revokeSessions(env, actor.id, actor.session_id);
   return noContent();
+}
+
+// ------------------------------------------------------------------ e-mail links (login without password, reset)
+const MAIL_LIMIT = { max: 3, window: 3600, lock: 3600 };
+
+/** What the login screen may offer. */
+export async function getOptions({ env }) {
+  const s = await getSettings(env);
+  const ready = await mailReady(env);
+  return json({ magic_link: ready && s.magic_link_enabled, password_reset: ready && s.password_reset_enabled });
+}
+
+/**
+ * Sends a one-time link. Always answers the same way whether or not the user exists,
+ * so the form cannot be used to discover who is registered.
+ */
+async function sendLink(ctx, purpose) {
+  const { env, request, url } = ctx;
+  const s = await getSettings(env);
+  const enabled = purpose === 'login' ? s.magic_link_enabled : s.password_reset_enabled;
+  if (!enabled || !(await mailReady(env))) throw forbidden('האפשרות סגורה כרגע. פנו למנהל המערכת');
+  const d = fields(await readJson(request)).str('login', { required: true, max: 200 }).done();
+  const user = await findUserByLogin(env, d.login);
+  if (!user?.email) return noContent();
+  if (purpose === 'reset' && !user.can_edit_password) return noContent();
+  const key = `mail:${user.id}`;
+  try { await checkLock(env, key); } catch { throw tooMany('נשלחו יותר מדי קישורים. נסו שוב בעוד שעה', 3600); }
+  await recordFailure(env, key, MAIL_LIMIT);
+  const token = await createEmailToken(env, user.id, purpose);
+  const link = adminUrl(env, url, `/${purpose === 'login' ? 'link' : 'reset'}?t=${token}`);
+  await sendMail(env, purpose === 'login'
+    ? { to: user.email, subject: 'קישור כניסה לזמני מניינים', title: `שלום ${user.name}`,
+        paragraphs: ['ביקשת להיכנס בלי סיסמה. הקישור תקף ל-30 דקות ולשימוש אחד.', 'אם לא ביקשת, אפשר להתעלם מהמייל.'],
+        button: { label: 'כניסה למערכת', url: link } }
+    : { to: user.email, subject: 'איפוס סיסמה - זמני מניינים', title: `שלום ${user.name}`,
+        paragraphs: ['ביקשת לאפס את הסיסמה. הקישור תקף לשעה ולשימוש אחד.', 'אם לא ביקשת, אפשר להתעלם מהמייל. הסיסמה הנוכחית נשארת בתוקף.'],
+        button: { label: 'בחירת סיסמה חדשה', url: link } });
+  return noContent();
+}
+
+export const postEmailLink = (ctx) => sendLink(ctx, 'login');
+export const postResetRequest = (ctx) => sendLink(ctx, 'reset');
+
+export async function postEmailLinkVerify({ env, request }) {
+  const s = await getSettings(env);
+  if (!s.magic_link_enabled) throw forbidden('הכניסה בקישור סגורה כרגע');
+  const d = fields(await readJson(request)).str('token', { required: true, max: 200 }).done();
+  const user = await consumeEmailToken(env, d.token, 'login');
+  return json(await createSession(env, request, user, 'קישור במייל'));
+}
+
+export async function postReset({ env, request }) {
+  const s = await getSettings(env);
+  if (!s.password_reset_enabled) throw forbidden('איפוס הסיסמה סגור כרגע');
+  const d = fields(await readJson(request)).str('token', { required: true, max: 200 }).password('new_password', { required: true }).done();
+  const user = await consumeEmailToken(env, d.token, 'reset');
+  if (!user.can_edit_password) throw forbidden('שינוי הסיסמה חסום. פנו למנהל המערכת');
+  if (user.phone_requires_password && !/^\d{4,}$/.test(d.new_password)) {
+    throw invalid({ new_password: 'הסיסמה נדרשת גם בטלפון, ולכן חייבת להכיל ספרות בלבד' });
+  }
+  await run(env, `UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?`, await hashPassword(d.new_password), nowIso(), user.id);
+  await revokeSessions(env, user.id);
+  return json(await createSession(env, request, user, 'איפוס סיסמה'));
 }

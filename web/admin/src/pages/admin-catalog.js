@@ -2,12 +2,14 @@
 import { api } from '../api.js';
 import { cx, html, useState } from '../lib.js';
 import { PhonePanel } from './admin-phone.js';
-import { Badge, Button, CheckList, Empty, ErrorBox, Field, FormModal, Input, Spinner, Toggle, confirm, toast, toastError, useLoad } from '../ui.js';
+import { Badge, Button, CheckList, Empty, ErrorBox, Field, FormModal, Input, Select, Spinner, Toggle, confirm, toast, toastError, useLoad } from '../ui.js';
+
+const MONTHS = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'];
 
 const KINDS = {
   prayers: { title: 'סוגי תפילה', one: 'תפילה', hint: 'אפשר להגדיר טווח שעות מותר לכל תפילה. מניין בשעה קבועה מחוץ לטווח לא יישמר.' },
   anchors: { title: 'זמני ייחוס', one: 'זמן ייחוס', hint: 'נקודות זמן למניינים יחסיים, למשל "15 דק׳ לפני שקיעה". לכל זמן ייחוס אפשר להגביל לאילו תפילות הוא מותר.' },
-  seasons: { title: 'עונות', one: 'עונה', hint: 'מניין יכול להיות לכל השנה או לעונה מסוימת. עונת ברירת המחדל מוצגת ראשונה לציבור.' },
+  seasons: { title: 'עונות', one: 'עונה', hint: 'מניין יכול להיות לכל השנה או לעונה מסוימת. הציבור רואה רק את העונה הנוכחית. אפשר לקבוע לכל עונה תאריך התחלה, והמערכת תתחלף אוטומטית.' },
   areas: { title: 'אזורים', one: 'אזור', hint: 'לחלוקת בתי הכנסת לפי שכונה או עיר, ולסינון בממשק הציבורי.' },
 };
 
@@ -58,7 +60,9 @@ function CatalogList({ kind }) {
           </div>
           <div class="grow"><b>${r.name}</b>
             ${kind === 'prayers' && (r.earliest || r.latest) && html` <span class="muted small" dir="ltr">${r.earliest || '00:00'}–${r.latest || '23:59'}</span>`}
-            ${r.is_default && html` <${Badge} tone="info">ברירת מחדל<//>`}
+            ${r.is_default && html` <${Badge}>ברירת מחדל<//>`}
+            ${kind === 'seasons' && r.starts_md && html` <span class="muted small">מתחילה ב-${Number(r.starts_md.slice(3))} ב${MONTHS[Number(r.starts_md.slice(0, 2)) - 1]}</span>`}
+            ${kind === 'prayers' && r.has_rosh_chodesh && html` <${Badge}>ראש חודש<//>`}
             ${kind === 'anchors' && html` <span class="muted small">${r.prayer_ids?.length ? `ל${prayers.filter((p) => r.prayer_ids.includes(p.id)).map((p) => p.name).join(', ')} בלבד` : 'לכל התפילות'}</span>`}
           </div>
           <span class="muted small">${r.used ? `בשימוש: ${r.used}` : 'לא בשימוש'}</span>
@@ -72,11 +76,18 @@ function CatalogList({ kind }) {
 
 function CatalogModal({ kind, prayers, row, count, onClose, onSaved }) {
   const def = KINDS[kind];
-  const initial = { name: row?.name ?? '', earliest: row?.earliest ?? '', latest: row?.latest ?? '', is_default: row?.is_default ?? false, prayer_ids: row?.prayer_ids ?? [] };
+  const [sm, sd] = (row?.starts_md || '-').split('-');
+  const initial = {
+    name: row?.name ?? '', earliest: row?.earliest ?? '', latest: row?.latest ?? '', is_default: row?.is_default ?? false, prayer_ids: row?.prayer_ids ?? [],
+    has_rosh_chodesh: row?.has_rosh_chodesh ?? false, start_month: sm ? Number(sm) : null, start_day: sd ? Number(sd) : null,
+  };
   const save = (v) => {
     const body = { name: v.name };
-    if (kind === 'prayers') Object.assign(body, { earliest: v.earliest || null, latest: v.latest || null });
-    if (kind === 'seasons') body.is_default = v.is_default;
+    if (kind === 'prayers') Object.assign(body, { earliest: v.earliest || null, latest: v.latest || null, has_rosh_chodesh: v.has_rosh_chodesh });
+    if (kind === 'seasons') {
+      body.is_default = v.is_default;
+      body.starts_md = v.start_month && v.start_day ? `${String(v.start_month).padStart(2, '0')}-${String(v.start_day).padStart(2, '0')}` : null;
+    }
     if (kind === 'anchors') body.prayer_ids = v.prayer_ids;
     if (!row) body.sort = (count + 1) * 10;
     return row ? api.patch(`/admin/catalog/${kind}/${row.id}`, body) : api.post(`/admin/catalog/${kind}`, body);
@@ -89,7 +100,14 @@ function CatalogModal({ kind, prayers, row, count, onClose, onSaved }) {
         <${Field} label="לא לפני" error=${errors.earliest} hint="ריק = ללא הגבלה"><${Input} type="time" dir="ltr" value=${v.earliest} onInput=${set('earliest')} /><//>
         <${Field} label="לא אחרי" error=${errors.latest} hint="ריק = ללא הגבלה"><${Input} type="time" dir="ltr" value=${v.latest} onInput=${set('latest')} /><//>
       </div>`}
-      ${kind === 'seasons' && html`<${Toggle} checked=${v.is_default} onChange=${set('is_default')} label="עונת ברירת מחדל" />`}
+      ${kind === 'prayers' && html`<${Toggle} checked=${v.has_rosh_chodesh} onChange=${set('has_rosh_chodesh')} label="אפשר שעה אחרת בראש חודש" hint="למשל שחרית בראש חודש מוקדם יותר" />`}
+      ${kind === 'seasons' && html`
+        <${Field} group label="העונה מתחילה כל שנה בתאריך" error=${errors.starts_md} hint="המערכת מחליפה עונה אוטומטית בתאריך הזה. ריק = לפי עונת ברירת המחדל">
+          <div class="grid-2">
+            <${Select} value=${v.start_day} onChange=${set('start_day')} placeholder="יום" options=${Array.from({ length: 31 }, (_, i) => ({ value: i + 1, label: String(i + 1) }))} />
+            <${Select} value=${v.start_month} onChange=${set('start_month')} placeholder="חודש" options=${MONTHS.map((m, i) => ({ value: i + 1, label: m }))} />
+          </div><//>
+        <${Toggle} checked=${v.is_default} onChange=${set('is_default')} label="עונת ברירת מחדל" hint="משמשת כשאין לעונות תאריכי התחלה" />`}
       ${kind === 'anchors' && html`<${Field} group label="מותר לתפילות" hint="לא סומן כלום = מותר לכל התפילות" error=${errors.prayer_ids}>
         <${CheckList} options=${prayers.map((p) => ({ value: p.id, label: p.name }))} value=${v.prayer_ids} onChange=${set('prayer_ids')} /><//>`}`}
   <//>`;

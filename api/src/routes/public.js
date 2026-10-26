@@ -2,7 +2,7 @@
 import { all, first } from '../db.js';
 import { HttpError, json, notFound } from '../http.js';
 import { MINYAN_ORDER, MINYAN_SELECT, serializeMinyan } from '../minyan.js';
-import { getSettings, visibleDays } from '../settings.js';
+import { currentSeason, getSettings, visibleDays } from '../settings.js';
 import { id, queryInt } from '../validate.js';
 import { synagogueInfo } from './workspace.js';
 
@@ -20,12 +20,23 @@ async function openSettings(env) {
   return settings;
 }
 
-/** Minyanim as the public sees them: Shabbat removed while disabled; minyanim left without days dropped. */
-function publicMinyanim(rows, settings, extra = () => ({})) {
+/**
+ * Minyanim as the public sees them: Shabbat removed while disabled (minyanim left without days dropped),
+ * notes hidden while notes are off, and only the given season (plus all-year minyanim).
+ */
+function publicMinyanim(rows, settings, seasonId, extra = () => ({})) {
   return rows
-    .map((r) => ({ ...r, days: visibleDays(r.days, settings) }))
+    .filter((r) => !seasonId || !r.season_id || r.season_id === seasonId)
+    .map((r) => ({ ...r, days: visibleDays(r.days, settings), notes: settings.minyan_notes_enabled ? r.notes : '' }))
     .filter((r) => r.days !== 0)
     .map((r) => ({ ...serializeMinyan(r), ...extra(r) }));
+}
+
+/** The season to show: the current one, or the requested one when the public may choose. */
+async function shownSeason(env, settings, url) {
+  const requested = url ? queryInt(url, 'season_id', { min: 1 }) : null;
+  if (requested && settings.public_season_choice) return requested;
+  return (await currentSeason(env))?.id ?? null;
 }
 
 export async function catalog({ env }) {
@@ -36,14 +47,20 @@ export async function catalog({ env }) {
     phone: settings.listen_phone,
     phone_enabled: settings.listen_enabled,
     shabbat_enabled: settings.shabbat_enabled,
+    season_choice: settings.public_season_choice,
   };
+  const current = await currentSeason(env);
   const [areas, prayers, seasons, anchors] = await Promise.all([
     all(env, `SELECT id, name FROM areas ORDER BY sort, name`),
     all(env, `SELECT id, name FROM prayers ORDER BY sort, id`),
     all(env, `SELECT id, name, is_default FROM seasons ORDER BY sort, id`),
     all(env, `SELECT id, name FROM anchors ORDER BY sort, id`),
   ]);
-  return json({ site, areas, prayers, seasons: seasons.map((s) => ({ ...s, is_default: s.is_default === 1 })), anchors }, 200, CACHE);
+  return json({
+    site,
+    current_season: current ? { id: current.id, name: current.name } : null,
+    areas, prayers, seasons: seasons.map((s) => ({ ...s, is_default: s.is_default === 1 })), anchors,
+  }, 200, CACHE);
 }
 
 export async function synagogues({ env, url }) {
@@ -58,13 +75,13 @@ export async function synagogues({ env, url }) {
   return json(rows.map(synagogueInfo), 200, CACHE);
 }
 
-export async function synagogue({ env, params }) {
+export async function synagogue({ env, params, url }) {
   const settings = await openSettings(env);
   const sid = id(params.id);
   const s = await first(env, `SELECT s.*, a.name AS area_name FROM synagogues s LEFT JOIN areas a ON a.id = s.area_id WHERE s.id = ? AND s.is_active = 1`, sid);
   if (!s) throw notFound('בית הכנסת לא נמצא');
   const rows = await all(env, `${MINYAN_SELECT} WHERE m.synagogue_id = ? AND m.is_active = 1 ${MINYAN_ORDER}`, sid);
-  return json({ ...synagogueInfo(s), minyanim: publicMinyanim(rows, settings) }, 200, CACHE);
+  return json({ ...synagogueInfo(s), minyanim: publicMinyanim(rows, settings, await shownSeason(env, settings, url)) }, 200, CACHE);
 }
 
 /** GET /public/minyanim?area_id&synagogue_id&prayer_id&season_id&day=0..6 */
@@ -76,7 +93,6 @@ export async function minyanim({ env, url }) {
     area_id: 's.area_id = ?',
     synagogue_id: 'm.synagogue_id = ?',
     prayer_id: 'm.prayer_id = ?',
-    season_id: '(m.season_id = ? OR m.season_id IS NULL)',
   };
   for (const [name, sql] of Object.entries(filters)) {
     const v = queryInt(url, name, { min: 1 });
@@ -93,5 +109,5 @@ export async function minyanim({ env, url }) {
     )} WHERE ${where.join(' AND ')} ${MINYAN_ORDER} LIMIT 2000`,
     ...params
   );
-  return json(publicMinyanim(rows, settings, (r) => ({ synagogue_name: r.synagogue_name, synagogue_address: r.synagogue_address })), 200, CACHE);
+  return json(publicMinyanim(rows, settings, await shownSeason(env, settings, url), (r) => ({ synagogue_name: r.synagogue_name, synagogue_address: r.synagogue_address })), 200, CACHE);
 }

@@ -26,8 +26,10 @@ export function ControlPage({ onChanged }) {
     <header class="page-head"><div><h1>הגדרות שליטה</h1><p class="muted">מתגים כלליים לכל המערכת. השינוי חל מיד.</p></div></header>
 
     <section class="card">
-      <h3><${Icon} name="clock" /> זמנים</h3>
-      ${toggle('shabbat_enabled', 'זמני שבת פעילים', 'כבוי: מניינים של שבת לא מוצגים באתר ובטלפון, ולא ניתן להגדיר מניין לשבת בלבד')}
+      <h3><${Icon} name="clock" /> זמנים ועונות</h3>
+      ${toggle('shabbat_enabled', 'זמני שבת פעילים', 'כבוי: זמני שבת לא מופיעים בשום מקום, לא באתר, לא בניהול ולא בטלפון')}
+      ${toggle('public_season_choice', 'הציבור יכול לבחור עונה', 'כבוי: באתר ובטלפון מוצגת רק העונה הנוכחית. את תאריכי ההחלפה קובעים ב"הגדרות ורשימות ← עונות"')}
+      ${toggle('minyan_notes_enabled', 'הערות למניינים', 'כבוי: אין שדה הערה במניין, והערות קיימות לא מוצגות')}
     </section>
 
     <section class="card">
@@ -44,10 +46,53 @@ export function ControlPage({ onChanged }) {
     </section>
 
     <section class="card">
+      <h3><${Icon} name="mail" /> מיילים (Resend)</h3>
+      ${toggle('mail_enabled', 'שליחת מיילים פעילה', 'נדרש לכניסה בקישור, לאיפוס סיסמה, למייל פתיחת משתמש ולתשובות לפניות')}
+      <${MailEditor} data=${data} onSave=${(patch) => save(patch, 'הגדרות המייל נשמרו')} />
+    </section>
+
+    <section class="card">
+      <h3><${Icon} name="key" /> כניסה למערכת</h3>
+      ${!data.mail_ready && html`<p class="muted small">האפשרויות האלה פועלות רק כששליחת המיילים מוגדרת.</p>`}
+      ${toggle('magic_link_enabled', 'כניסה עם קישור למייל', 'למי שלא זוכר סיסמה: מקבל קישור כניסה חד-פעמי למייל')}
+      ${toggle('password_reset_enabled', 'איפוס סיסמה במייל', 'קישור לבחירת סיסמה חדשה. משתמש שנחסם לו שינוי סיסמה לא יכול לאפס')}
+    </section>
+
+    <section class="card">
       <h3><${Icon} name="mail" /> פניות לצוות הפיתוח</h3>
       ${toggle('feedback_enabled', 'קבלת פניות פתוחה', 'כבוי: אף משתמש לא יכול לשלוח פנייה. חסימה של משתמש מסוים נעשית בעמוד המשתמשים')}
     </section>
   </div>`;
+}
+
+function MailEditor({ data, onSave }) {
+  const [from, setFrom] = useState(data.mail_from || '');
+  const [key, setKey] = useState('');
+  const [busy, setBusy] = useState(false);
+  async function test() {
+    setBusy(true);
+    try { const r = await api.post('/admin/control/test-mail'); toast(`נשלח מייל בדיקה אל ${r.sent_to}`); }
+    catch (e) { toastError(e); }
+    setBusy(false);
+  }
+  const submit = (e) => {
+    e.preventDefault();
+    const patch = { mail_from: from.trim() };
+    if (key.trim()) patch.resend_api_key = key.trim();
+    onSave(patch);
+    setKey('');
+  };
+  return html`<form class="form setting-form" onSubmit=${submit}>
+    <${Field} label="כתובת השולח" hint="כתובת מדומיין שאומת ב-Resend. לדוגמה: זמני מניינים <noreply@smti.uk>">
+      <${Input} dir="ltr" value=${from} onInput=${setFrom} placeholder="Zmanim <noreply@example.com>" /><//>
+    <${Field} label="מפתח API של Resend" hint=${data.resend_api_key ? `שמור: ${data.resend_api_key}. השאירו ריק כדי לא לשנות` : 'מתחיל ב-re_. נשמר בשרת ולא מוצג שוב במלואו'}>
+      <${Input} dir="ltr" type="password" autocomplete="off" value=${key} onInput=${setKey} placeholder="re_…" /><//>
+    <div class="row gap-sm wrap">
+      <${Button} kind="primary" small type="submit">שמירה<//>
+      <${Button} small icon="mail" loading=${busy} disabled=${!data.mail_ready} onClick=${test}>שליחת מייל בדיקה אליי<//>
+      ${data.mail_ready ? html`<${Badge} tone="info">מוכן לשליחה<//>` : html`<span class="muted small">יש להפעיל, להזין שולח ומפתח</span>`}
+    </div>
+  </form>`;
 }
 
 function NoticeEditor({ value, onSave }) {
@@ -107,12 +152,45 @@ export function Inbox() {
             <span class="muted small">${formatDate(f.created_at)}</span>
           </header>
           <p class="message-body">${f.body}</p>
+          <${ReplyBox} item=${f} onSaved=${(r) => setData((d) => d.map((x) => (x.id === f.id ? { ...x, ...r } : x)))} />
           <div class="row gap-sm wrap">
             <${Button} small onClick=${() => setRead(f, !f.is_read)}>${f.is_read ? 'סימון כלא נקרא' : 'סימון כנקרא'}<//>
             ${f.can_message && html`<${Button} small kind="ghost" onClick=${() => block(f)}>חסימת המשתמש מפניות<//>`}
             <span class="grow" /><${Button} small kind="ghost" icon="trash" title="מחיקה" onClick=${() => remove(f)} />
           </div>
         </article>`)}
+  </div>`;
+}
+
+function ReplyBox({ item, onSaved }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState(item.reply || '');
+  const [email, setEmail] = useState(Boolean(item.user_email));
+  const [busy, setBusy] = useState(false);
+  async function send() {
+    setBusy(true);
+    try {
+      const r = await api.patch(`/admin/feedback/${item.id}`, { reply: text, send_email: email && Boolean(text.trim()) });
+      onSaved({ reply: r.reply, replied_at: r.replied_at, is_read: true });
+      toast(r.emailed ? 'התשובה נשמרה ונשלחה במייל' : 'התשובה נשמרה');
+      setOpen(false);
+    } catch (e) { toastError(e); }
+    setBusy(false);
+  }
+  if (!open) {
+    return item.reply
+      ? html`<div class="reply"><b>התשובה שלך</b> <span class="muted small">${formatDate(item.replied_at)}</span><p class="message-body">${item.reply}</p>
+          <button class="link small" onClick=${() => setOpen(true)}>עריכת התשובה</button></div>`
+      : html`<div><${Button} small kind="primary" icon="edit" onClick=${() => setOpen(true)}>מענה<//></div>`;
+  }
+  return html`<div class="reply form">
+    <${TextArea} value=${text} onInput=${setText} rows="4" maxlength="4000" placeholder="התשובה תופיע למשתמש בעמוד הפניות שלו" />
+    <div class="row gap-sm wrap">
+      <label class="check"><input type="checkbox" checked=${email} disabled=${!item.user_email} onChange=${(e) => setEmail(e.currentTarget.checked)} /> לשלוח גם במייל${item.user_email ? '' : ' (אין מייל)'}</label>
+      <span class="grow" />
+      <${Button} small kind="ghost" onClick=${() => setOpen(false)}>ביטול<//>
+      <${Button} small kind="primary" loading=${busy} onClick=${send}>שמירה${email ? ' ושליחה' : ''}<//>
+    </div>
   </div>`;
 }
 
@@ -142,6 +220,7 @@ export function MyFeedback() {
           <div class="row end"><${Button} kind="primary" type="submit" loading=${busy} disabled=${!text.trim()}>שליחה<//></div>
         </form>`}
     ${data.items.length > 0 && html`<h3 class="section-title">פניות ששלחת</h3>
-      ${data.items.map((f) => html`<div class="card message" key=${f.id}><span class="muted small">${formatDate(f.created_at)}</span><p class="message-body">${f.body}</p></div>`)}`}
+      ${data.items.map((f) => html`<div class="card message" key=${f.id}><span class="muted small">${formatDate(f.created_at)}</span><p class="message-body">${f.body}</p>
+        ${f.reply ? html`<div class="reply"><b>תשובת הצוות</b> <span class="muted small">${formatDate(f.replied_at)}</span><p class="message-body">${f.reply}</p></div>` : html`<span class="muted small">ממתין לתשובה</span>`}</div>`)}`}
   </div>`;
 }

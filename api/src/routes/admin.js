@@ -2,6 +2,7 @@
 import { hashPassword, publicUser, revokeSessions } from '../auth.js';
 import { all, batch, first, marks, nowIso, q, run, setClause } from '../db.js';
 import { conflict, forbidden, invalid, json, noContent, notFound, readJson } from '../http.js';
+import { adminUrl, createEmailToken, sendMail } from '../mail.js';
 import { fields, id } from '../validate.js';
 import { INFO_FIELDS, parseFields, synagogueInfo, synagogueSettings } from './workspace.js';
 
@@ -48,12 +49,14 @@ function parseSynagogue(body, partial) {
     .int('max_locations', { min: 0, max: 100, default: 5 })
     .int('max_minyanim', { min: 0, max: 1000, default: 50 })
     .bool('restrict_prayers', { default: false })
+    .bool('allow_other_seasons', { default: false })
+    .bool('allow_interval', { default: false })
     .ids('allowed_prayer_ids', { default: [] })
     .ids('manager_ids', { default: [] })
     .done();
 }
 
-const SYN_COLUMNS = ['name', 'area_id', 'address', 'phone', 'notes', 'is_active', 'editable_fields', 'max_locations', 'max_minyanim', 'restrict_prayers'];
+const SYN_COLUMNS = ['name', 'area_id', 'address', 'phone', 'notes', 'is_active', 'editable_fields', 'max_locations', 'max_minyanim', 'restrict_prayers', 'allow_other_seasons', 'allow_interval'];
 const SYN_TRANSFORM = { editable_fields: (v) => JSON.stringify(v) };
 
 async function validateLinks(env, d) {
@@ -92,6 +95,8 @@ export async function listSynagogues({ env }) {
         max_locations: s.max_locations,
         max_minyanim: s.max_minyanim,
         restrict_prayers: s.restrict_prayers === 1,
+        allow_other_seasons: s.allow_other_seasons === 1,
+        allow_interval: s.allow_interval === 1,
         allowed_prayer_ids: s.restrict_prayers ? prayerLinks.filter((l) => l.synagogue_id === s.id).map((l) => l.prayer_id) : null,
       },
       managers: JSON.parse(s.managers_json || '[]'),
@@ -178,6 +183,7 @@ function parseUser(body, partial) {
     .bool('can_edit_email', { default: true })
     .bool('can_edit_password', { default: true })
     .bool('can_message', { default: true })
+    .bool('send_welcome', { default: false }) // e-mail the new user a welcome message with a login link
     .done();
 }
 
@@ -188,7 +194,8 @@ async function checkUnique(env, d, exceptId = 0) {
   if (Object.keys(errors).length) throw invalid(errors);
 }
 
-export async function createUser({ env, request }) {
+export async function createUser(ctx) {
+  const { env, request } = ctx;
   const d = parseUser(await readJson(request), false);
   await checkUnique(env, d);
   await assertIdsExist(env, 'synagogues', d.synagogue_ids, 'synagogue_ids');
@@ -201,7 +208,11 @@ export async function createUser({ env, request }) {
   if (d.role === 'manager' && d.synagogue_ids.length) {
     await batch(env, replaceLinks(env, 'synagogue_managers', 'user_id', uid, 'synagogue_id', d.synagogue_ids));
   }
-  return json(await adminUser(env, uid), 201);
+  const user = await adminUser(env, uid);
+  if (d.send_welcome) {
+    try { await welcomeMail(ctx, uid); user.welcome_sent = true; } catch (e) { user.welcome_error = e.message; }
+  }
+  return json(user, 201);
 }
 
 export async function patchUser({ env, actor, params, request }) {
@@ -262,15 +273,17 @@ const CATALOG = {
         .int('sort', { default: 0 })
         .time('earliest', { nullable: true, default: null })
         .time('latest', { nullable: true, default: null })
+        .bool('has_rosh_chodesh', { default: false })
         .done(),
-    columns: ['name', 'sort', 'earliest', 'latest'],
+    columns: ['name', 'sort', 'earliest', 'latest', 'has_rosh_chodesh'],
   },
   seasons: {
     table: 'seasons',
     usedBy: `SELECT COUNT(*) AS n FROM minyanim WHERE season_id = ?`,
     parse: (b, partial) =>
-      fields(b, { partial }).str('name', { required: true, max: 60 }).int('sort', { default: 0 }).bool('is_default', { default: false }).done(),
-    columns: ['name', 'sort', 'is_default'],
+      fields(b, { partial }).str('name', { required: true, max: 60 }).int('sort', { default: 0 }).bool('is_default', { default: false })
+        .monthDay('starts_md', { nullable: true, default: null }).done(),
+    columns: ['name', 'sort', 'is_default', 'starts_md'],
   },
   anchors: {
     table: 'anchors',
@@ -288,7 +301,11 @@ function catalogDef(kind) {
   return def;
 }
 
-export const serializeCatalogRow = (row) => ('is_default' in row ? { ...row, is_default: row.is_default === 1 } : row);
+export const serializeCatalogRow = (row) => ({
+  ...row,
+  ...('is_default' in row ? { is_default: row.is_default === 1 } : {}),
+  ...('has_rosh_chodesh' in row ? { has_rosh_chodesh: row.has_rosh_chodesh === 1 } : {}),
+});
 
 export async function listCatalog({ env, params }) {
   const def = catalogDef(params.kind);
@@ -381,4 +398,34 @@ export async function getIvr({ env, actor }) {
 export async function rotateIvrKey({ env, actor }) {
   await rotate(env);
   return getIvr({ env, actor });
+}
+
+// ------------------------------------------------------------------ welcome e-mail
+async function welcomeMail({ env, url }, uid) {
+  const u = await first(env, `SELECT * FROM users WHERE id = ?`, uid);
+  if (!u?.email) throw invalid({ email: 'למשתמש אין מייל' });
+  const token = await createEmailToken(env, u.id, 'welcome');
+  const synagogues = await all(env, `SELECT s.name FROM synagogue_managers sm JOIN synagogues s ON s.id = sm.synagogue_id WHERE sm.user_id = ?`, uid);
+  await sendMail(env, {
+    to: u.email,
+    subject: 'נפתח לך משתמש בזמני מניינים',
+    title: `שלום ${u.name}`,
+    paragraphs: [
+      u.role === 'admin' ? 'נפתח לך משתמש מנהל מערכת.' : `נפתח לך משתמש לניהול ${synagogues.map((s) => s.name).join(', ') || 'בית הכנסת'}.`,
+      `שם המשתמש שלך: ${u.phone || u.email} (אפשר גם עם המייל).`,
+      'הכפתור מכניס אותך ישר למערכת (תקף לשבוע, לשימוש אחד). את הסיסמה מקבלים ממנהל המערכת, ואפשר להחליף אותה בפרופיל.',
+      u.phone ? 'אפשר לנהל גם בטלפון: מתקשרים מהמספר שלך לשלוחת הניהול.' : '',
+    ].filter(Boolean),
+    button: { label: 'כניסה למערכת', url: adminUrl(env, url, `/link?t=${token}`) },
+  });
+}
+
+/** Sends (again) the welcome e-mail with a fresh one-time login link. */
+export async function sendWelcome(ctx) {
+  const uid = id(ctx.params.id);
+  const target = await first(ctx.env, `SELECT * FROM users WHERE id = ?`, uid);
+  if (!target) throw notFound('המשתמש לא נמצא');
+  guardSuper(ctx.actor, target);
+  await welcomeMail(ctx, uid);
+  return json({ sent_to: target.email });
 }

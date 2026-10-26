@@ -4,6 +4,7 @@ import { requireSynagogue } from '../auth.js';
 import { all, batch, first, nowIso, q, run, setClause } from '../db.js';
 import { conflict, forbidden, json, noContent, notFound, readJson } from '../http.js';
 import { ALL_DAYS, getMinyan, listMinyanim, validateMinyan } from '../minyan.js';
+import { currentSeason, getSettings } from '../settings.js';
 import { fields, id } from '../validate.js';
 
 async function loadSynagogue(env, actor, rawId) {
@@ -37,6 +38,8 @@ export async function synagogueSettings(env, s) {
     max_minyanim: s.max_minyanim,
     restrict_prayers: s.restrict_prayers === 1,
     allowed_prayer_ids: allowed,
+    allow_other_seasons: s.allow_other_seasons === 1,
+    allow_interval: s.allow_interval === 1,
   };
 }
 
@@ -79,18 +82,23 @@ export async function list({ env, actor }) {
 /** GET /synagogues/:sid — loads the whole workspace in one call. */
 export async function get({ env, actor, params }) {
   const s = await loadSynagogue(env, actor, params.sid);
-  const [area, settings, locations, minyanim, prayers, seasons, anchors, areas, managers] = await Promise.all([
+  const [area, settings, locations, minyanim, prayers, seasons, anchors, areas, managers, current, system] = await Promise.all([
     s.area_id ? first(env, `SELECT name FROM areas WHERE id = ?`, s.area_id) : null,
     synagogueSettings(env, s),
     listLocations(env, s.id),
     listMinyanim(env, s.id),
-    all(env, `SELECT id, name, earliest, latest FROM prayers ORDER BY sort, id`),
-    all(env, `SELECT id, name, is_default FROM seasons ORDER BY sort, id`),
+    all(env, `SELECT id, name, earliest, latest, has_rosh_chodesh FROM prayers ORDER BY sort, id`),
+    all(env, `SELECT id, name, is_default, starts_md FROM seasons ORDER BY sort, id`),
     anchorsWithPrayers(env),
     all(env, `SELECT id, name FROM areas ORDER BY sort, name`),
     all(env, `SELECT u.id, u.name FROM synagogue_managers sm JOIN users u ON u.id = sm.user_id WHERE sm.synagogue_id = ? ORDER BY u.name`, s.id),
+    currentSeason(env),
+    getSettings(env),
   ]);
   const allowed = settings.allowed_prayer_ids;
+  // Which seasons this user may edit: the current one (and all-year), unless the synagogue allows more.
+  settings.editable_season_ids = actor.role === 'admin' || settings.allow_other_seasons ? null : current ? [current.id] : [];
+  settings.notes_enabled = system.minyan_notes_enabled;
   return json({
     synagogue: synagogueInfo({ ...s, area_name: area?.name }),
     settings,
@@ -99,8 +107,9 @@ export async function get({ env, actor, params }) {
     minyanim,
     managers,
     catalog: {
-      prayers: allowed ? prayers.filter((p) => allowed.includes(p.id)) : prayers,
+      prayers: (allowed ? prayers.filter((p) => allowed.includes(p.id)) : prayers).map((p) => ({ ...p, has_rosh_chodesh: p.has_rosh_chodesh === 1 })),
       seasons: seasons.map((x) => ({ ...x, is_default: x.is_default === 1 })),
+      current_season: current ? { id: current.id, name: current.name } : null,
       anchors,
       areas,
     },
@@ -180,8 +189,11 @@ function parseMinyan(body, partial) {
     .int('location_id', { nullable: true, min: 1 })
     .int('season_id', { nullable: true, min: 1 })
     .int('days', { min: 1, max: ALL_DAYS, default: ALL_DAYS })
-    .oneOf('time_kind', ['fixed', 'relative'], { required: true })
+    .oneOf('time_kind', ['fixed', 'relative', 'interval'], { required: true })
     .time('time', { nullable: true })
+    .time('end_time', { nullable: true })
+    .int('every_minutes', { nullable: true, min: 5, max: 240 })
+    .time('rosh_chodesh_time', { nullable: true })
     .int('anchor_id', { nullable: true, min: 1 })
     .int('offset_minutes', { nullable: true, min: -720, max: 720 })
     .str('notes', { max: 300 })
@@ -189,7 +201,19 @@ function parseMinyan(body, partial) {
     .done();
 }
 
-export const MINYAN_COLUMNS = ['prayer_id', 'location_id', 'season_id', 'days', 'time_kind', 'time', 'anchor_id', 'offset_minutes', 'notes', 'is_active'];
+export const MINYAN_COLUMNS = ['prayer_id', 'location_id', 'season_id', 'days', 'time_kind', 'time', 'end_time', 'every_minutes', 'anchor_id', 'offset_minutes', 'rosh_chodesh_time', 'notes', 'is_active'];
+
+/**
+ * Managers edit only the current season (and all-year minyanim), unless the synagogue allows other
+ * seasons. Admins edit everything. `seasonIds` are the seasons touched by the change.
+ */
+export async function requireSeasonAccess(env, actor, s, ...seasonIds) {
+  if (actor.role === 'admin' || s.allow_other_seasons) return;
+  const current = await currentSeason(env);
+  if (seasonIds.some((sid) => sid && sid !== current?.id)) {
+    throw forbidden(`ניתן לעדכן רק את ${current ? `זמני ${current.name}` : 'העונה הנוכחית'}. לעונות אחרות פנו למנהל המערכת`);
+  }
+}
 
 async function loadMinyanRow(env, s, rawId) {
   const row = await first(env, `SELECT * FROM minyanim WHERE id = ? AND synagogue_id = ?`, id(rawId), s.id);
@@ -212,6 +236,7 @@ export async function insertMinyan(env, s, m) {
 export async function createMinyan({ env, actor, params, request }) {
   const s = await loadSynagogue(env, actor, params.sid);
   const d = parseMinyan(await readJson(request), false);
+  await requireSeasonAccess(env, actor, s, d.season_id);
   return json(await insertMinyan(env, s, { notes: '', ...d }), 201);
 }
 
@@ -220,7 +245,8 @@ export async function patchMinyan({ env, actor, params, request }) {
   const s = await loadSynagogue(env, actor, params.sid);
   const current = await loadMinyanRow(env, s, params.id);
   const d = parseMinyan(await readJson(request), true);
-  const merged = { ...Object.fromEntries(MINYAN_COLUMNS.map((c) => [c, current[c]])), ...d };
+  await requireSeasonAccess(env, actor, s, current.season_id, d.season_id);
+  const merged = { ...Object.fromEntries(MINYAN_COLUMNS.map((c) => [c, current[c]])), ...d, id: current.id };
   merged.is_active = merged.is_active === true || merged.is_active === 1;
   const row = await validateMinyan(env, s, merged);
   const set = setClause(row, MINYAN_COLUMNS);
@@ -231,13 +257,16 @@ export async function patchMinyan({ env, actor, params, request }) {
 export async function duplicateMinyan({ env, actor, params }) {
   const s = await loadSynagogue(env, actor, params.sid);
   const current = await loadMinyanRow(env, s, params.id);
+  await requireSeasonAccess(env, actor, s, current.season_id);
   const copy = Object.fromEntries(MINYAN_COLUMNS.map((c) => [c, current[c]]));
-  return json(await insertMinyan(env, s, { ...copy, is_active: current.is_active === 1 }), 201);
+  // The copy starts hidden: it has the same time and place until it is edited.
+  return json(await insertMinyan(env, s, { ...copy, is_active: false }), 201);
 }
 
 export async function deleteMinyan({ env, actor, params }) {
   const s = await loadSynagogue(env, actor, params.sid);
   const current = await loadMinyanRow(env, s, params.id);
+  await requireSeasonAccess(env, actor, s, current.season_id);
   await run(env, `DELETE FROM minyanim WHERE id = ?`, current.id);
   return noContent();
 }

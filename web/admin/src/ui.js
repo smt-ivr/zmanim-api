@@ -102,9 +102,9 @@ export function Select({ value, onChange, options, placeholder, ...rest }) {
   </select>`;
 }
 
-export const Toggle = ({ checked, onChange, label, hint }) => html`
-  <label class="toggle">
-    <input type="checkbox" checked=${checked} onChange=${(e) => onChange(e.currentTarget.checked)} />
+export const Toggle = ({ checked, onChange, label, hint, disabled }) => html`
+  <label class=${cx('toggle', disabled && 'disabled')}>
+    <input type="checkbox" checked=${checked} disabled=${disabled} onChange=${(e) => onChange(e.currentTarget.checked)} />
     <span class="toggle-track"><span class="toggle-thumb" /></span>
     <span class="toggle-text"><span>${label}</span>${hint && html`<small>${hint}</small>`}</span>
   </label>`;
@@ -137,7 +137,6 @@ export function DaysPicker({ value, onChange, shabbat = true }) {
     <div class="day-presets">
       ${presets.map((p) => html`<button type="button" class=${cx('link', value === p.mask && 'active')} onClick=${() => onChange(p.mask)}>${p.label}</button>`)}
     </div>
-    ${!shabbat && html`<span class="field-hint">זמני שבת מושבתים כרגע במערכת</span>`}
   </div>`;
 }
 

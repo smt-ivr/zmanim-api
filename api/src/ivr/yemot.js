@@ -53,7 +53,8 @@ export function speakClock(hhmm) {
 }
 
 export function speakMinyanTime(m) {
-  if (m.time_kind === 'fixed') return `בשעה ${speakClock(m.time)}`;
+  if (m.time_kind === 'fixed') return `בשעה ${speakClock(m.time)}${m.rosh_chodesh_time ? `, ובראש חודש בשעה ${speakClock(m.rosh_chodesh_time)}` : ''}`;
+  if (m.time_kind === 'interval') return `מ ${speakClock(m.time)} עד ${speakClock(m.end_time)}, כל ${m.every_minutes} דקות`;
   const n = Math.abs(m.offset_minutes);
   if (n === 0) return `ב${m.anchor_name}`;
   return `${n} דקות ${m.offset_minutes < 0 ? 'לפני' : 'אחרי'} ${m.anchor_name}`;

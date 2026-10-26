@@ -86,8 +86,20 @@ export async function login(env, request, identifier, password) {
     throw unauthorized(user && ok ? 'המשתמש מושבת. פנו למנהל המערכת' : 'שם משתמש או סיסמה שגויים');
   }
   await run(env, `DELETE FROM login_attempts WHERE key = ?`, keys.email);
-  await cleanup(env); // housekeeping piggybacks on logins (no cron on the free plan)
+  return createSession(env, request, user, 'סיסמה');
+}
 
+/** Finds an active user by e-mail or phone (any format). */
+export async function findUserByLogin(env, identifier) {
+  const phone = normalizePhone(identifier);
+  return phone
+    ? first(env, `SELECT * FROM users WHERE phone = ? AND is_active = 1`, phone)
+    : first(env, `SELECT * FROM users WHERE email = ? AND is_active = 1`, String(identifier).trim().toLowerCase());
+}
+
+/** Starts a web session for an already verified user. `how` is recorded in the login history. */
+export async function createSession(env, request, user, how) {
+  await cleanup(env); // housekeeping piggybacks on logins (no cron on the free plan)
   const token = 'zm_' + b64(crypto.getRandomValues(new Uint8Array(32))).replace(/[+/=]/g, (c) => ({ '+': '-', '/': '_', '=': '' })[c]);
   const now = nowSec();
   await env.DB.batch([
@@ -98,7 +110,7 @@ export async function login(env, request, identifier, password) {
       `DELETE FROM sessions WHERE user_id = ?1 AND id NOT IN (SELECT id FROM sessions WHERE user_id = ?1 ORDER BY id DESC LIMIT ?2)`
     ).bind(user.id, MAX_SESSIONS),
     env.DB.prepare(`UPDATE users SET last_login_at = ? WHERE id = ?`).bind(nowIso(), user.id),
-    logLoginStatement(env, user.id, 'web', describeAgent(request.headers.get('User-Agent'))),
+    logLoginStatement(env, user.id, 'web', `${describeAgent(request.headers.get('User-Agent'))} · ${how}`),
   ]);
   return { token, expires_at: new Date((now + SESSION_TTL) * 1000).toISOString(), user: publicUser(user) };
 }
@@ -155,6 +167,7 @@ export const cleanup = (env) =>
     env.DB.prepare(`DELETE FROM sessions WHERE expires_at <= ?`).bind(nowSec()),
     env.DB.prepare(`DELETE FROM login_attempts WHERE locked_until < ?1 AND window_start < ?1 - 86400`).bind(nowSec()),
     env.DB.prepare(`DELETE FROM login_log WHERE created_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-180 days')`),
+    env.DB.prepare(`DELETE FROM email_tokens WHERE expires_at < ?`).bind(nowSec() - 86400),
   ]);
 
 export function publicUser(u) {

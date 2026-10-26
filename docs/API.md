@@ -59,6 +59,15 @@ Write fields: `prayer_id` (required), `time_kind` (`fixed`|`relative`, required)
 
 All routes also work under `BASE_PATH` (`/zmanim/api/...`).
 
+## Login by e-mail link / password reset
+
+| | |
+|---|---|
+| `GET /auth/options` | `{ magic_link, password_reset }`: what the login screen may offer |
+| `POST /auth/email-link` `{ login }` · `POST /auth/reset-request` `{ login }` | Sends a one-time link (204 whether or not the user exists; 3 per hour) |
+| `POST /auth/email-link/verify` `{ token }` | Login (one use, 30 minutes; welcome links: 7 days) |
+| `POST /auth/reset` `{ token, new_password }` | New password + login |
+
 ## Me
 
 | | |
@@ -73,6 +82,8 @@ All routes also work under `BASE_PATH` (`/zmanim/api/...`).
 
 | | |
 |---|---|
+| `POST /admin/control/test-mail` | Test e-mail to me |
+| `POST /admin/users/:id/welcome` | (admin) welcome e-mail with a login link; `send_welcome: true` on create does the same |
 | `GET / PATCH /admin/control` | `shabbat_enabled, public_site_enabled, site_notice, listen_phone, listen_enabled, manage_phone_enabled, feedback_enabled` |
 | `GET /admin/feedback` · `PATCH /admin/feedback/:id {is_read}` · `DELETE /admin/feedback/:id` | Developers' inbox |
 
