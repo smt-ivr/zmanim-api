@@ -980,6 +980,16 @@ describe('e-mail (Resend mocked)', () => {
     assert.equal(sent.at(-1).body.headers.References, '<first@gmail.com>');
     const ours = sent.at(-1).body.headers['Message-ID'];
     assert.equal(sent.at(-1).body.html.includes('<h1'), false, 'looks like a personal e-mail, not a system notice');
+    // opened: the tiny image in the e-mail marks the answer as opened, with the time
+    const pixel = /src="([^"]+\/api\/o\/([0-9a-f]+))"/.exec(sent.at(-1).body.html);
+    assert.ok(pixel, 'tracking image');
+    assert.match(sent.at(-1).body.html, /<a href="https:\/\/x\.test\/"[^>]*>[\s\S]*מערכת זמני התפילות<\/a>/, 'signature links to the site');
+    const img = await worker.fetch(new Request(`https://x.test/api/o/${pixel[2]}`), env);
+    assert.equal(img.status, 200);
+    assert.equal(img.headers.get('Content-Type'), 'image/gif');
+    let msgs = (await call('GET', `/admin/conversations/${list[0].id}`, { token: admin })).body.messages;
+    assert.ok(msgs.at(-1).opened_at);
+    assert.equal(msgs.at(-1).open_count, 1);
 
     // his reply (In-Reply-To our answer) lands in the same conversation, even with another subject
     await mail('david@out.com', 'Re: שאלה על מניין', 'תודה רבה!', { 'Message-ID': '<second@gmail.com>', 'In-Reply-To': ours, References: `<first@gmail.com> ${ours}` });
@@ -1021,5 +1031,18 @@ describe('e-mail (Resend mocked)', () => {
     const stats = (await call('GET', '/admin/stats', { token: admin })).body;
     assert.match(stats.activity[0].summary, /נוסף: שחרית 06:45/);
     assert.equal(stats.activity[0].synagogue_name, s1.name);
+  });
+
+  test('the contact address is shown on the public site (default: the inbound address)', async () => {
+    const admin = await setupAdmin();
+    await env.DB.prepare(`UPDATE users SET is_super = 1`).run();
+    assert.equal((await call('GET', '/public/catalog')).body.site.contact_email, '');
+    await setSetting('inbound_email', 'zmanim@smti.uk');
+    assert.equal((await call('GET', '/public/catalog')).body.site.contact_email, 'zmanim@smti.uk');
+    await call('PATCH', '/admin/control', { token: admin, body: { contact_email: 'office@smti.uk' } });
+    assert.equal((await call('GET', '/public/catalog')).body.site.contact_email, 'office@smti.uk');
+    assert.equal((await call('PATCH', '/admin/control', { token: admin, body: { contact_email: 'not mail' } })).status, 422);
+    await call('PATCH', '/admin/control', { token: admin, body: { contact_email_shown: false } });
+    assert.equal((await call('GET', '/public/catalog')).body.site.contact_email, '');
   });
 });

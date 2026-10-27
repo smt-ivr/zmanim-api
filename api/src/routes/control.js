@@ -3,7 +3,7 @@ import { all, first, nowIso, run } from '../db.js';
 import { forbidden, invalid, json, noContent, notFound, readJson } from '../http.js';
 import { sendMail, siteUrl } from '../mail.js';
 import { SETTINGS, getSettings, publicView, saveSettings } from '../settings.js';
-import { fields, id } from '../validate.js';
+import { fields, id, normalizeEmail } from '../validate.js';
 
 // ------------------------------------------------------------------ control settings
 export async function getControl({ env }) {
@@ -24,6 +24,7 @@ export async function patchControl({ env, request }) {
   for (const [k, lim] of [['zmanim_lat', 90], ['zmanim_lng', 180]]) {
     if (d[k] !== undefined && !(Math.abs(Number(d[k])) <= lim && d[k] !== '')) throw invalid({ [k]: 'מספר לא תקין' });
   }
+  if (d.contact_email && !normalizeEmail(d.contact_email)) throw invalid({ contact_email: 'כתובת מייל לא תקינה' });
   if (d.listen_phone && !/^[\d-]{7,15}$/.test(d.listen_phone)) throw invalid({ listen_phone: 'מספר טלפון לא תקין' });
   await saveSettings(env, d);
   return json(publicView(await getSettings(env)));

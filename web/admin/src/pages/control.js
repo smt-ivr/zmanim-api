@@ -76,6 +76,8 @@ export function ControlPage({ onChanged }) {
 
     <section class="card">
       <h3><${Icon} name="chat" /> הודעות</h3>
+      ${toggle('contact_email_shown', 'כתובת לפניות מוצגת באתר', 'באתר הציבורי (בראש העמוד ובתחתיתו) מוצגת כתובת מייל לפניות')}
+      <${ContactEditor} data=${data} onSave=${(v) => save({ contact_email: v }, 'הכתובת עודכנה')} />
       ${toggle('feedback_enabled', 'משתמשים יכולים לשלוח הודעות', 'כבוי: אף משתמש לא יכול לשלוח הודעה מהמערכת. חסימה של משתמש מסוים נעשית מתוך השיחה איתו')}
     </section>
   </div>`;
@@ -141,6 +143,15 @@ function PlaceEditor({ data, onSave }) {
       <${Field} label="קו רוחב"><${Input} dir="ltr" value=${lat} onInput=${setLat} /><//>
       <${Field} label="קו אורך"><${Input} dir="ltr" value=${lng} onInput=${setLng} /><//>
     </div>
+    <div><${Button} kind="primary" small type="submit">שמירה<//></div>
+  </form>`;
+}
+
+function ContactEditor({ data, onSave }) {
+  const [v, setV] = useState(data.contact_email || '');
+  return html`<form class="form setting-form" onSubmit=${(e) => (e.preventDefault(), onSave(v.trim()))}>
+    <${Field} label="כתובת לפניות שמוצגת באתר" hint=${`ריק = הכתובת לקבלת מיילים${data.inbound_email ? ` (${data.inbound_email})` : ''}`}>
+      <${Input} dir="ltr" type="email" value=${v} onInput=${setV} placeholder=${data.inbound_email || 'zmanim@smti.uk'} /><//>
     <div><${Button} kind="primary" small type="submit">שמירה<//></div>
   </form>`;
 }

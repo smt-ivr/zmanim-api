@@ -27,6 +27,7 @@ export const router = new Router()
   .get('/public/synagogues', pub.synagogues, PUBLIC)
   .get('/public/synagogues/:id', pub.synagogue, PUBLIC)
   .get('/public/minyanim', pub.minyanim, PUBLIC)
+  .get('/o/:token', messages.opened, PUBLIC) // e-mail opened (tracking image)
   // self-service synagogue registration
   .get('/public/registrations/form', reg.form, PUBLIC)
   .post('/public/registrations', reg.submit, PUBLIC)

@@ -573,3 +573,6 @@ kbd { font: 12px/1 var(--font); padding: 3px 6px; border-radius: 5px; border: 1p
   .grid-sidebar { gap: 0; }
 }
 .composer .btn .icon { transform: scaleX(-1); }
+
+.bubble .opened { font-weight: 700; }
+.bubble.mine .opened { color: #c8f5d8; }

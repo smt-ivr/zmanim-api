@@ -48,6 +48,7 @@ export async function catalog({ env }) {
     notice: settings.site_notice,
     phone: settings.listen_phone,
     phone_enabled: settings.listen_enabled,
+    contact_email: settings.contact_email_shown ? settings.contact_email || settings.inbound_email || '' : '',
     shabbat_enabled: settings.shabbat_enabled,
     season_choice: settings.public_season_choice,
     registration: settings.registration_enabled && Boolean(settings.mail_enabled && settings.resend_api_key && settings.mail_from),

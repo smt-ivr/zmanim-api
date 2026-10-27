@@ -67,13 +67,23 @@ export function renderMail({ brand = 'מערכת זמני התפילות', title
 </td></tr></table></body></html>`;
 }
 
-/** A personal-looking e-mail (a reply in a thread): the text, a short signature, an optional link. */
-function renderPlain({ paragraphs = [], signature = '', link }) {
-  const p = (t) => `<p style="margin:0 0 12px;line-height:1.7;white-space:pre-wrap">${esc(t)}</p>`;
+/**
+ * A personal-looking e-mail (a reply in a thread): the text, then well below it a quiet signature that
+ * links to the site, and an invisible image that tells us when it was opened.
+ */
+function renderPlain({ paragraphs = [], signature, pixel }) {
+  const p = (t) => `<p style="margin:0 0 14px;line-height:1.75;font-size:15px;white-space:pre-wrap">${esc(t)}</p>`;
+  const sig = signature
+    ? `<table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:36px"><tr>
+        <td style="border-top:1px solid ${C.border};padding-top:12px">
+          <a href="${esc(signature.url)}" style="text-decoration:none;color:${C.muted};font-size:13px">
+            <span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${C.primary};margin-left:6px;vertical-align:middle"></span>${esc(signature.name)}</a>
+        </td></tr></table>`
+    : '';
   return `<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8"></head>
-<body dir="rtl" style="margin:0;padding:12px;font-family:${FONT};font-size:15px;color:${C.text}">
-<div dir="rtl">${paragraphs.filter(Boolean).map(p).join('')}
-<p style="margin:18px 0 0;color:${C.muted};font-size:13px">${esc(signature)}${link ? ` · <a href="${esc(link.url)}" style="color:${C.primary2}">${esc(link.label)}</a>` : ''}</p></div>
+<body dir="rtl" style="margin:0;padding:16px;font-family:${FONT};color:${C.text}">
+<div dir="rtl" style="max-width:640px">${paragraphs.filter(Boolean).map(p).join('')}${sig}</div>
+${pixel ? `<img src="${esc(pixel)}" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0;opacity:0">` : ''}
 </body></html>`;
 }
 
@@ -89,7 +99,7 @@ export async function sendMail(env, mail) {
   if (!to) throw new HttpError(422, 'BAD_EMAIL', `כתובת המייל של הנמען אינה תקינה: ${clean(mail.to)}`);
   const title = mail.title || mail.subject;
   const html = mail.plain ? renderPlain(mail) : renderMail({ ...mail, brand: s.system_name, title, preheader: mail.preheader || mail.paragraphs?.[0] || '', footer: { phone: s.listen_enabled ? s.listen_phone : '', site: mail.site } });
-  const text = mail.plain ? [...(mail.paragraphs || []).filter(Boolean), `--\n${mail.signature || ''}`].join('\n\n') : [
+  const text = mail.plain ? [...(mail.paragraphs || []).filter(Boolean), '', `--\n${mail.signature?.name || ''}\n${mail.signature?.url || ''}`].join('\n\n') : [
     title, ...(mail.paragraphs || []).filter(Boolean),
     ...(mail.details || []).map(([k, v]) => `${k}: ${v}`),
     ...(mail.quotes || []).map((q) => `${q.label}\n${q.text}`),

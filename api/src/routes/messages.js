@@ -23,9 +23,9 @@ async function ensureConversation(env, user) {
 }
 
 /** Adds a message and updates the conversation's counters. */
-async function addMessage(env, conv, { sender, body, via = 'web', staffUserId = null, emailed = false }) {
-  const res = await run(env, `INSERT INTO messages (conversation_id, sender, staff_user_id, body, via, emailed) VALUES (?, ?, ?, ?, ?, ?)`,
-    conv.id, sender, staffUserId, body.slice(0, MAX_BODY), via, emailed ? 1 : 0);
+async function addMessage(env, conv, { sender, body, via = 'web', staffUserId = null, emailed = false, emailToken = null }) {
+  const res = await run(env, `INSERT INTO messages (conversation_id, sender, staff_user_id, body, via, emailed, email_token) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    conv.id, sender, staffUserId, body.slice(0, MAX_BODY), via, emailed ? 1 : 0, emailToken);
   await run(env,
     sender === 'user'
       ? `UPDATE conversations SET last_message_at = ?, staff_unread = staff_unread + 1, status = 'open' WHERE id = ?`
@@ -76,8 +76,9 @@ async function conversationByThread(env, parsed) {
   return null;
 }
 
-/** E-mails a staff answer to the person as the next mail in their thread. */
+/** E-mails a staff answer to the person as the next mail in their thread. Returns the open-tracking token. */
 async function emailAnswer(env, url, conv, body) {
+  const token = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, '0')).join('');
   const s = await getSettings(env);
   const fresh = await first(env, `SELECT * FROM conversations WHERE id = ?`, conv.id);
   const refs = refsOf(fresh);
@@ -90,13 +91,24 @@ async function emailAnswer(env, url, conv, body) {
     subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`,
     plain: true,
     paragraphs: body.split(/\n{2,}/),
-    signature: s.system_name,
-    site: siteUrl(env, url),
-    link: fresh.user_id ? { label: 'לכל השיחה במערכת', url: adminUrl(env, url, '/messages') } : undefined,
+    signature: { name: s.system_name, url: siteUrl(env, url) },
+    pixel: `${siteUrl(env, url)}api/o/${token}`,
     replyTo: s.inbound_email || undefined,
     headers: { 'Message-ID': messageId, ...(refs.length ? { 'In-Reply-To': refs.at(-1), References: refs.join(' ') } : {}) },
   });
   await saveRefs(env, conv.id, [...refs, messageId]);
+  return token;
+}
+
+const GIF = Uint8Array.from(atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'), (c) => c.charCodeAt(0));
+/** GET /o/:token — the e-mail was opened (its image loaded): first time and count. Always the same tiny image. */
+export async function opened({ env, params }) {
+  const token = String(params.token || '').replace(/\W/g, '').slice(0, 64);
+  if (token) {
+    await run(env, `UPDATE messages SET opened_at = COALESCE(opened_at, ?), open_count = open_count + 1 WHERE email_token = ?`, nowIso(), token)
+      .catch((e) => console.error('[messages] open', e));
+  }
+  return new Response(GIF, { headers: { 'Content-Type': 'image/gif', 'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0' } });
 }
 
 // ------------------------------------------------------------------ the user's side
@@ -149,7 +161,7 @@ async function loadConversation(env, rawId) {
 /** GET /admin/conversations/:id (marks it read) */
 export async function getConversation({ env, params }) {
   const c = await loadConversation(env, params.id);
-  const messages = await all(env, `SELECT m.id, m.sender, m.body, m.via, m.emailed, m.created_at, u.name AS staff_name
+  const messages = await all(env, `SELECT m.id, m.sender, m.body, m.via, m.emailed, m.opened_at, m.open_count, m.created_at, u.name AS staff_name
     FROM messages m LEFT JOIN users u ON u.id = m.staff_user_id WHERE m.conversation_id = ? ORDER BY m.id`, c.id);
   if (c.staff_unread) await run(env, `UPDATE conversations SET staff_unread = 0 WHERE id = ?`, c.id);
   const { notified_at, ...conversation } = c;
@@ -162,10 +174,11 @@ export async function answer({ env, actor, params, request, url }) {
   const d = fields(await readJson(request)).str('body', { required: true, max: MAX_BODY }).bool('send_email', { default: false }).done();
   const byMail = d.send_email || !c.user_id;
   if (byMail && !c.email) throw invalid({ send_email: 'אין כתובת מייל לשיחה הזו' });
-  if (byMail) await emailAnswer(env, url, c, d.body);
-  const msg = await addMessage(env, c, { sender: 'staff', body: d.body, staffUserId: actor.id, emailed: byMail });
+  const emailToken = byMail ? await emailAnswer(env, url, c, d.body) : null;
+  const msg = await addMessage(env, c, { sender: 'staff', body: d.body, staffUserId: actor.id, emailed: byMail, emailToken });
   if (!c.user_id) await run(env, `UPDATE conversations SET user_unread = 0 WHERE id = ?`, c.id); // nobody reads it on the site
-  return json({ ...msg, staff_name: actor.name, emailed: msg.emailed === 1 }, 201);
+  const { email_token, ...shown } = msg;
+  return json({ ...shown, staff_name: actor.name, emailed: msg.emailed === 1 }, 201);
 }
 
 /** POST /admin/conversations { user_id } or { email, name }: start (or open) a conversation. */
@@ -256,8 +269,8 @@ async function receive(message, env) {
   if (sender?.is_super && tagged) {
     const conv = await first(env, `SELECT * FROM conversations WHERE id = ?`, Number(tagged[1]));
     if (!conv || conv.user_id === sender.id) return ignored('שיחה לא נמצאה');
-    if (conv.email) await emailAnswer(env, url, conv, body).catch((e) => console.error('[messages] relay', e));
-    await addMessage(env, conv, { sender: 'staff', body, via: 'email', staffUserId: sender.id, emailed: Boolean(conv.email) });
+    const emailToken = conv.email ? await emailAnswer(env, url, conv, body).catch((e) => console.error('[messages] relay', e)) : null;
+    await addMessage(env, conv, { sender: 'staff', body, via: 'email', staffUserId: sender.id, emailed: Boolean(emailToken), emailToken: emailToken || null });
     return { status: 'accepted', detail: `תשובה שלך נשלחה לשיחה #${conv.id}`, subject: subjectRaw };
   }
 

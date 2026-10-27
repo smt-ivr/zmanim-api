@@ -88,6 +88,7 @@ async function get(path) {
 
 // ------------------------------------------------------------------ icons
 const PATHS = {
+  mail: 'M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM22 6l-10 7L2 6',
   phone: 'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z',
   pin: 'M12 21s7-6.1 7-12a7 7 0 1 0-14 0c0 5.9 7 12 7 12zM12 11a2 2 0 1 0 0-4 2 2 0 0 0 0 4z',
   search: 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-4-4',
@@ -178,6 +179,7 @@ function App() {
       <div class="wrap foot-row">
         <span>${name}</span>
         ${phone && html`<a href=${`tel:${phone}`}>שמיעה בטלפון: <span dir="ltr">${formatPhone(phone)}</span></a>`}
+        ${data?.catalog?.site?.contact_email && html`<a href=${`mailto:${data.catalog.site.contact_email}`}><${Icon} name="mail" size=${14} /> לפניות: <span dir="ltr">${data.catalog.site.contact_email}</span></a>`}
         ${data?.catalog?.site?.registration && html`<a href="admin/#/register">הוספת בית כנסת</a>`}
         <a href="admin/" class="foot-admin"><${Icon} name="lock" size=${14} /> כניסת מנהלים</a>
         <a class="credit" href="https://smti.uk" target="_blank" rel="noopener">פותח ע״י
@@ -230,6 +232,10 @@ function Home({ data, season: pickedSeason, setSeason }) {
       ${phone.phone && html`<a class="hero-phone" href=${`tel:${phone.phone}`}>
         <span class="hero-phone-icon"><${Icon} name="phone" size=${20} /></span>
         <span><small>${phone.ready ? 'שמיעת הזמנים בטלפון' : 'בקרוב: שמיעת הזמנים בטלפון'}</small><b dir="ltr">${formatPhone(phone.phone)}</b></span>
+      </a>`}
+      ${catalog.site?.contact_email && html`<a class="hero-phone hero-mail" href=${`mailto:${catalog.site.contact_email}`}>
+        <span class="hero-phone-icon"><${Icon} name="mail" size=${20} /></span>
+        <span><small>לפניות, תיקונים ובקשות</small><b dir="ltr">${catalog.site.contact_email}</b></span>
       </a>`}
     </section>
 

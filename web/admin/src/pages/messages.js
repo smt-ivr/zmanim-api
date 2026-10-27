@@ -29,7 +29,10 @@ function Thread({ messages, mine, empty }) {
       return html`${sep}<div class=${cx('bubble', mine(m) ? 'mine' : 'theirs')} key=${m.id}>
         ${m.staff_name && !mine(m) ? html`<small class="bubble-who">${m.staff_name}</small>` : ''}
         <div class="bubble-body">${m.body}</div>
-        <small class="bubble-meta">${clock(m.created_at)}${m.via === 'email' ? ' · במייל' : ''}${m.emailed ? ' · נשלח גם במייל' : ''}</small>
+        <small class="bubble-meta">${clock(m.created_at)}${m.via === 'email' ? ' · במייל' : ''}${m.emailed ? ' · נשלח במייל' : ''}
+          ${m.emailed && m.sender === 'staff' ? (m.opened_at
+            ? html` · <span class="opened" title=${m.open_count > 1 ? `נפתח ${m.open_count} פעמים` : ''}>✓✓ נפתח ${dayLabel(m.opened_at) === 'היום' ? 'היום' : dayLabel(m.opened_at)} ${clock(m.opened_at)}</span>`
+            : ' · עוד לא נפתח') : ''}</small>
       </div>`;
     })}
     <div ref=${end} />
@@ -135,6 +138,9 @@ function Conversation({ id, onBack, onChange }) {
   const { data, error, loading, reload, setData } = useLoad(() => api.get(`/admin/conversations/${id}`), [id]);
   const [byMail, setByMail] = useState(false);
   useEffect(() => { const t = setInterval(reload, POLL); return () => clearInterval(t); }, [reload]);
+  // When the person wrote by e-mail, answer by e-mail by default.
+  const lastFromThem = data?.messages.filter((m) => m.sender === 'user').at(-1);
+  useEffect(() => { if (lastFromThem) setByMail(lastFromThem.via === 'email'); }, [lastFromThem?.id]);
   useEffect(() => { if (data) onChange(); }, [data?.messages.length]);
   if (loading && !data) return html`<${Spinner} />`;
   if (error && !data) return html`<${ErrorBox} error=${error} onRetry=${reload} />`;
