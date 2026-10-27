@@ -2,7 +2,7 @@
 // The administration: an inbox of conversations with users and with people who wrote by e-mail (#/admin/inbox).
 import { api } from '../api.js';
 import { VIA, cx, html, navigate, norm, timeAgo, useEffect, useMemo, useRef, useState } from '../lib.js';
-import { Avatar, Badge, Button, Empty, ErrorBox, Field, FormModal, Icon, Input, Spinner, Toggle, confirm, toast, toastError, useLoad } from '../ui.js';
+import { Avatar, Badge, Button, Empty, ErrorBox, Field, FormModal, Icon, Input, Modal, Spinner, Toggle, confirm, toast, toastError, useLoad } from '../ui.js';
 
 const POLL = 20000; // new messages appear while the screen is open
 
@@ -84,6 +84,7 @@ export function Inbox({ onRead }) {
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState('all');
   const [starting, setStarting] = useState(false);
+  const [mailLog, setMailLog] = useState(false);
   useEffect(() => { const t = setInterval(list.reload, POLL); return () => clearInterval(t); }, [list.reload]);
 
   const shown = useMemo(() => (list.data || []).filter((c) =>
@@ -97,7 +98,8 @@ export function Inbox({ onRead }) {
   return html`<div class="page wide">
     <header class="page-head"><div><h1>הודעות</h1>
       <p class="muted">${unread ? `${unread} שיחות עם הודעות שלא נקראו` : 'אין הודעות שלא נקראו'}. כשאינך מחובר, הודעה חדשה נשלחת אליך במייל.</p></div>
-      <${Button} icon="plus" onClick=${() => setStarting(true)}>שיחה חדשה<//></header>
+      <div class="row gap-sm"><${Button} kind="ghost" icon="mail" onClick=${() => setMailLog(true)}>מיילים שהתקבלו<//>
+        <${Button} icon="plus" onClick=${() => setStarting(true)}>שיחה חדשה<//></div></header>
     <div class=${cx('inbox', openId && 'has-open')}>
       <aside class="inbox-list card">
         <div class="inbox-tools">
@@ -124,6 +126,7 @@ export function Inbox({ onRead }) {
           : html`<div class="chat-empty"><${Icon} name="chat" size=${32} /><b>בחרו שיחה</b><span>או התחילו שיחה חדשה עם משתמש או כתובת מייל</span></div>`}
       </section>
     </div>
+    ${mailLog && html`<${Modal} title="מיילים שהתקבלו בכתובת המערכת" onClose=${() => setMailLog(false)}><${MailLog} /><//>`}
     ${starting && html`<${StartModal} onClose=${() => setStarting(false)} onStarted=${(c) => { list.reload(); open(c.id); }} />`}
   </div>`;
 }
@@ -187,4 +190,22 @@ function StartModal({ onClose, onStarted }) {
             <${Field} label="שם (לא חובה)"><${Input} value=${v.name} onInput=${set('name')} /><//>
             <p class="muted small">ההודעות לכתובת הזו יישלחו במייל, והתשובות שלה יחזרו לשיחה (כשקבלת מיילים מוגדרת).</p>`}`}
   <//>`;
+}
+
+/** Every e-mail that reached the inbound address, and what happened to it. */
+function MailLog() {
+  const { data, error, loading, reload } = useLoad(() => api.get('/admin/email-log'));
+  if (loading && !data) return html`<${Spinner} />`;
+  if (error && !data) return html`<${ErrorBox} error=${error} onRetry=${reload} />`;
+  if (!data.length) {
+    return html`<${Empty} icon="mail" title="עדיין לא הגיע אף מייל">
+      אם שלחתם מייל לכתובת ולא מופיע כאן כלום, המייל לא הגיע לשרת. בדקו ב-Cloudflare ← Email Routing ← Activity log מה קרה איתו.<//>`;
+  }
+  const tone = { accepted: 'success', ignored: 'neutral', error: 'warn' };
+  const label = { accepted: 'התקבל', ignored: 'סונן', error: 'שגיאה' };
+  return html`<div class="feed">${data.map((l) => html`<div class="feed-row" key=${l.id}>
+    <div class="grow"><div class="row gap-sm wrap"><b dir="ltr">${l.sender}</b><${Badge} tone=${tone[l.status]}>${label[l.status]}<//></div>
+      <div class="small">${l.subject || html`<span class="muted">ללא נושא</span>`}</div>
+      <div class="muted small">${l.detail} · ${timeAgo(l.created_at)}</div></div>
+  </div>`)}</div>`;
 }

@@ -170,6 +170,7 @@ export const cleanup = (env) =>
     env.DB.prepare(`DELETE FROM email_tokens WHERE expires_at < ?`).bind(nowSec() - 86400),
     env.DB.prepare(`DELETE FROM registrations WHERE status = 'unverified' AND token_expires < ?`).bind(nowSec() - 86400),
     env.DB.prepare(`DELETE FROM minyan_log WHERE created_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-2 years')`),
+    env.DB.prepare(`DELETE FROM email_log WHERE created_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-60 days')`),
   ]);
 
 // ------------------------------------------------------------------ admin permissions

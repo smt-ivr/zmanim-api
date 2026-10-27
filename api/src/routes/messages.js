@@ -184,24 +184,43 @@ export function stripQuoted(text) {
  * goes into their conversation; a reply from the staff to a "[#id]" mail is sent on to the person.
  */
 export async function handleEmail(message, env) {
+  const log = (status, detail, subject = '') => run(env, `INSERT INTO email_log (sender, recipient, subject, status, detail) VALUES (?, ?, ?, ?, ?)`,
+    String(message.from || '').slice(0, 200), String(message.to || '').slice(0, 200), String(subject).slice(0, 200), status, String(detail).slice(0, 300))
+    .catch((e) => console.error('[email] log', e));
+  try {
+    const result = await receive(message, env);
+    await log(result.status, result.detail, result.subject);
+  } catch (err) {
+    console.error('[email]', err?.stack || err);
+    await log('error', err?.message || String(err));
+  }
+}
+
+/** GET /admin/email-log: the last e-mails that reached the inbound address. */
+export const emailLog = async ({ env }) => json(await all(env, `SELECT * FROM email_log ORDER BY id DESC LIMIT 100`));
+
+async function receive(message, env) {
   const s = await getSettings(env);
   const auto = (message.headers.get('auto-submitted') || 'no').toLowerCase() !== 'no' || /bulk|junk|auto_reply|list/i.test(message.headers.get('precedence') || '');
-  if (auto || message.rawSize > 2_000_000) return;
+  if (auto) return { status: 'ignored', detail: 'מענה אוטומטי' };
+  if (message.rawSize > 2_000_000) return { status: 'ignored', detail: 'גדול מדי' };
   const parsed = await PostalMime.parse(message.raw);
+  const subjectRaw = parsed.subject || '';
+  const ignored = (detail) => ({ status: 'ignored', detail, subject: subjectRaw });
   const from = normalizeEmail(parsed.from?.address || message.from);
-  if (!from || /^(mailer-daemon|postmaster|no-?reply)@/i.test(from) || from === normalizeEmail(s.inbound_email)) return;
+  if (!from || /^(mailer-daemon|postmaster|no-?reply)@/i.test(from) || from === normalizeEmail(s.inbound_email)) return ignored('שולח מערכת');
 
   // the same blocklist as registrations, and a flood limit per sender
   const blocked = s.registration_blocklist.split(/\r?\n/).map((l) => clean(l).toLowerCase()).filter(Boolean)
     .some((l) => l === from || (l.startsWith('@') && from.endsWith(l)));
-  if (blocked) return;
+  if (blocked) return ignored('שולח חסום');
   const key = `inmail:${from}`;
-  try { await checkLock(env, key); } catch { return; }
+  try { await checkLock(env, key); } catch { return ignored('יותר מדי מיילים מהשולח בשעה האחרונה'); }
   await recordFailure(env, key, { max: 20, window: 3600, lock: 3600 });
 
   const files = (parsed.attachments || []).map((a) => a.filename).filter(Boolean);
   const body = [stripQuoted(parsed.text || ''), files.length ? `[צורפו קבצים שלא נשמרו: ${files.join(', ')}]` : ''].filter(Boolean).join('\n\n').slice(0, MAX_BODY);
-  if (!body) return;
+  if (!body) return ignored('מייל ריק');
   const subject = clean(parsed.subject || '').replace(/\s*\[#\d+\]\s*/, ' ').replace(/^(re|fw|fwd|השב|העבר):\s*/i, '').trim().slice(0, 150);
   const tagged = /\[#(\d+)\]/.exec(parsed.subject || '');
   const url = new URL(`https://${(s.inbound_email.split('@')[1] || 'localhost')}${(env.BASE_PATH || '').replace(/\/$/, '')}/`);
@@ -210,10 +229,10 @@ export async function handleEmail(message, env) {
   // The staff answering from their mailbox: goes into the tagged conversation and on to the person.
   if (sender?.is_super && tagged) {
     const conv = await first(env, `SELECT * FROM conversations WHERE id = ?`, Number(tagged[1]));
-    if (!conv || conv.user_id === sender.id) return;
+    if (!conv || conv.user_id === sender.id) return ignored('שיחה לא נמצאה');
     if (conv.email) await emailAnswer(env, url, conv, body).catch((e) => console.error('[messages] relay', e));
     await addMessage(env, conv, { sender: 'staff', body, via: 'email', staffUserId: sender.id, emailed: Boolean(conv.email) });
-    return;
+    return { status: 'accepted', detail: `תשובה שלך נשלחה לשיחה #${conv.id}`, subject: subjectRaw };
   }
 
   let conv = tagged ? await first(env, `SELECT * FROM conversations WHERE id = ? AND email = ?`, Number(tagged[1]), from) : null;
@@ -227,4 +246,5 @@ export async function handleEmail(message, env) {
   }
   await addMessage(env, conv, { sender: 'user', body, via: 'email' });
   await notifyStaff(env, url, conv, body);
+  return { status: 'accepted', detail: `נוסף לשיחה #${conv.id}`, subject: subjectRaw };
 }

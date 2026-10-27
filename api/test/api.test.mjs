@@ -992,6 +992,10 @@ describe('e-mail (Resend mocked)', () => {
     await setSetting('registration_blocklist', '@spam.com');
     await mail('x@spam.com', 'buy', 'buy now');
     assert.equal((await call('GET', '/admin/conversations', { token: admin })).body.length, 1);
+    const elog = (await call('GET', '/admin/email-log', { token: admin })).body;
+    assert.deepEqual(elog.map((l) => l.status), ['ignored', 'ignored', 'accepted', 'accepted', 'accepted']);
+    assert.equal(elog[0].detail, 'שולח חסום');
+    assert.equal(elog[1].detail, 'מענה אוטומטי');
   });
 
   test('managers of a synagogue: add an existing manager, remove; dashboard shows activity', async () => {
