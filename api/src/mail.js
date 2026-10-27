@@ -60,7 +60,8 @@ export function renderMail({ brand = 'מערכת זמני התפילות', title
       ${detailRows}${quoteBlocks}${cta}${noteBox}
     </td></tr>
     <tr><td style="padding:18px 8px;text-align:center;font-size:12px;color:${C.muted};line-height:1.8">
-      ${foot ? `${foot}<br>` : ''}מייל זה נשלח אוטומטית מ${esc(brand)}
+      ${foot ? `${foot}<br>` : ''}מייל זה נשלח אוטומטית מ${esc(brand)}<br>
+      <span style="font-size:11px;opacity:.75">פותח ע״י <b style="letter-spacing:1px">SMT</b></span>
     </td></tr>
   </table>
 </td></tr></table></body></html>`;

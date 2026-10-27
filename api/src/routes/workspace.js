@@ -68,16 +68,27 @@ const listLocations = (env, sid) =>
   );
 
 /** GET /synagogues — the synagogues I can open. */
-export async function list({ env, actor }) {
-  const scope = actor.role === 'admin' ? '' : `WHERE s.id IN (SELECT synagogue_id FROM synagogue_managers WHERE user_id = ?)`;
-  const rows = await all(
-    env,
-    `SELECT s.*, a.name AS area_name,
-            (SELECT COUNT(*) FROM minyanim m WHERE m.synagogue_id = s.id) AS minyanim_count
-     FROM synagogues s LEFT JOIN areas a ON a.id = s.area_id ${scope} ORDER BY s.name`,
-    ...(scope ? [actor.id] : [])
-  );
-  return json(rows.map((s) => ({ ...synagogueInfo(s), minyanim_count: s.minyanim_count })));
+/**
+ * GET /synagogues?q=&area_id=&limit=&offset= — the synagogues this user can open, searchable (for the
+ * switcher; there can be thousands). Answers { items, total }.
+ */
+export async function list({ env, actor, url }) {
+  const where = [];
+  const params = [];
+  if (actor.role !== 'admin') (where.push('s.id IN (SELECT synagogue_id FROM synagogue_managers WHERE user_id = ?)'), params.push(actor.id));
+  const q = (url.searchParams.get('q') || '').trim();
+  if (q) (where.push('(s.name LIKE ? OR s.address LIKE ?)'), params.push(`%${q}%`, `%${q}%`));
+  const area = Number(url.searchParams.get('area_id')) || null;
+  if (area) (where.push('s.area_id = ?'), params.push(area));
+  const limit = Math.min(Number(url.searchParams.get('limit')) || 50, 200);
+  const offset = Math.max(Number(url.searchParams.get('offset')) || 0, 0);
+  const sqlWhere = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const [rows, total] = await Promise.all([
+    all(env, `SELECT s.*, a.name AS area_name, (SELECT COUNT(*) FROM minyanim m WHERE m.synagogue_id = s.id) AS minyanim_count
+      FROM synagogues s LEFT JOIN areas a ON a.id = s.area_id ${sqlWhere} ORDER BY s.name LIMIT ? OFFSET ?`, ...params, limit, offset),
+    first(env, `SELECT COUNT(*) AS n FROM synagogues s ${sqlWhere}`, ...params),
+  ]);
+  return json({ items: rows.map((s) => ({ ...synagogueInfo(s), minyanim_count: s.minyanim_count })), total: total.n });
 }
 
 /** GET /synagogues/:sid — loads the whole workspace in one call. */
@@ -92,7 +103,7 @@ export async function get({ env, actor, params }) {
     all(env, `SELECT id, name, is_default, starts_md FROM seasons ORDER BY sort, id`),
     anchorsWithPrayers(env),
     all(env, `SELECT id, name FROM areas ORDER BY sort, name`),
-    all(env, `SELECT u.id, u.name FROM synagogue_managers sm JOIN users u ON u.id = sm.user_id WHERE sm.synagogue_id = ? ORDER BY u.name`, s.id),
+    all(env, `SELECT u.id, u.name, u.email, u.phone, u.is_active, u.last_login_at FROM synagogue_managers sm JOIN users u ON u.id = sm.user_id WHERE sm.synagogue_id = ? ORDER BY u.name`, s.id),
     currentSeason(env),
     getSettings(env),
   ]);

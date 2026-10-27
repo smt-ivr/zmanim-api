@@ -35,7 +35,28 @@ export async function stats({ env }) {
     `SELECT s.id, s.name, MAX(m.updated_at) AS updated_at FROM minyanim m JOIN synagogues s ON s.id = m.synagogue_id
      GROUP BY s.id ORDER BY updated_at DESC LIMIT 8`
   );
-  return json({ ...row, recent });
+  const activity = await all(env, `SELECT l.*, u.name AS user_name, s.name AS synagogue_name FROM minyan_log l
+    LEFT JOIN users u ON u.id = l.user_id JOIN synagogues s ON s.id = l.synagogue_id ORDER BY l.id DESC LIMIT 30`);
+  return json({ ...row, recent, activity });
+}
+
+/** POST /admin/synagogues/:id/managers { user_id } — makes an existing manager responsible for the synagogue too. */
+export async function addManager({ env, params, request }) {
+  const sid = id(params.id);
+  if (!(await first(env, `SELECT id FROM synagogues WHERE id = ?`, sid))) throw notFound('בית הכנסת לא נמצא');
+  const d = fields(await readJson(request)).int('user_id', { required: true, min: 1 }).done();
+  const u = await first(env, `SELECT * FROM users WHERE id = ?`, d.user_id);
+  if (!u || u.is_super) throw notFound('המשתמש לא נמצא');
+  if (u.role !== 'manager') throw invalid({ user_id: 'מנהל מערכת כבר מנהל את כל בתי הכנסת' });
+  await run(env, `INSERT OR IGNORE INTO synagogue_managers (synagogue_id, user_id) VALUES (?, ?)`, sid, u.id);
+  return noContent();
+}
+
+/** DELETE /admin/synagogues/:id/managers/:uid — the user stays, only this synagogue is removed from them. */
+export async function removeManager({ env, params }) {
+  const res = await run(env, `DELETE FROM synagogue_managers WHERE synagogue_id = ? AND user_id = ?`, id(params.id), id(params.uid));
+  if (!res.meta.changes) throw notFound('המשתמש אינו מנהל של בית הכנסת');
+  return noContent();
 }
 
 // ------------------------------------------------------------------ synagogues

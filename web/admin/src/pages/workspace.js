@@ -1,21 +1,24 @@
 // The synagogue workspace: what a manager sees after login. Admins open any synagogue the same way.
 import { api } from '../api.js';
-import { ALL_DAYS, DAY_FULL, cx, html, norm, pluralize, useMemo, useState } from '../lib.js';
+import { ALL_DAYS, DAY_FULL, VIA, cx, html, navigate, norm, pluralize, rememberSynagogue, timeAgo, useEffect, useMemo, useState } from '../lib.js';
 import {
-  Badge, Button, DaysBadge, DaysPicker, Empty, ErrorBox, Field, FormModal, Icon, Input, Meter, Select, Spinner,
+  Avatar, Badge, Button, DaysBadge, DaysPicker, Empty, ErrorBox, Field, FormModal, Icon, Input, Meter, Modal, Select, Spinner,
   TextArea, Toggle, confirm, toast, toastError, useLoad,
 } from '../ui.js';
 
 export function SynagoguePicker({ synagogues }) {
+  const [q, setQ] = useState('');
   if (!synagogues.length) {
     return html`<div class="page"><${Empty} icon="building" title="עדיין לא שויכת לבית כנסת">
       ההנהלה צריכה לשייך אותך לבית הכנסת שלך. לאחר השיוך הוא יופיע כאן.<//></div>`;
   }
+  const shown = synagogues.filter((s) => !q || norm(`${s.name} ${s.area_name || ''}`).includes(norm(q)));
   return html`<div class="page">
-    <header class="page-head"><h1>בתי הכנסת שלי</h1></header>
+    <header class="page-head"><div><h1>בתי הכנסת שלי</h1><p class="muted">${pluralize(synagogues.length, 'בית כנסת', 'בתי כנסת')}</p></div>
+      ${synagogues.length > 6 && html`<div class="search"><${Icon} name="search" /><input class="input" placeholder="חיפוש…" value=${q} onInput=${(e) => setQ(e.currentTarget.value)} /></div>`}</header>
     <div class="cards">
-      ${synagogues.map((s) => html`<a class="card card-link" href=${`#/s/${s.id}`}>
-        <${Icon} name="building" size=${22} /><div><b>${s.name}</b><div class="muted small">${s.area_name || ''}</div></div></a>`)}
+      ${shown.map((s) => html`<a class="card card-link" href=${`#/s/${s.id}`}>
+        <span class="stat-icon"><${Icon} name="building" size=${20} /></span><div class="grow"><b>${s.name}</b><div class="muted small">${s.area_name || ''}</div></div><${Icon} name="chevron" /></a>`)}
     </div>
   </div>`;
 }
@@ -24,6 +27,7 @@ export function Workspace({ id, user, system, onChanged }) {
   const shabbat = system?.shabbat_enabled !== false;
   const { data, error, loading, reload, setData } = useLoad(() => api.get(`/synagogues/${id}`), [id]);
   const [tab, setTab] = useState('minyanim');
+  useEffect(() => { if (data) rememberSynagogue(data.synagogue); }, [data?.synagogue.id]);
 
   if (loading && !data) return html`<div class="page"><${Spinner} /></div>`;
   if (error && !data) return html`<div class="page"><${ErrorBox} error=${error} onRetry=${reload} /></div>`;
@@ -39,20 +43,23 @@ export function Workspace({ id, user, system, onChanged }) {
   const tabs = [
     ['minyanim', 'מניינים', usage.minyanim],
     ['locations', 'מיקומים', usage.locations],
-    ['info', 'פרטי בית הכנסת'],
+    ...(isAdmin ? [['managers', 'מנהלים', managers.length]] : []),
+    ['info', 'פרטים'],
+    ['history', 'היסטוריה'],
   ];
+  const canSettings = isAdmin && user.perms.includes('synagogues');
 
   return html`<div class="page">
+    ${isAdmin && html`<nav class="crumbs"><a href="#/admin/synagogues">בתי כנסת</a><span>›</span><span>${s.area_name || 'ללא אזור'}</span></nav>`}
     <header class="page-head ws-head">
       <div>
         <div class="row gap-sm wrap">
           <h1>${s.name}</h1>
-          ${data.catalog.current_season && html`<${Badge} tone="info">עכשיו: זמני ${data.catalog.current_season.name}<//>`}
           ${!s.is_active && html`<${Badge} tone="warn">מוסתר מהציבור<//>`}
         </div>
-        <p class="muted">${[s.area_name, s.address].filter(Boolean).join(' · ') || 'ללא כתובת'}
-          ${isAdmin && html` · מנהלים: ${managers.length ? managers.map((m) => m.name).join(', ') : 'אין'}`}</p>
+        <p class="muted">${[s.area_name, s.address].filter(Boolean).join(' · ') || 'ללא כתובת'}</p>
       </div>
+      ${canSettings && html`<${Button} icon="settings" onClick=${() => navigate(`/admin/synagogues?edit=${s.id}`)}>הגדרות בית הכנסת<//>`}
       <div class="ws-meters">
         ${settings.max_minyanim > 0 && html`<${Meter} label="מניינים" used=${usage.minyanim} max=${settings.max_minyanim} />`}
         ${settings.max_locations > 0 && html`<${Meter} label="מיקומים" used=${usage.locations} max=${settings.max_locations} />`}
@@ -62,12 +69,13 @@ export function Workspace({ id, user, system, onChanged }) {
     <div class="tabs" role="tablist">
       ${tabs.map(([key, label, count]) => html`<button role="tab" aria-selected=${tab === key}
         class=${cx('tab', tab === key && 'active')} onClick=${() => setTab(key)}>${label}${count !== undefined && html`<span class="count">${count}</span>`}</button>`)}
-      ${isAdmin && html`<span class="grow" /><a class="link small" href="#/admin/synagogues">הגדרות מנהל לבית הכנסת ←</a>`}
     </div>
 
     ${tab === 'minyanim' && html`<${MinyanimTab} data=${data} update=${update} shabbat=${shabbat} />`}
     ${tab === 'locations' && html`<${LocationsTab} data=${data} update=${update} />`}
     ${tab === 'info' && html`<${InfoTab} data=${data} isAdmin=${isAdmin && !settings.read_only} onSaved=${(d) => { setData(d); onChanged(); }} />`}
+    ${tab === 'managers' && html`<${ManagersTab} data=${data} user=${user} reload=${reload} />`}
+    ${tab === 'history' && html`<${HistoryTab} synagogueId=${s.id} />`}
   </div>`;
 }
 
@@ -124,17 +132,20 @@ function MinyanimTab({ data, update, shabbat }) {
     return html`<${Empty} icon="clock" title="לא הוגדרו עונות">לפני הוספת מניינים יש להגדיר עונות (למשל קיץ וחורף). פנו להנהלה.<//>`;
   }
 
+  const current = catalog.current_season;
+  const otherSeason = current && season !== current.id;
+  // Other seasons are a side option: a small selector, with a note while one is shown.
+  const seasonSelect = catalog.seasons.length > 1 && html`<label class="season-select" title="עונה">
+    <${Icon} name="clock" size=${16} />
+    <select value=${season} onChange=${(e) => setSeason(Number(e.currentTarget.value))} aria-label="עונה">
+      ${catalog.seasons.map((x) => html`<option value=${x.id}>זמני ${x.name}${x.id === current?.id ? ' (העונה הנוכחית)' : ''}</option>`)}
+    </select></label>`;
+
   return html`<section>
-    ${catalog.seasons.length > 1 && html`<div class="season-bar">
-      <div class="segmented" role="group" aria-label="עונה">
-        ${catalog.seasons.map((x) => html`<button class=${cx(season === x.id && 'on')} onClick=${() => setSeason(x.id)}>
-          זמני ${x.name}${x.id === catalog.current_season?.id ? ' (נוכחית)' : ''}</button>`)}
-      </div>
-      <span class="muted small">כדי לקבוע מניינים לעונה, בחרו אותה כאן והוסיפו בה</span>
-    </div>`}
-    ${settings.read_only
-      ? html`<div class="alert alert-info">צפייה בלבד: אין לך הרשאה לעדכן זמנים בבתי כנסת. לשינוי פנו להנהלה.</div>`
-      : !seasonEditable && html`<div class="alert alert-info">אפשר לעדכן רק את זמני העונה הנוכחית. לעדכון זמני ${seasonName} פנו להנהלה.</div>`}
+    ${settings.read_only && html`<div class="alert alert-info">צפייה בלבד: אין לך הרשאה לעדכן זמנים בבתי כנסת. לשינוי פנו להנהלה.</div>`}
+    ${otherSeason && html`<div class="alert alert-season">
+      <span>מוצגים <b>זמני ${seasonName}</b>, לא העונה הנוכחית.${!seasonEditable && !settings.read_only ? ' לעדכון עונה זו פנו להנהלה.' : ''}</span>
+      <button class="link" onClick=${() => setSeason(current.id)}>חזרה לזמני ${current.name}</button></div>`}
     <div class="toolbar">
       <div class="search"><${Icon} name="search" /><input class="input" placeholder="חיפוש מניין…" value=${q} onInput=${(e) => setQ(e.currentTarget.value)} /></div>
       ${locations.length > 0 && html`<${Select} value=${location} onChange=${setLocation} placeholder="כל המיקומים"
@@ -143,8 +154,9 @@ function MinyanimTab({ data, update, shabbat }) {
         <button class=${cx(view === 'list' && 'on')} onClick=${() => setViewSaved('list')}><${Icon} name="list" /> רשימה</button>
         <button class=${cx(view === 'week' && 'on')} onClick=${() => setViewSaved('week')}><${Icon} name="grid" /> שבועי</button>
       </div>
+      ${seasonSelect}
       <span class="grow" />
-      ${canCopy && html`<${Button} icon="copy" onClick=${() => setCopying(true)}>העתקה מעונה אחרת<//>`}
+      ${canCopy && html`<${Button} kind="ghost" icon="copy" onClick=${() => setCopying(true)}>העתקה מעונה אחרת<//>`}
       ${seasonEditable && html`<${Button} kind="primary" icon="plus" disabled=${full} title=${full ? 'הגעתם למכסת המניינים' : ''} onClick=${() => setEditing('new')}>מניין חדש<//>`}
     </div>
 
@@ -178,6 +190,7 @@ function sortMinyanim(list, catalog) {
 }
 
 function MinyanList({ minyanim, actions, shabbat, notes }) {
+  const [history, setHistory] = useState(null);
   const groups = [];
   for (const m of minyanim) {
     const g = groups.at(-1);
@@ -200,6 +213,10 @@ function MinyanList({ minyanim, actions, shabbat, notes }) {
             </div>
             ${m.rosh_chodesh_time && html`<div class="muted small">ראש חודש: ${m.rosh_chodesh_time}</div>`}
             ${notes && m.notes && html`<div class="muted small">${m.notes}</div>`}
+            <button class="updated-by" title="היסטוריית שינויים" onClick=${() => setHistory(m)}>
+              <${Icon} name="history" size=${13} />
+              ${m.updated_by_name ? `עודכן ע״י ${m.updated_by_name}` : 'עודכן'}${m.updated_via ? ` · ${VIA[m.updated_via]}` : ''} · ${timeAgo(m.updated_at)}
+            </button>
           </div>
           ${actions.canEdit(m)
             ? html`<div class="minyan-actions">
@@ -208,11 +225,91 @@ function MinyanList({ minyanim, actions, shabbat, notes }) {
                 <${Button} kind="ghost" small icon="edit" title="עריכה" onClick=${() => actions.edit(m)} />
                 <${Button} kind="ghost" small icon="trash" title="מחיקה" onClick=${() => actions.remove(m)} />
               </div>`
-            : html`<span class="muted small">לעדכון עונה זו פנו להנהלה</span>`}
+            : null}
         </div>`)}
       </div>
     </div>`)}
+    ${history && html`<${Modal} title=${`היסטוריה: ${history.prayer_name} ${history.time_label}`} onClose=${() => setHistory(null)}>
+      <${LogList} synagogueId=${history.synagogue_id} minyanId=${history.id} /><//>`}
   </div>`;
+}
+
+const ACTION_ICON = { create: 'plus', update: 'edit', delete: 'trash', duplicate: 'copy', copy: 'copy', show: 'eye', hide: 'eyeOff', bulk: 'list' };
+
+/** Changes of a synagogue (or one minyan): what, who, how and when. */
+function LogList({ synagogueId, minyanId }) {
+  const { data, error, loading, reload } = useLoad(() => api.get(`/synagogues/${synagogueId}/log${minyanId ? `?minyan_id=${minyanId}` : ''}`), [synagogueId, minyanId]);
+  if (loading && !data) return html`<${Spinner} />`;
+  if (error && !data) return html`<${ErrorBox} error=${error} onRetry=${reload} />`;
+  if (!data.length) return html`<${Empty} icon="history" title="אין עדיין שינויים רשומים">שינויים מכאן והלאה יירשמו: מי שינה, מה, ואיך (באתר או בטלפון).<//>`;
+  return html`<div class="feed">${data.map((l) => html`<div class="feed-row" key=${l.id}>
+    <span class="feed-icon"><${Icon} name=${ACTION_ICON[l.action] || 'edit'} size=${15} /></span>
+    <div class="grow"><div>${l.summary}</div>
+      <div class="muted small">${l.user_name || 'משתמש שנמחק'} · ${VIA[l.via] || ''} · ${new Date(l.created_at).toLocaleString('he-IL', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</div></div>
+  </div>`)}</div>`;
+}
+
+function HistoryTab({ synagogueId }) {
+  return html`<section class="narrow-section"><div class="card"><${LogList} synagogueId=${synagogueId} /></div></section>`;
+}
+
+/** Managers of the synagogue (admins): add an existing manager or a new user, remove. */
+function ManagersTab({ data, user, reload }) {
+  const { synagogue: s, managers } = data;
+  const may = user.perms.includes('managers');
+  const [adding, setAdding] = useState(false);
+  const [newUser, setNewUser] = useState(false);
+  async function remove(m) {
+    if (!(await confirm({ title: `הסרת ${m.name}`, body: `${m.name} לא ינהל יותר את ${s.name}. המשתמש עצמו לא יימחק.`, confirmLabel: 'הסרה', danger: true }))) return;
+    try { await api.del(`/admin/synagogues/${s.id}/managers/${m.id}`); toast('הוסר'); reload(); } catch (e) { toastError(e); }
+  }
+  return html`<section class="narrow-section">
+    ${may && html`<div class="toolbar"><span class="grow muted small">מנהלי בית הכנסת מעדכנים את הזמנים באתר ובטלפון.</span>
+      <${Button} icon="userPlus" onClick=${() => setAdding(true)}>הוספת מנהל קיים<//>
+      <${Button} kind="primary" icon="plus" onClick=${() => setNewUser(true)}>משתמש חדש<//></div>`}
+    ${managers.length === 0
+      ? html`<${Empty} icon="users" title="אין מנהלים לבית הכנסת">${may ? 'הוסיפו מנהל כדי שיוכל לעדכן את הזמנים.' : ''}<//>`
+      : html`<div class="card list">${managers.map((m) => html`<div class="list-row" key=${m.id}>
+          <${Avatar} name=${m.name} size=${34} />
+          <div class="grow"><b>${m.name}</b>${!m.is_active ? html` <${Badge} tone="warn">מושבת<//>` : ''}
+            <div class="muted small" dir="ltr">${[m.email, m.phone].filter(Boolean).join(' · ')}</div></div>
+          <span class="muted small">${m.last_login_at ? `כניסה ${timeAgo(m.last_login_at)}` : 'עוד לא נכנס'}</span>
+          ${may && html`<${Button} kind="ghost" small icon="trash" title="הסרה מבית הכנסת" onClick=${() => remove(m)} />`}
+        </div>`)}</div>`}
+    ${adding && html`<${AddManagerModal} synagogue=${s} exclude=${managers.map((m) => m.id)} onClose=${() => setAdding(false)} onDone=${reload} />`}
+    ${newUser && html`<${NewManagerModal} synagogue=${s} onClose=${() => setNewUser(false)} onDone=${reload} />`}
+  </section>`;
+}
+
+function AddManagerModal({ synagogue, exclude, onClose, onDone }) {
+  const users = useLoad(() => api.get('/admin/users'));
+  const [q, setQ] = useState('');
+  const shown = (users.data || []).filter((u) => u.role === 'manager' && !exclude.includes(u.id) && (!q || norm(`${u.name} ${u.email} ${u.phone}`).includes(norm(q)))).slice(0, 40);
+  const add = async (u) => {
+    try { await api.post(`/admin/synagogues/${synagogue.id}/managers`, { user_id: u.id }); toast(`${u.name} נוסף כמנהל`); onClose(); onDone(); } catch (e) { toastError(e); }
+  };
+  return html`<${Modal} title=${`הוספת מנהל ל${synagogue.name}`} onClose=${onClose}>
+    <div class="search wide"><${Icon} name="search" /><input class="input" placeholder="חיפוש לפי שם, מייל או טלפון…" value=${q} onInput=${(e) => setQ(e.currentTarget.value)} autofocus /></div>
+    <div class="syn-results">${users.loading ? html`<${Spinner} />` : shown.length === 0 ? html`<div class="muted pad center">לא נמצאו מנהלים</div>`
+      : shown.map((u) => html`<button type="button" class="syn-item" onClick=${() => add(u)}><${Avatar} name=${u.name} size=${28} />
+          <span class="grow"><b>${u.name}</b><small dir="ltr">${u.email} · ${u.phone}</small></span>
+          <small class="muted">${pluralize(u.synagogues.length, 'בית כנסת', 'בתי כנסת')}</small></button>`)}</div>
+  <//>`;
+}
+
+function NewManagerModal({ synagogue, onClose, onDone }) {
+  const initial = { name: '', email: '', phone: '', password: Math.random().toString(36).slice(2, 10), send_welcome: true, must_change_password: true };
+  return html`<${FormModal} title=${`משתמש חדש ל${synagogue.name}`} initial=${initial} submitLabel="יצירה" onClose=${onClose}
+      save=${(v) => api.post('/admin/users', { ...v, role: 'manager', synagogue_ids: [synagogue.id] })}
+      onSaved=${(u) => { toast(u.welcome_sent ? `${u.name} נוסף ונשלחו לו פרטי כניסה` : `${u.name} נוסף`); onDone(); }}>
+    ${({ values: v, set, errors }) => html`
+      <${Field} label="שם מלא" error=${errors.name}><${Input} value=${v.name} onInput=${set('name')} required autofocus /><//>
+      <div class="grid-2">
+        <${Field} label="מייל" error=${errors.email}><${Input} type="email" dir="ltr" value=${v.email} onInput=${set('email')} required /><//>
+        <${Field} label="טלפון" error=${errors.phone}><${Input} type="tel" dir="ltr" value=${v.phone} onInput=${set('phone')} required /><//>
+      </div>
+      <${Toggle} checked=${v.send_welcome} onChange=${set('send_welcome')} label="לשלוח מייל עם כניסה ישירה" hint="המשתמש ייכנס בלחיצה ויבחר סיסמה משלו" />`}
+  <//>`;
 }
 
 function WeekView({ minyanim, onEdit, shabbat }) {

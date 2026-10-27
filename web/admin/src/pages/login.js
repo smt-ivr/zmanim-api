@@ -1,6 +1,6 @@
 import { ApiError, api } from '../api.js';
 import { html, useEffect, useRef, useState } from '../lib.js';
-import { Button, Field, Icon, Input } from '../ui.js';
+import { Button, Credit, Field, Icon, Input } from '../ui.js';
 
 export function AuthCard({ title, subtitle, children }) {
   return html`<div class="auth">
@@ -10,6 +10,7 @@ export function AuthCard({ title, subtitle, children }) {
       <p class="muted">${subtitle}</p>
       ${children}
     </div>
+    <div class="auth-credit"><${Credit} /></div>
   </div>`;
 }
 

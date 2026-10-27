@@ -34,8 +34,11 @@ INSERT INTO conversations (user_id, email, name, staff_unread, last_message_at)
          (SELECT COUNT(*) FROM feedback f WHERE f.user_id = u.id AND f.is_read = 0),
          (SELECT MAX(COALESCE(f.replied_at, f.created_at)) FROM feedback f WHERE f.user_id = u.id)
   FROM users u WHERE EXISTS (SELECT 1 FROM feedback f WHERE f.user_id = u.id);
+-- in time order (messages are read by id)
 INSERT INTO messages (conversation_id, sender, body, created_at)
-  SELECT c.id, 'user', f.body, f.created_at FROM feedback f JOIN conversations c ON c.user_id = f.user_id;
-INSERT INTO messages (conversation_id, sender, body, created_at)
-  SELECT c.id, 'staff', f.reply, f.replied_at FROM feedback f JOIN conversations c ON c.user_id = f.user_id WHERE f.reply IS NOT NULL;
+  SELECT conversation_id, sender, body, created_at FROM (
+    SELECT c.id AS conversation_id, 'user' AS sender, f.body AS body, f.created_at AS created_at, f.id AS fid, 0 AS k FROM feedback f JOIN conversations c ON c.user_id = f.user_id
+    UNION ALL
+    SELECT c.id, 'staff', f.reply, f.replied_at, f.id, 1 FROM feedback f JOIN conversations c ON c.user_id = f.user_id WHERE f.reply IS NOT NULL
+  ) ORDER BY created_at, fid, k;
 DROP TABLE feedback;

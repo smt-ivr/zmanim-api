@@ -1,6 +1,6 @@
 // App shell: session bootstrap, hash routing, layout.
 import { api, hasToken, onUnauthorized, setToken } from './api.js';
-import { cx, html, navigate, render, useEffect, useState } from './lib.js';
+import { cx, html, navigate, recentSynagogues, render, useEffect, useState } from './lib.js';
 import { AdminCatalog } from './pages/admin-catalog.js';
 import { AdminDashboard } from './pages/admin-dashboard.js';
 import { AdminSynagogues } from './pages/admin-synagogues.js';
@@ -9,9 +9,10 @@ import { ChoosePassword, LinkLogin, Login, ResetPassword, googleLoggedOut } from
 import { Profile } from './pages/profile.js';
 import { AdminRegistrations, RegisterPage, VerifyPage } from './pages/registrations.js';
 import { SecurityPage } from './pages/security.js';
-import { ControlPage, Inbox, MyFeedback } from './pages/control.js';
+import { ControlPage } from './pages/control.js';
+import { Inbox, MyMessages } from './pages/messages.js';
 import { SynagoguePicker, Workspace } from './pages/workspace.js';
-import { Button, Icon, Spinner, toast } from './ui.js';
+import { Avatar, Button, Credit, Icon, Modal, Spinner, SynagogueSearch, toast } from './ui.js';
 
 // ------------------------------------------------------------------ routing (#/path)
 const parseHash = () => (location.hash.replace(/^#/, '') || '/').split('?')[0];
@@ -46,6 +47,15 @@ function App() {
   const path = useRoute();
   const [session, setSession] = useState({ status: hasToken() ? 'loading' : 'anon' }); // loading | anon | ready
   const [menuOpen, setMenuOpen] = useState(false);
+  const [picking, setPicking] = useState(false);
+  // "/" opens the synagogue switcher (like a search shortcut)
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === '/' && !/input|textarea|select/i.test(document.activeElement?.tagName || '')) { e.preventDefault(); setPicking(true); }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
   const [dark, setDark] = useState(isDark());
 
   async function boot() {
@@ -105,63 +115,75 @@ function App() {
   // Resolve page
   let page;
   const sMatch = path.match(/^\/s\/(\d+)/);
-  if (sMatch) page = html`<${Workspace} key=${sMatch[1]} id=${Number(sMatch[1])} user=${user} system=${system} onChanged=${refreshMe} />`;
+  const openSynagogue = sMatch ? Number(sMatch[1]) : !isAdmin && synagogues.length === 1 && path === '/' ? synagogues[0].id : null;
+  const messagesOn = system.feedback_enabled || user.is_super;
+  if (openSynagogue) page = html`<${Workspace} key=${openSynagogue} id=${openSynagogue} user=${user} system=${system} onChanged=${refreshMe} />`;
   else if (path === '/profile') page = html`<${Profile} user=${user} onChanged=${refreshMe} />`;
-  else if (path === '/feedback') page = html`<${MyFeedback} />`;
+  else if ((path === '/messages' || path === '/feedback') && !user.is_super) page = html`<${MyMessages} onRead=${refreshMe} />`;
+  else if (user.is_super && (path === '/admin/inbox' || path === '/messages')) page = html`<${Inbox} onRead=${refreshMe} />`;
   else if (user.is_super && path === '/admin/control') page = html`<${ControlPage} onChanged=${refreshMe} />`;
-  else if (user.is_super && path === '/admin/inbox') page = html`<${Inbox} />`;
-  else if (can('registrations') && path === '/admin/registrations') page = html`<${AdminRegistrations} onChanged=${refreshMe} isSuper=${user.is_super} />`;
   else if (user.is_super && path === '/admin/security') page = html`<${SecurityPage} />`;
+  else if (can('registrations') && path === '/admin/registrations') page = html`<${AdminRegistrations} onChanged=${refreshMe} isSuper=${user.is_super} />`;
   else if (isAdmin && path === '/admin/synagogues') page = html`<${AdminSynagogues} onChanged=${refreshMe} perms=${user.perms} />`;
   else if (isAdmin && path === '/admin/users') page = html`<${AdminUsers} me=${user} system=${system} />`;
   else if (isAdmin && path === '/admin/catalog') page = html`<${AdminCatalog} perms=${user.perms} />`;
-  else if (isAdmin) page = html`<${AdminDashboard} />`;
-  else if (synagogues.length === 1) {
-    page = html`<${Workspace} key=${synagogues[0].id} id=${synagogues[0].id} user=${user} system=${system} onChanged=${refreshMe} />`;
-  } else page = html`<${SynagoguePicker} synagogues=${synagogues} />`;
+  else if (isAdmin) page = html`<${AdminDashboard} me=${user} system=${system} />`;
+  else page = html`<${SynagoguePicker} synagogues=${synagogues} />`;
 
-  const link = (href, icon, label, active) => html`
-    <a href=${'#' + href} class=${cx('nav-link', active && 'active')}><${Icon} name=${icon} /><span>${label}</span></a>`;
+  const link = (href, icon, label, active, count) => html`
+    <a href=${'#' + href} class=${cx('nav-link', active && 'active')}><${Icon} name=${icon} /><span>${label}</span>${count > 0 && html`<b class="nav-count">${count}</b>`}</a>`;
+  const multi = isAdmin || synagogues.length > 1;
+  const recent = isAdmin ? recentSynagogues().slice(0, 5) : [];
 
   return html`<div class=${cx('shell', menuOpen && 'menu-open')}>
     <aside class="sidebar">
-      <div class="brand"><span class="brand-mark"><${Icon} name="clock" /></span><div><b>${appName}</b><small>${isAdmin ? 'מנהל מערכת' : 'מנהל בית כנסת'}</small></div></div>
+      <a class="brand" href="#/"><span class="brand-mark"><${Icon} name="clock" /></span><div><b>${appName}</b><small>${isAdmin ? 'ניהול המערכת' : 'ניהול בית הכנסת'}</small></div></a>
+      ${multi && html`<button class="switcher" onClick=${() => setPicking(true)}>
+        <${Icon} name="search" /><span class="grow">${isAdmin ? 'מעבר לבית כנסת…' : 'בחירת בית כנסת…'}</span><kbd>/</kbd></button>`}
       <nav>
         ${isAdmin && html`
-          <div class="nav-section">ניהול כללי</div>
           ${link('/', 'home', 'לוח בקרה', path === '/')}
           ${link('/admin/synagogues', 'building', 'בתי כנסת', path === '/admin/synagogues')}
           ${link('/admin/users', 'users', 'משתמשים', path === '/admin/users')}
-          ${link('/admin/catalog', 'list', 'הגדרות ורשימות', path === '/admin/catalog')}
-          ${can('registrations') && html`<a href="#/admin/registrations" class=${cx('nav-link', path === '/admin/registrations' && 'active')}>
-            <${Icon} name="plus" /><span>בקשות הצטרפות</span>${system.pending_registrations > 0 && html`<b class="nav-count">${system.pending_registrations}</b>`}</a>`}`}
-        ${user.is_super && html`
-          <div class="nav-section">מערכת</div>
-          ${link('/admin/control', 'settings', 'הגדרות שליטה', path === '/admin/control')}
-          ${link('/admin/inbox', 'mail', 'פניות לצוות', path === '/admin/inbox')}
-          ${link('/admin/security', 'shield', 'חסימות ונעילות', path === '/admin/security')}`}
-        ${synagogues.length > 0 && html`<div class="nav-section">${isAdmin ? 'כניסה לבית כנסת' : 'בתי הכנסת שלי'}</div>
-          <div class="nav-scroll">
-            ${synagogues.slice(0, isAdmin ? 12 : 100).map((s) => link(`/s/${s.id}`, 'building', s.name, sMatch ? Number(sMatch[1]) === s.id : !isAdmin && synagogues.length === 1 && path === '/'))}
-            ${isAdmin && synagogues.length > 12 && html`<a class="nav-link muted" href="#/admin/synagogues"><span>כל בתי הכנסת…</span></a>`}
-          </div>`}
+          ${user.is_super && link('/admin/inbox', 'chat', 'הודעות', path === '/admin/inbox', system.unread_messages)}
+          ${can('registrations') && link('/admin/registrations', 'inbox', 'בקשות הצטרפות', path === '/admin/registrations', system.pending_registrations)}
+          ${link('/admin/catalog', 'list', 'רשימות והגדרות', path === '/admin/catalog')}
+          ${user.is_super && html`
+            ${link('/admin/control', 'settings', 'הגדרות מערכת', path === '/admin/control')}
+            ${link('/admin/security', 'shield', 'חסימות ונעילות', path === '/admin/security')}`}`}
+        ${!isAdmin && html`
+          ${synagogues.length > 1 && link('/', 'building', 'בתי הכנסת שלי', path === '/')}
+          ${synagogues.slice(0, 30).map((s) => link(`/s/${s.id}`, 'building', s.name, openSynagogue === s.id))}
+          ${messagesOn && link('/messages', 'chat', 'הודעות להנהלה', path === '/messages', system.unread_messages)}`}
+        ${recent.length > 0 && html`<div class="nav-section">נפתחו לאחרונה</div>
+          ${recent.map((s) => link(`/s/${s.id}`, 'building', s.name, openSynagogue === s.id))}`}
       </nav>
       <div class="sidebar-foot">
-        <a href="../" class="nav-link" target="_blank" rel="noopener"><${Icon} name="external" /><span>לאתר הציבורי</span></a>
-        ${system?.feedback_enabled && !user.is_super && link('/feedback', 'mail', 'פנייה לצוות הפיתוח', path === '/feedback')}
-        <a href="#/profile" class=${cx('nav-link', path === '/profile' && 'active')}><${Icon} name="user" /><span>${user.name}</span></a>
-        <div class="row gap-sm">
+        <div class="me-row">
+          <a href="#/profile" class=${cx('me', path === '/profile' && 'active')}><${Avatar} name=${user.name} size=${30} />
+            <span class="grow"><b>${user.name}</b><small>הפרופיל שלי</small></span></a>
           <${Button} kind="ghost" small icon=${dark ? 'sun' : 'moon'} title=${dark ? 'מצב בהיר' : 'מצב כהה'}
             onClick=${() => { applyTheme(dark ? 'light' : 'dark'); setDark(!dark); }} />
-          <${Button} kind="ghost" small icon="logout" onClick=${logout}>יציאה<//>
+          <${Button} kind="ghost" small icon="logout" title="יציאה" onClick=${logout} />
+        </div>
+        <div class="row foot-links">
+          <a href="../" target="_blank" rel="noopener" class="small muted"><${Icon} name="external" size=${14} /> לאתר הציבורי</a>
+          <span class="grow" /><${Credit} />
         </div>
       </div>
     </aside>
     <div class="scrim" onClick=${() => setMenuOpen(false)} />
     <main class="main">
-      <div class="topbar"><${Button} kind="ghost" icon="menu" aria-label="תפריט" onClick=${() => setMenuOpen(true)} /><b>${appName}</b></div>
+      <div class="topbar">
+        <${Button} kind="ghost" icon="menu" aria-label="תפריט" onClick=${() => setMenuOpen(true)} />
+        <b class="grow topbar-title">${appName}</b>
+        ${multi && html`<${Button} kind="ghost" icon="search" aria-label="מעבר לבית כנסת" onClick=${() => setPicking(true)} />`}
+      </div>
       ${page}
     </main>
+    ${picking && html`<${Modal} title="מעבר לבית כנסת" onClose=${() => setPicking(false)}>
+      <${SynagogueSearch} onPick=${(s) => { setPicking(false); navigate(`/s/${s.id}`); }} />
+    <//>`}
   </div>`;
 }
 

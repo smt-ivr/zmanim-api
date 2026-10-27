@@ -109,7 +109,7 @@ All routes also work under `BASE_PATH` (`/zmanim/api/...`).
 | `PUT /me/password` | `{ current_password, new_password }` (unless blocked). When the admin required a new password (`user.must_change_password`), `current_password` is not needed, and every other call answers `403 PASSWORD_CHANGE_REQUIRED` until it is done |
 | `PUT /me/phone-password` | `{ enabled, password }`: require the (numeric) password on management calls |
 | `GET /me/logins` | Last 50 logins: `{ channel: web\|phone, detail, created_at }` |
-| `GET /me/feedback` · `POST /me/feedback` | Messages to the developers: `{ blocked, items }` / `{ body }` |
+| `GET /me/messages` · `POST /me/messages` | The user's chat with the administration: `{ blocked, messages }` / `{ body }` |
 
 ## Super admin
 
@@ -118,7 +118,11 @@ All routes also work under `BASE_PATH` (`/zmanim/api/...`).
 | `POST /admin/control/test-mail` | Test e-mail to me |
 | `POST /admin/users/:id/welcome` | (admin) welcome e-mail with a login link; `send_welcome: true` on create does the same |
 | `GET / PATCH /admin/control` | `shabbat_enabled, public_site_enabled, site_notice, listen_phone, listen_enabled, manage_phone_enabled, feedback_enabled, google_login_enabled, google_client_id, zmanim_lat, zmanim_lng` (where times of day are computed; default Jerusalem) |
-| `GET /admin/feedback` · `PATCH /admin/feedback/:id {is_read}` · `DELETE /admin/feedback/:id` | Developers' inbox |
+| `GET /admin/conversations` · `POST /admin/conversations {user_id \| email, name}` | Conversations (one per user or per outside e-mail address) |
+| `GET /admin/conversations/:id` | `{ conversation, messages }` (marks it read) |
+| `POST /admin/conversations/:id/messages` | `{ body, send_email }`: an answer; outside senders are always answered by e-mail, tagged `[#id]` |
+| `PATCH /admin/conversations/:id {status}` · `DELETE /admin/conversations/:id` | |
+| Email Routing → Worker `email()` | Mail to `inbound_email` becomes a message; a reply from the staff to a `[#id]` mail is relayed to the person |
 
 ## Session
 
@@ -134,7 +138,8 @@ All routes also work under `BASE_PATH` (`/zmanim/api/...`).
 
 | | |
 |---|---|
-| `GET /synagogues` | Synagogues I can open |
+| `GET /synagogues?q=&area_id=&limit=&offset=` | Synagogues I can open, searchable: `{ items, total }` |
+| `GET /synagogues/:sid/log[?minyan_id=]` | Change history: `{ action, summary, user_name, via: web\|phone, created_at }` |
 | `GET /synagogues/:sid` | Everything for the screen in one call: `{ synagogue, settings, usage, locations, minyanim, managers, catalog }`. `catalog.prayers` is already limited to the allowed prayers |
 | `PATCH /synagogues/:sid` | `{ name?, area_id?, address?, phone?, notes? }`: managers need `settings.can_edit_info` |
 | `POST /synagogues/:sid/locations` | `{ name }`: respects `max_locations` |
@@ -153,7 +158,8 @@ All routes also work under `BASE_PATH` (`/zmanim/api/...`).
 
 | | |
 |---|---|
-| `GET /admin/stats` | Counts + recently updated synagogues |
+| `GET /admin/stats` | Counts, recently updated synagogues, and `activity` (latest changes everywhere) |
+| `POST /admin/synagogues/:id/managers {user_id}` · `DELETE /admin/synagogues/:id/managers/:uid` | (permission `managers`) |
 | `GET /admin/synagogues` | All, with settings, managers and counts |
 | `POST /admin/synagogues` | `{ name, area_id?, address?, phone?, notes?, is_active?, can_edit_info?, max_locations?, max_minyanim?, restrict_prayers?, allowed_prayer_ids?, manager_ids? }` |
 | `GET / PATCH / DELETE /admin/synagogues/:id` | PATCH takes any subset of the above; DELETE removes locations and minyanim too |

@@ -102,7 +102,12 @@ describe('manager scope', () => {
 
     const me = await call('GET', '/me', { token: m.token });
     assert.deepEqual(me.body.synagogues.map((s) => s.name), ['שלי']);
-    assert.deepEqual((await call('GET', '/synagogues', { token: m.token })).body.map((s) => s.id), [mine.id]);
+    assert.deepEqual((await call('GET', '/synagogues', { token: m.token })).body.items.map((s) => s.id), [mine.id]);
+    // admins search (there can be thousands)
+    const found = (await call('GET', `/synagogues?q=${encodeURIComponent(mine.name.slice(0, 3))}&limit=5`, { token: admin })).body;
+    assert.ok(found.items.some((s) => s.id === mine.id));
+    assert.ok(found.total >= 1);
+    assert.deepEqual((await call('GET', '/me', { token: admin })).body.synagogues, [], 'admins do not load every synagogue');
 
     const ws = await call('GET', `/synagogues/${mine.id}`, { token: m.token });
     assert.equal(ws.status, 200);
@@ -987,5 +992,22 @@ describe('e-mail (Resend mocked)', () => {
     await setSetting('registration_blocklist', '@spam.com');
     await mail('x@spam.com', 'buy', 'buy now');
     assert.equal((await call('GET', '/admin/conversations', { token: admin })).body.length, 1);
+  });
+
+  test('managers of a synagogue: add an existing manager, remove; dashboard shows activity', async () => {
+    const admin = await setupAdmin();
+    const s1 = await newSynagogue(admin);
+    const s2 = await newSynagogue(admin);
+    const m = await createManager(admin, 'two@x.com', [s1.id]);
+    assert.equal((await call('POST', `/admin/synagogues/${s2.id}/managers`, { token: admin, body: { user_id: m.id } })).status, 204);
+    assert.deepEqual((await call('GET', '/synagogues', { token: m.token })).body.items.map((s) => s.id).sort(), [s1.id, s2.id].sort());
+    const ws = (await call('GET', `/synagogues/${s2.id}`, { token: admin })).body;
+    assert.equal(ws.managers[0].email, 'two@x.com');
+    assert.equal((await call('DELETE', `/admin/synagogues/${s2.id}/managers/${m.id}`, { token: admin })).status, 204);
+    assert.deepEqual((await call('GET', '/synagogues', { token: m.token })).body.items.map((s) => s.id), [s1.id]);
+    await call('POST', `/synagogues/${s1.id}/minyanim`, { token: m.token, body: { prayer_id: 1, time_kind: 'fixed', time: '06:45', season_id: 1 } });
+    const stats = (await call('GET', '/admin/stats', { token: admin })).body;
+    assert.match(stats.activity[0].summary, /נוסף: שחרית 06:45/);
+    assert.equal(stats.activity[0].synagogue_name, s1.name);
   });
 });

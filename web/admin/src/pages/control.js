@@ -68,15 +68,15 @@ export function ControlPage({ onChanged }) {
     <section class="card">
       <h3><${Icon} name="building" /> הצטרפות עצמית של בתי כנסת</h3>
       ${!data.mail_ready && html`<p class="muted small">ההצטרפות דורשת אימות מייל, ולכן פועלת רק כששליחת המיילים מוגדרת.</p>`}
-      ${toggle('registration_enabled', 'פתוח להצטרפות', 'קישור "הצטרפות" באתר ובמסך הכניסה. כל בקשה עוברת אימות מייל ואחר כך אישור שלך (או של מנהל שקיבל הרשאה)')}
+      ${toggle('registration_enabled', 'פתוח להצטרפות', 'קישור "הצטרפות" באתר ובמסך הכניסה. כל בקשה עוברת אימות מייל ואחר כך אישור')}
       ${toggle('registration_notify', 'מייל על כל בקשה חדשה', 'נשלח למי שמאשר בקשות, אחרי שהמבקש אימת את המייל')}
       <p class="small">את רשימת החסומים ואת כל הנעילות מנהלים בעמוד <a class="link" href="#/admin/security">חסימות ונעילות</a>.</p>
       <p class="muted small">הגנה מספאם פועלת תמיד: שדה נסתר לרובוטים, חסימה של טופס שנשלח מהר מדי, עד 3 בקשות בשעה מאותה כתובת IP ו-3 ביום מאותו מייל, וחסימת קישורים בשדות. בקשה שנחסמה מקבלת אותה תשובה כמו בקשה רגילה, כך שהשולח לא יודע שנחסם.</p>
     </section>
 
     <section class="card">
-      <h3><${Icon} name="mail" /> פניות לצוות הפיתוח</h3>
-      ${toggle('feedback_enabled', 'קבלת פניות פתוחה', 'כבוי: אף משתמש לא יכול לשלוח פנייה. חסימה של משתמש מסוים נעשית בעמוד המשתמשים')}
+      <h3><${Icon} name="chat" /> הודעות</h3>
+      ${toggle('feedback_enabled', 'משתמשים יכולים לשלוח הודעות', 'כבוי: אף משתמש לא יכול לשלוח הודעה מהמערכת. חסימה של משתמש מסוים נעשית מתוך השיחה איתו')}
     </section>
   </div>`;
 }
@@ -84,6 +84,7 @@ export function ControlPage({ onChanged }) {
 function MailEditor({ data, onSave }) {
   const [from, setFrom] = useState(data.mail_from || '');
   const [key, setKey] = useState('');
+  const [inbound, setInbound] = useState(data.inbound_email || '');
   const [busy, setBusy] = useState(false);
   async function test() {
     setBusy(true);
@@ -93,7 +94,7 @@ function MailEditor({ data, onSave }) {
   }
   const submit = (e) => {
     e.preventDefault();
-    const patch = { mail_from: from.trim() };
+    const patch = { mail_from: from.trim(), inbound_email: inbound.trim() };
     if (key.trim()) patch.resend_api_key = key.trim();
     onSave(patch);
     setKey('');
@@ -103,6 +104,8 @@ function MailEditor({ data, onSave }) {
       <${Input} dir="ltr" value=${from} onInput=${setFrom} placeholder="Zmanim <noreply@example.com>" /><//>
     <${Field} label="מפתח API של Resend" hint=${data.resend_api_key ? `שמור: ${data.resend_api_key}. השאירו ריק כדי לא לשנות` : 'מתחיל ב-re_. נשמר בשרת ולא מוצג שוב במלואו'}>
       <${Input} dir="ltr" type="password" autocomplete="off" value=${key} onInput=${setKey} placeholder="re_…" /><//>
+    <${Field} label="כתובת לקבלת מיילים (לא חובה)" hint="מיילים לכתובת הזו נכנסים להודעות במערכת, ותשובות למיילים חוזרות לשיחה. דורש הגדרת Email Routing ב-Cloudflare שמעבירה את הכתובת ל-Worker zmanim">
+      <${Input} dir="ltr" type="email" value=${inbound} onInput=${setInbound} placeholder="zmanim@smti.uk" /><//>
     <div class="row gap-sm wrap">
       <${Button} kind="primary" small type="submit">שמירה<//>
       <${Button} small icon="mail" loading=${busy} disabled=${!data.mail_ready} onClick=${test}>שליחת מייל בדיקה אליי<//>
@@ -157,117 +160,4 @@ function PhoneEditor({ value, onSave }) {
     <${Field} label="מספר הקו שמוצג באתר"><${Input} dir="ltr" type="tel" value=${v} onInput=${setV} /><//>
     <div><${Button} kind="primary" small type="submit">שמירה<//></div>
   </form>`;
-}
-
-// ------------------------------------------------------------------ inbox (super admin)
-export function Inbox() {
-  const { data, error, loading, reload, setData } = useLoad(() => api.get('/admin/feedback'));
-  const [filter, setFilter] = useState('all');
-  if (loading && !data) return html`<div class="page"><${Spinner} /></div>`;
-  if (error && !data) return html`<div class="page"><${ErrorBox} error=${error} onRetry=${reload} /></div>`;
-
-  const unread = data.filter((f) => !f.is_read).length;
-  const shown = filter === 'unread' ? data.filter((f) => !f.is_read) : data;
-  const setRead = async (f, is_read) => {
-    try { await api.patch(`/admin/feedback/${f.id}`, { is_read }); setData((d) => d.map((x) => (x.id === f.id ? { ...x, is_read } : x))); }
-    catch (e) { toastError(e); }
-  };
-  const remove = async (f) => {
-    if (!(await confirm({ title: 'מחיקת פנייה', body: 'למחוק את הפנייה?', confirmLabel: 'מחיקה', danger: true }))) return;
-    try { await api.del(`/admin/feedback/${f.id}`); setData((d) => d.filter((x) => x.id !== f.id)); } catch (e) { toastError(e); }
-  };
-  const block = async (f) => {
-    const ok = await confirm({ title: `חסימת ${f.user_name}`, body: 'המשתמש לא יוכל לשלוח פניות נוספות. אפשר לבטל בעמוד המשתמשים.', confirmLabel: 'חסימה', danger: true });
-    if (!ok) return;
-    try {
-      await api.patch(`/admin/users/${f.user_id}`, { can_message: false });
-      setData((d) => d.map((x) => (x.user_id === f.user_id ? { ...x, can_message: false } : x)));
-      toast('המשתמש נחסם מפניות');
-    } catch (e) { toastError(e); }
-  };
-
-  return html`<div class="page narrow">
-    <header class="page-head"><div><h1>פניות לצוות הפיתוח</h1><p class="muted">${unread ? `${unread} לא נקראו` : 'הכל נקרא'}</p></div>
-      <div class="segmented"><button class=${cx(filter === 'all' && 'on')} onClick=${() => setFilter('all')}>הכל</button><button class=${cx(filter === 'unread' && 'on')} onClick=${() => setFilter('unread')}>לא נקראו</button></div>
-    </header>
-    ${shown.length === 0
-      ? html`<${Empty} icon="mail" title="אין פניות" />`
-      : shown.map((f) => html`<article class=${cx('card', 'message', !f.is_read && 'unread')} key=${f.id}>
-          <header class="message-head">
-            <div><b>${f.user_name}</b> <span class="muted small" dir="ltr">${[f.user_phone, f.user_email].filter(Boolean).join(' · ')}</span>
-              ${!f.can_message && html` <${Badge} tone="warn">חסום מפניות<//>`}</div>
-            <span class="muted small">${formatDate(f.created_at)}</span>
-          </header>
-          <p class="message-body">${f.body}</p>
-          <${ReplyBox} item=${f} onSaved=${(r) => setData((d) => d.map((x) => (x.id === f.id ? { ...x, ...r } : x)))} />
-          <div class="row gap-sm wrap">
-            <${Button} small onClick=${() => setRead(f, !f.is_read)}>${f.is_read ? 'סימון כלא נקרא' : 'סימון כנקרא'}<//>
-            ${f.can_message && html`<${Button} small kind="ghost" onClick=${() => block(f)}>חסימת המשתמש מפניות<//>`}
-            <span class="grow" /><${Button} small kind="ghost" icon="trash" title="מחיקה" onClick=${() => remove(f)} />
-          </div>
-        </article>`)}
-  </div>`;
-}
-
-function ReplyBox({ item, onSaved }) {
-  const [open, setOpen] = useState(false);
-  const [text, setText] = useState(item.reply || '');
-  const [email, setEmail] = useState(Boolean(item.user_email));
-  const [busy, setBusy] = useState(false);
-  async function send() {
-    setBusy(true);
-    try {
-      const r = await api.patch(`/admin/feedback/${item.id}`, { reply: text, send_email: email && Boolean(text.trim()) });
-      onSaved({ reply: r.reply, replied_at: r.replied_at, is_read: true });
-      toast(r.emailed ? 'התשובה נשמרה ונשלחה במייל' : 'התשובה נשמרה');
-      setOpen(false);
-    } catch (e) { toastError(e); }
-    setBusy(false);
-  }
-  if (!open) {
-    return item.reply
-      ? html`<div class="reply"><b>התשובה שלך</b> <span class="muted small">${formatDate(item.replied_at)}</span><p class="message-body">${item.reply}</p>
-          <button class="link small" onClick=${() => setOpen(true)}>עריכת התשובה</button></div>`
-      : html`<div><${Button} small kind="primary" icon="edit" onClick=${() => setOpen(true)}>מענה<//></div>`;
-  }
-  return html`<div class="reply form">
-    <${TextArea} value=${text} onInput=${setText} rows="4" maxlength="4000" placeholder="התשובה תופיע למשתמש בעמוד הפניות שלו" />
-    <div class="row gap-sm wrap">
-      <label class="check"><input type="checkbox" checked=${email} disabled=${!item.user_email} onChange=${(e) => setEmail(e.currentTarget.checked)} /> לשלוח גם במייל${item.user_email ? '' : ' (אין מייל)'}</label>
-      <span class="grow" />
-      <${Button} small kind="ghost" onClick=${() => setOpen(false)}>ביטול<//>
-      <${Button} small kind="primary" loading=${busy} onClick=${send}>שמירה${email ? ' ושליחה' : ''}<//>
-    </div>
-  </div>`;
-}
-
-// ------------------------------------------------------------------ write to the developers (everyone)
-export function MyFeedback() {
-  const { data, error, loading, reload, setData } = useLoad(() => api.get('/me/feedback'));
-  const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
-  if (loading && !data) return html`<div class="page"><${Spinner} /></div>`;
-  if (error && !data) return html`<div class="page"><${ErrorBox} error=${error} onRetry=${reload} /></div>`;
-
-  async function send(e) {
-    e.preventDefault();
-    if (!text.trim()) return;
-    setBusy(true);
-    try { const item = await api.post('/me/feedback', { body: text }); setData((d) => ({ ...d, items: [item, ...d.items] })); setText(''); toast('הפנייה נשלחה, תודה!'); }
-    catch (err) { toastError(err); }
-    setBusy(false);
-  }
-
-  return html`<div class="page narrow">
-    <header class="page-head"><div><h1>פנייה לצוות הפיתוח</h1><p class="muted">רעיון, תקלה או בקשה? כתבו לנו. הפניות מגיעות רק למנהל העל.</p></div></header>
-    ${data.blocked
-      ? html`<div class="alert alert-info">${data.blocked}</div>`
-      : html`<form class="card form" onSubmit=${send}>
-          <${Field} label="הפנייה שלך"><${TextArea} value=${text} onInput=${setText} rows="5" maxlength="2000" placeholder="כתבו כאן…" /><//>
-          <div class="row end"><${Button} kind="primary" type="submit" loading=${busy} disabled=${!text.trim()}>שליחה<//></div>
-        </form>`}
-    ${data.items.length > 0 && html`<h3 class="section-title">פניות ששלחת</h3>
-      ${data.items.map((f) => html`<div class="card message" key=${f.id}><span class="muted small">${formatDate(f.created_at)}</span><p class="message-body">${f.body}</p>
-        ${f.reply ? html`<div class="reply"><b>תשובת הצוות</b> <span class="muted small">${formatDate(f.replied_at)}</span><p class="message-body">${f.reply}</p></div>` : html`<span class="muted small">ממתין לתשובה</span>`}</div>`)}`}
-  </div>`;
 }

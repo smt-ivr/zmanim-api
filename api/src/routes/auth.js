@@ -20,9 +20,10 @@ export async function postLogout({ env, actor }) {
 
 /** Who am I + which synagogues I manage. The admin UI boots from this single call. */
 export async function getMe({ env, actor }) {
+  // Admins can open every synagogue (possibly thousands): they search with GET /synagogues instead.
   const synagogues =
     actor.role === 'admin'
-      ? await all(env, `SELECT s.id, s.name, a.name AS area_name FROM synagogues s LEFT JOIN areas a ON a.id = s.area_id ORDER BY s.name`)
+      ? []
       : await all(
           env,
           `SELECT s.id, s.name, a.name AS area_name FROM synagogue_managers sm
@@ -41,6 +42,7 @@ export async function getMe({ env, actor }) {
     user,
     synagogues,
     // What the UI needs to know about the system
+    synagogue_count: actor.role === 'admin' ? (await first(env, `SELECT COUNT(*) AS n FROM synagogues`)).n : synagogues.length,
     system: { name: settings.system_name, pending_registrations: pending, unread_messages: unread, shabbat_enabled: settings.shabbat_enabled, feedback_enabled: settings.feedback_enabled, mail_ready: await mailReady(env) },
   });
 }

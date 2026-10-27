@@ -1,31 +1,44 @@
 import { api } from '../api.js';
-import { html, norm, useState } from '../lib.js';
+import { html, navigate, norm, pluralize, useEffect, useMemo, useState } from '../lib.js';
 import {
-  Badge, Button, CheckList, Empty, ErrorBox, Field, FormModal, Icon, Input, Select, Spinner, TextArea, Toggle,
+  Badge, Button, CheckList, Empty, ErrorBox, Field, FormModal, Icon, Input, Pager, Select, Spinner, TextArea, Toggle,
   confirm, toast, toastError, useLoad,
 } from '../ui.js';
 
+const PAGE = 50;
+const query = () => new URLSearchParams(location.hash.split('?')[1] || '');
+
 export function AdminSynagogues({ onChanged, perms = [] }) {
   const { data, error, loading, reload, setData } = useLoad(() =>
-    Promise.all([api.get('/admin/synagogues'), api.get('/admin/users'), api.get('/admin/catalog/areas'), api.get('/admin/catalog/prayers')])
-      .then(([synagogues, users, areas, prayers]) => ({ synagogues, users, areas, prayers }))
+    Promise.all([api.get('/admin/synagogues'), api.get('/admin/catalog/areas'), api.get('/admin/catalog/prayers')])
+      .then(([synagogues, areas, prayers]) => ({ synagogues, areas, prayers }))
   );
   const [q, setQ] = useState('');
   const [area, setArea] = useState(null);
+  const [status, setStatus] = useState(() => (query().get('filter') === 'unmanaged' ? 'unmanaged' : 'all'));
+  const [page, setPage] = useState(0);
   const [editing, setEditing] = useState(null); // null | 'new' | synagogue
+  // #/admin/synagogues?edit=ID opens the settings of one synagogue (from its screen)
+  useEffect(() => {
+    const id = Number(query().get('edit'));
+    if (id && data) { const s = data.synagogues.find((x) => x.id === id); if (s) setEditing(s); }
+  }, [data]);
+  useEffect(() => setPage(0), [q, area, status]);
+
+  const shown = useMemo(() => (data?.synagogues || []).filter((s) =>
+    (area === null || s.area_id === area) &&
+    (status === 'all' || (status === 'active' ? s.is_active : status === 'hidden' ? !s.is_active : s.managers.length === 0)) &&
+    (!q || norm(`${s.name} ${s.address} ${s.managers.map((m) => m.name).join(' ')}`).includes(norm(q)))), [data, q, area, status]);
 
   if (loading && !data) return html`<div class="page"><${Spinner} /></div>`;
   if (error && !data) return html`<div class="page"><${ErrorBox} error=${error} onRetry=${reload} /></div>`;
 
-  const shown = data.synagogues.filter((s) =>
-    (area === null || s.area_id === area) &&
-    (!q || norm(`${s.name} ${s.address} ${s.managers.map((m) => m.name).join(' ')}`).includes(norm(q))));
-
   const saved = (s, isNew) => {
     setData((d) => ({ ...d, synagogues: isNew ? [...d.synagogues, s].sort((a, b) => a.name.localeCompare(b.name, 'he')) : d.synagogues.map((x) => (x.id === s.id ? { ...x, ...s } : x)) }));
     onChanged();
-    reload();
+    if (isNew) navigate(`/s/${s.id}`);
   };
+  const closeEdit = () => { setEditing(null); if (query().get('edit')) history.replaceState(null, '', '#/admin/synagogues'); };
 
   async function remove(s) {
     const ok = await confirm({
@@ -38,42 +51,46 @@ export function AdminSynagogues({ onChanged, perms = [] }) {
     catch (e) { toastError(e); }
   }
 
+  const unmanaged = data.synagogues.filter((s) => !s.managers.length).length;
+  const pageItems = shown.slice(page * PAGE, (page + 1) * PAGE);
   return html`<div class="page">
     <header class="page-head">
-      <div><h1>בתי כנסת</h1><p class="muted">${data.synagogues.length} בתי כנסת במערכת</p></div>
+      <div><h1>בתי כנסת</h1><p class="muted">${pluralize(data.synagogues.length, 'בית כנסת', 'בתי כנסת')} במערכת${unmanaged ? ` · ${unmanaged} בלי מנהל` : ''}</p></div>
       ${perms.includes('synagogues') && html`<${Button} kind="primary" icon="plus" onClick=${() => setEditing('new')}>בית כנסת חדש<//>`}
     </header>
-    <div class="toolbar">
+    <div class="toolbar filters">
       <div class="search"><${Icon} name="search" /><input class="input" placeholder="חיפוש לפי שם, כתובת או מנהל…" value=${q} onInput=${(e) => setQ(e.currentTarget.value)} /></div>
       ${data.areas.length > 0 && html`<${Select} value=${area} onChange=${setArea} placeholder="כל האזורים" options=${data.areas.map((a) => ({ value: a.id, label: a.name }))} />`}
+      <${Select} value=${status} onChange=${setStatus} options=${[{ value: 'all', label: 'כל המצבים' }, { value: 'active', label: 'מוצגים לציבור' }, { value: 'hidden', label: 'מוסתרים' }, { value: 'unmanaged', label: 'בלי מנהל' }]} />
     </div>
     ${data.synagogues.length === 0
-      ? html`<${Empty} icon="building" title="אין עדיין בתי כנסת"><div class="pad"><${Button} kind="primary" icon="plus" onClick=${() => setEditing('new')}>יצירת בית הכנסת הראשון<//></div><//>`
-      : html`<div class="table-wrap card"><table class="table">
-          <thead><tr><th>שם</th><th>אזור</th><th>מנהלים</th><th>מניינים</th><th>הרשאות</th><th /></tr></thead>
-          <tbody>${shown.map((s) => html`<tr key=${s.id}>
-            <td><a class="strong" href=${`#/s/${s.id}`}>${s.name}</a>${!s.is_active && html` <${Badge} tone="warn">מוסתר<//>`}
+      ? html`<${Empty} icon="building" title="אין עדיין בתי כנסת">${perms.includes('synagogues') && html`<div class="pad"><${Button} kind="primary" icon="plus" onClick=${() => setEditing('new')}>יצירת בית הכנסת הראשון<//></div>`}<//>`
+      : html`<div class="card table-wrap"><table class="table responsive">
+          <thead><tr><th>בית הכנסת</th><th>אזור</th><th>מנהלים</th><th>מניינים</th><th>הגדרות</th><th /></tr></thead>
+          <tbody>${pageItems.map((s) => html`<tr key=${s.id} class=${s.is_active ? '' : 'inactive'}>
+            <td data-label="בית הכנסת"><a class="strong" href=${`#/s/${s.id}`}>${s.name}</a>${!s.is_active && html` <${Badge} tone="warn">מוסתר<//>`}
               <div class="muted small">${s.address}</div></td>
-            <td>${s.area_name || html`<span class="muted">—</span>`}</td>
-            <td>${s.managers.length ? s.managers.map((m) => m.name).join(', ') : html`<${Badge} tone="warn">ללא מנהל<//>`}</td>
-            <td dir="ltr" class="start"><span class="num">${s.minyanim_count}</span>${s.settings.max_minyanim ? html`<span class="muted"> / ${s.settings.max_minyanim}</span>` : ''}</td>
-            <td class="small">
+            <td data-label="אזור">${s.area_name || html`<span class="muted">—</span>`}</td>
+            <td data-label="מנהלים">${s.managers.length ? html`<span class="ellipsis-2">${s.managers.map((m) => m.name).join(', ')}</span>` : html`<${Badge} tone="warn">ללא מנהל<//>`}</td>
+            <td data-label="מניינים"><span class="num">${s.minyanim_count}</span>${s.settings.max_minyanim ? html`<span class="muted"> / ${s.settings.max_minyanim}</span>` : ''}</td>
+            <td data-label="הגדרות" class="small">
               ${s.settings.editable_fields.length > 0 && html`<${Badge} tone="info">עריכת ${s.settings.editable_fields.length} פרטים<//> `}
               ${s.settings.restrict_prayers && html`<${Badge}>תפילות מוגבלות<//> `}
               ${s.settings.allow_interval && html`<${Badge}>שטיבלאך<//> `}
               ${s.settings.allow_other_seasons && html`<${Badge}>כל העונות<//>`}
-              ${!s.settings.editable_fields.length && !s.settings.restrict_prayers && !s.settings.allow_interval && !s.settings.allow_other_seasons && html`<span class="muted">ברירת מחדל</span>`}
+              ${!s.settings.editable_fields.length && !s.settings.restrict_prayers && !s.settings.allow_interval && !s.settings.allow_other_seasons && html`<span class="muted">רגיל</span>`}
             </td>
             <td class="actions">
-              <${Button} kind="ghost" small icon="external" title="כניסה לבית הכנסת" onClick=${() => (location.hash = `/s/${s.id}`)} />
-              ${perms.includes('synagogues') && html`<${Button} kind="ghost" small icon="edit" title="עריכה" onClick=${() => setEditing(s)} />`}
+              <a class="btn btn-secondary btn-sm" href=${`#/s/${s.id}`}>כניסה</a>
+              ${perms.includes('synagogues') && html`<${Button} kind="ghost" small icon="settings" title="הגדרות" onClick=${() => setEditing(s)} />`}
               ${perms.includes('synagogues_delete') && html`<${Button} kind="ghost" small icon="trash" title="מחיקה" onClick=${() => remove(s)} />`}
             </td>
           </tr>`)}</tbody>
         </table>
-        ${shown.length === 0 && html`<div class="muted pad center">אין תוצאות</div>`}</div>`}
+        ${shown.length === 0 && html`<div class="muted pad center">אין תוצאות</div>`}
+        <${Pager} page=${page} pageSize=${PAGE} total=${shown.length} onPage=${setPage} /></div>`}
     ${editing && html`<${SynagogueModal} synagogue=${editing === 'new' ? null : editing} data=${data}
-        onClose=${() => setEditing(null)} onSaved=${saved} />`}
+        onClose=${closeEdit} onSaved=${saved} />`}
   </div>`;
 }
 
@@ -85,9 +102,7 @@ function SynagogueModal({ synagogue, data, onClose, onSaved }) {
     notes: synagogue?.notes ?? '', is_active: synagogue?.is_active ?? true,
     editable_fields: st?.editable_fields ?? [], max_locations: st?.max_locations ?? 0, max_minyanim: st?.max_minyanim ?? 0,
     restrict_prayers: st?.restrict_prayers ?? false, allow_other_seasons: st?.allow_other_seasons ?? false, allow_interval: st?.allow_interval ?? false, allowed_prayer_ids: st?.allowed_prayer_ids ?? data.prayers.map((p) => p.id),
-    manager_ids: synagogue?.managers.map((m) => m.id) ?? [],
   };
-  const managers = data.users.filter((u) => u.role === 'manager');
 
   const save = (v) => {
     const body = { ...v, max_locations: Number(v.max_locations), max_minyanim: Number(v.max_minyanim), allowed_prayer_ids: v.restrict_prayers ? v.allowed_prayer_ids : [] };
@@ -109,12 +124,10 @@ function SynagogueModal({ synagogue, data, onClose, onSaved }) {
           <${Field} label="כתובת" error=${errors.address}><${Input} value=${v.address} onInput=${set('address')} /><//>
           <${Field} label="הערות" error=${errors.notes}><${TextArea} value=${v.notes} onInput=${set('notes')} /><//>
           <${Toggle} checked=${v.is_active} onChange=${set('is_active')} label="פעיל לציבור" hint="כבוי = בית הכנסת והמניינים שלו לא מוצגים בממשק הציבורי" />
+          ${isNew && html`<p class="muted small">אחרי השמירה בית הכנסת ייפתח, ושם מוסיפים מנהלים (לשונית "מנהלים") ומניינים.</p>`}
         </div>
         <div>
-          <h4>מנהלי בית הכנסת</h4>
-          <${Field} group label="מנהלים" error=${errors.manager_ids} hint=${managers.length ? '' : 'אין עדיין משתמשים מסוג מנהל בית כנסת. צרו אותם בעמוד המשתמשים'}>
-            <${CheckList} searchable options=${managers.map((u) => ({ value: u.id, label: u.name, sub: u.email }))} value=${v.manager_ids} onChange=${set('manager_ids')} empty="אין מנהלים" /><//>
-          <h4>מה מותר למנהל</h4>
+          <h4>מה מותר למנהל בית הכנסת</h4>
           <${Field} group label="פרטים שהמנהל יכול לערוך" hint="כל השאר נעול. ברירת מחדל: הכל נעול">
             <${CheckList} options=${[['name', 'שם'], ['area_id', 'אזור'], ['address', 'כתובת'], ['phone', 'טלפון'], ['notes', 'הערות']].map(([value, label]) => ({ value, label }))}
               value=${v.editable_fields} onChange=${set('editable_fields')} /><//>

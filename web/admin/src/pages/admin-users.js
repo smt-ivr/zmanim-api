@@ -1,23 +1,36 @@
 import { api } from '../api.js';
-import { formatDate, html, norm, useState } from '../lib.js';
-import { Badge, Button, CheckList, Empty, ErrorBox, Field, FormModal, Icon, Input, Spinner, Toggle, confirm, toast, toastError, useLoad } from '../ui.js';
+import { html, norm, pluralize, timeAgo, useEffect, useMemo, useState } from '../lib.js';
+import {
+  Avatar, Badge, Button, CheckList, Empty, ErrorBox, Field, FormModal, Icon, Input, Pager, Select, Spinner, SynagogueMultiPicker, Toggle,
+  confirm, toast, toastError, useLoad,
+} from '../ui.js';
 
 const ROLE = { admin: 'מנהל מערכת', manager: 'מנהל בית כנסת' };
+const PAGE = 50;
 
 export function AdminUsers({ me, system }) {
   // What this admin may change: managers need 'managers', admins need 'admins' (the super admin: everything).
   const mayManage = (u) => !u.is_super && me.perms.includes(u.role === 'admin' ? 'admins' : 'managers');
-  const { data, error, loading, reload, setData } = useLoad(() =>
-    Promise.all([api.get('/admin/users'), api.get('/admin/synagogues')]).then(([users, synagogues]) => ({ users, synagogues }))
-  );
+  const { data, error, loading, reload, setData } = useLoad(() => api.get('/admin/users').then((users) => ({ users })));
   const [q, setQ] = useState('');
   const [role, setRole] = useState('all');
+  const [status, setStatus] = useState('all');
+  const [syn, setSyn] = useState('');
+  const [page, setPage] = useState(0);
   const [editing, setEditing] = useState(null);
+  useEffect(() => setPage(0), [q, role, status, syn]);
+
+  const shown = useMemo(() => (data?.users || []).filter((u) =>
+    (role === 'all' || u.role === role) &&
+    (status === 'all' || (status === 'active' ? u.is_active : status === 'disabled' ? !u.is_active : status === 'locked' ? u.locked_until
+      : status === 'unassigned' ? u.role === 'manager' && !u.synagogues.length : status === 'never' ? !u.last_login_at : true)) &&
+    (!syn || u.synagogues.some((s) => norm(s.name).includes(norm(syn)))) &&
+    (!q || norm(`${u.name} ${u.email || ''} ${u.phone || ''}`).includes(norm(q)))), [data, q, role, status, syn]);
 
   if (loading && !data) return html`<div class="page"><${Spinner} /></div>`;
   if (error && !data) return html`<div class="page"><${ErrorBox} error=${error} onRetry=${reload} /></div>`;
-
-  const shown = data.users.filter((u) => (role === 'all' || u.role === role) && (!q || norm(`${u.name} ${u.email || ''} ${u.phone || ''}`).includes(norm(q))));
+  const pageItems = shown.slice(page * PAGE, (page + 1) * PAGE);
+  const count = (r) => data.users.filter((u) => r === 'all' || u.role === r).length;
   const saved = (u, isNew) => setData((d) => ({ ...d, users: isNew ? [...d.users, u] : d.users.map((x) => (x.id === u.id ? u : x)) }));
 
   async function welcome(u) {
@@ -38,52 +51,60 @@ export function AdminUsers({ me, system }) {
 
   return html`<div class="page">
     <header class="page-head">
-      <div><h1>משתמשים</h1><p class="muted">מנהלי מערכת ומנהלי בתי כנסת</p></div>
+      <div><h1>משתמשים</h1><p class="muted">${pluralize(count('manager'), 'מנהל בית כנסת', 'מנהלי בתי כנסת')} · ${pluralize(count('admin'), 'מנהל מערכת', 'מנהלי מערכת')}</p></div>
       ${(me.perms.includes('managers') || me.perms.includes('admins')) && html`<${Button} kind="primary" icon="plus" onClick=${() => setEditing('new')}>משתמש חדש<//>`}
     </header>
-    <div class="toolbar">
+    <div class="tabs">
+      ${[['all', 'כולם'], ['manager', 'מנהלי בתי כנסת'], ['admin', 'מנהלי מערכת']].map(([k, l]) =>
+        html`<button class=${role === k ? 'tab active' : 'tab'} onClick=${() => setRole(k)}>${l}<span class="count">${count(k)}</span></button>`)}
+    </div>
+    <div class="toolbar filters">
       <div class="search"><${Icon} name="search" /><input class="input" placeholder="חיפוש לפי שם, מייל או טלפון…" value=${q} onInput=${(e) => setQ(e.currentTarget.value)} /></div>
-      <div class="segmented">
-        ${[['all', 'הכל'], ['manager', 'מנהלי בתי כנסת'], ['admin', 'מנהלי מערכת']].map(([k, l]) =>
-          html`<button class=${role === k ? 'on' : ''} onClick=${() => setRole(k)}>${l}</button>`)}
-      </div>
+      <div class="search"><${Icon} name="building" /><input class="input" placeholder="סינון לפי בית כנסת…" value=${syn} onInput=${(e) => setSyn(e.currentTarget.value)} /></div>
+      <${Select} value=${status} onChange=${setStatus} options=${[
+        { value: 'all', label: 'כל המצבים' }, { value: 'active', label: 'פעילים' }, { value: 'disabled', label: 'מושבתים' }, { value: 'locked', label: 'נעולים' },
+        { value: 'unassigned', label: 'בלי בית כנסת' }, { value: 'never', label: 'עוד לא נכנסו' }]} />
     </div>
     ${shown.length === 0
-      ? html`<${Empty} icon="users" title="אין משתמשים להצגה" />`
-      : html`<div class="table-wrap card"><table class="table">
+      ? html`<${Empty} icon="users" title="אין משתמשים שמתאימים לסינון" />`
+      : html`<div class="table-wrap card"><table class="table responsive">
           <thead><tr><th>שם</th><th>תפקיד</th><th>בתי כנסת</th><th>כניסה אחרונה</th><th /></tr></thead>
-          <tbody>${shown.map((u) => html`<tr key=${u.id} class=${u.is_active ? '' : 'inactive'}>
-            <td><b>${u.name}</b>${u.is_super && u.is_hidden && html` <${Badge}>מוסתר<//>`}${u.id === me.id && html` <${Badge} tone="info">זה אתה<//>`}${!u.is_active && html` <${Badge} tone="warn">מושבת<//>`}
+          <tbody>${pageItems.map((u) => html`<tr key=${u.id} class=${u.is_active ? '' : 'inactive'}>
+            <td data-label="שם"><div class="row gap-sm"><${Avatar} name=${u.name} size=${32} /><div class="grow"><b>${u.name}</b>${u.is_super && u.is_hidden && html` <${Badge}>מוסתר<//>`}${u.id === me.id && html` <${Badge} tone="info">זה אתה<//>`}${!u.is_active && html` <${Badge} tone="warn">מושבת<//>`}
               <div class="muted small" dir="ltr">${[u.email, u.phone].filter(Boolean).join(' · ')}</div>
-              <div class="row gap-sm">${u.locked_until && html`<${Badge} tone="warn">נעול עד ${new Date(u.locked_until * 1000).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}<//>`}${u.role === 'admin' && !u.is_super && u.perms.length < Object.keys(PERMS).length - 1 && html`<${Badge} tone="info">${u.perms.length ? `הרשאות חלקיות (${u.perms.length})` : 'צפייה בלבד'}<//>`}${u.must_change_password && html`<${Badge} tone="warn">חייב להחליף סיסמה<//>`}${u.phone_requires_password && html`<${Badge}>סיסמה בטלפון<//>`}${!u.can_message && html`<${Badge} tone="warn">חסום מפניות<//>`}</div></td>
-            <td><${Badge} tone=${u.role === 'admin' ? 'info' : 'neutral'}>${ROLE[u.role]}<//></td>
-            <td class="small">${u.role === 'admin' ? html`<span class="muted">כולם</span>` : u.synagogues.length ? u.synagogues.map((s) => s.name).join(', ') : html`<${Badge} tone="warn">לא שויך<//>`}</td>
-            <td class="small muted">${formatDate(u.last_login_at)}</td>
+              <div class="row gap-sm">${u.locked_until && html`<${Badge} tone="warn">נעול עד ${new Date(u.locked_until * 1000).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}<//>`}${u.role === 'admin' && !u.is_super && u.perms.length < Object.keys(PERMS).length - 1 && html`<${Badge} tone="info">${u.perms.length ? `הרשאות חלקיות (${u.perms.length})` : 'צפייה בלבד'}<//>`}${u.must_change_password && html`<${Badge} tone="warn">חייב להחליף סיסמה<//>`}${u.phone_requires_password && html`<${Badge}>סיסמה בטלפון<//>`}${!u.can_message && html`<${Badge} tone="warn">חסום מהודעות<//>`}</div></div></div></td>
+            <td data-label="תפקיד"><${Badge} tone=${u.role === 'admin' ? 'info' : 'neutral'}>${ROLE[u.role]}<//></td>
+            <td data-label="בתי כנסת" class="small">${u.role === 'admin' ? html`<span class="muted">כולם</span>` : u.synagogues.length
+              ? html`${u.synagogues.slice(0, 2).map((s, i) => html`${i ? ', ' : ''}<a href=${`#/s/${s.id}`}>${s.name}</a>`)}${u.synagogues.length > 2 ? html` <span class="muted">ועוד ${u.synagogues.length - 2}</span>` : ''}`
+              : html`<${Badge} tone="warn">לא שויך<//>`}</td>
+            <td data-label="כניסה אחרונה" class="small muted">${u.last_login_at ? timeAgo(u.last_login_at) : 'עוד לא נכנס'}</td>
             <td class="actions">
               ${mayManage(u) && system?.mail_ready && u.email && html`<${Button} kind="ghost" small icon="mail" title="שליחת פרטי כניסה במייל" onClick=${() => welcome(u)} />`}
               ${mayManage(u) && u.locked_until && html`<${Button} kind="ghost" small icon="key" title="שחרור הנעילה" onClick=${() => unlock(u)} />`}
               ${(mayManage(u) || u.id === me.id) && html`<${Button} kind="ghost" small icon="edit" title="עריכה" onClick=${() => setEditing(u)} />`}
               ${mayManage(u) && u.id !== me.id && !u.is_super && html`<${Button} kind="ghost" small icon="trash" title="מחיקה" onClick=${() => remove(u)} />`}
             </td>
-          </tr>`)}</tbody></table></div>`}
-    ${editing && html`<${UserModal} user=${editing === 'new' ? null : editing} me=${me} mailReady=${system?.mail_ready} synagogues=${data.synagogues}
+          </tr>`)}</tbody></table>
+          <${Pager} page=${page} pageSize=${PAGE} total=${shown.length} onPage=${setPage} /></div>`}
+    ${editing && html`<${UserModal} user=${editing === 'new' ? null : editing} me=${me} mailReady=${system?.mail_ready}
         onClose=${() => setEditing(null)} onSaved=${saved} />`}
   </div>`;
 }
 
-function UserModal({ user, me, mailReady, synagogues, onClose, onSaved }) {
+function UserModal({ user, me, mailReady, onClose, onSaved }) {
   const isNew = !user;
   const self = user?.id === me.id;
   const initial = {
     name: user?.name ?? '', email: user?.email ?? '', phone: user?.phone ?? '', role: user?.role ?? 'manager',
-    is_active: user?.is_active ?? true, password: '', synagogue_ids: user?.synagogues.map((s) => s.id) ?? [],
+    is_active: user?.is_active ?? true, password: '', synagogues: user?.synagogues ?? [],
     send_welcome: !user && Boolean(mailReady), send_password: false,
     must_change_password: user?.must_change_password ?? false,
     admin_perms: user?.perms ?? DEFAULT_PERMS,
     can_edit_email: user?.can_edit_email ?? true, can_edit_password: user?.can_edit_password ?? true, can_message: user?.can_message ?? true,
   };
   const save = (v) => {
-    const body = { ...v, email: v.email || null, phone: v.phone || null };
+    const { synagogues, ...rest } = v;
+    const body = { ...rest, email: v.email || null, phone: v.phone || null, synagogue_ids: synagogues.map((s) => s.id) };
     if (!body.password) { delete body.password; body.send_password = false; }
     if (!me.is_super || v.role !== 'admin') delete body.admin_perms;
     if (self) { delete body.role; delete body.is_active; delete body.can_edit_email; delete body.can_edit_password; delete body.can_message; delete body.must_change_password; }
@@ -115,7 +136,7 @@ function UserModal({ user, me, mailReady, synagogues, onClose, onSaved }) {
         </div><//>`}
       ${v.role === 'manager'
         ? html`<${Field} group label="בתי הכנסת שהוא מנהל" error=${errors.synagogue_ids}>
-            <${CheckList} searchable options=${synagogues.map((s) => ({ value: s.id, label: s.name, sub: s.area_name || '' }))} value=${v.synagogue_ids} onChange=${set('synagogue_ids')} empty="אין בתי כנסת" /><//>`
+            <${SynagogueMultiPicker} value=${v.synagogues} onChange=${set('synagogues')} /><//>`
         : user?.is_super
           ? html`<div class="alert alert-info">למשתמש זה יש את כל ההרשאות.</div>`
           : me.is_super

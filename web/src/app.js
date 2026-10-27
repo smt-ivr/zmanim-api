@@ -180,6 +180,8 @@ function App() {
         ${phone && html`<a href=${`tel:${phone}`}>שמיעה בטלפון: <span dir="ltr">${formatPhone(phone)}</span></a>`}
         ${data?.catalog?.site?.registration && html`<a href="admin/#/register">הוספת בית כנסת</a>`}
         <a href="admin/" class="foot-admin"><${Icon} name="lock" size=${14} /> כניסת מנהלים</a>
+        <a class="credit" href="https://smti.uk" target="_blank" rel="noopener">פותח ע״י
+          <svg class="smt-logo" viewBox="0 0 56 20" aria-label="SMT" role="img"><rect width="56" height="20" rx="5" fill="currentColor" /><text x="28" y="14.5" text-anchor="middle" font-size="12" font-weight="800" font-family="system-ui,Arial,sans-serif" letter-spacing="1.5" fill="var(--surface)">SMT</text></svg></a>
       </div>
     </footer>`;
 }
