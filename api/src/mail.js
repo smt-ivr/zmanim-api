@@ -68,21 +68,25 @@ export function renderMail({ brand = 'מערכת זמני התפילות', title
 }
 
 /**
- * A personal-looking e-mail (a reply in a thread): the text, then well below it a quiet signature that
- * links to the site, and an invisible image that tells us when it was opened.
+ * A reply in a thread: a light card with the text (no header band, no title), and below it a quiet
+ * signature that links to the site; plus an invisible image that tells us when it was opened.
  */
-function renderPlain({ paragraphs = [], signature, pixel }) {
-  const p = (t) => `<p style="margin:0 0 14px;line-height:1.75;font-size:15px;white-space:pre-wrap">${esc(t)}</p>`;
-  const sig = signature
-    ? `<table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:36px"><tr>
-        <td style="border-top:1px solid ${C.border};padding-top:12px">
-          <a href="${esc(signature.url)}" style="text-decoration:none;color:${C.muted};font-size:13px">
-            <span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${C.primary};margin-left:6px;vertical-align:middle"></span>${esc(signature.name)}</a>
-        </td></tr></table>`
-    : '';
-  return `<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8"></head>
-<body dir="rtl" style="margin:0;padding:16px;font-family:${FONT};color:${C.text}">
-<div dir="rtl" style="max-width:640px">${paragraphs.filter(Boolean).map(p).join('')}${sig}</div>
+export function renderPlain({ paragraphs = [], signature, pixel }) {
+  const p = (t) => `<p style="margin:0 0 14px;line-height:1.8;font-size:15.5px;color:${C.text};white-space:pre-wrap">${esc(t)}</p>`;
+  const sig = signature ? `<tr><td style="padding:14px 6px 0" dir="rtl">
+      <a href="${esc(signature.url)}" style="text-decoration:none;color:${C.muted};font-size:13px;font-family:${FONT}">
+        <span style="display:inline-block;width:18px;height:18px;line-height:18px;border-radius:5px;background:${C.primary};color:#fff;text-align:center;font-size:11px;vertical-align:middle;margin-left:7px">&#128339;</span><span style="vertical-align:middle">${esc(signature.name)}</span></a>
+    </td></tr>` : '';
+  return `<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"></head>
+<body dir="rtl" style="margin:0;padding:0;background:${C.bg};font-family:${FONT}">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${C.bg}"><tr><td align="center" style="padding:24px 12px">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:580px">
+    <tr><td dir="rtl" style="background:${C.card};border:1px solid ${C.border};border-top:3px solid ${C.primary};border-radius:12px;padding:24px 26px 12px">
+      ${paragraphs.filter(Boolean).map(p).join('')}
+    </td></tr>
+    ${sig}
+  </table>
+</td></tr></table>
 ${pixel ? `<img src="${esc(pixel)}" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0;opacity:0">` : ''}
 </body></html>`;
 }
