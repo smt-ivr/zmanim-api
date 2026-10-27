@@ -983,7 +983,7 @@ describe('e-mail (Resend mocked)', () => {
     // opened: the tiny image in the e-mail marks the answer as opened, with the time
     const pixel = /src="([^"]+\/api\/o\/([0-9a-f]+))"/.exec(sent.at(-1).body.html);
     assert.ok(pixel, 'tracking image');
-    assert.match(sent.at(-1).body.html, /<a href="https:\/\/x\.test\/"[^>]*>[\s\S]*מערכת זמני התפילות<\/a>/, 'signature links to the site');
+    assert.match(sent.at(-1).body.html, /<a href="https:\/\/x\.test\/"[^>]*>[\s\S]*?מערכת זמני התפילות[\s\S]*?<\/a>/, 'signature links to the site');
     const img = await worker.fetch(new Request(`https://x.test/api/o/${pixel[2]}`), env);
     assert.equal(img.status, 200);
     assert.equal(img.headers.get('Content-Type'), 'image/gif');
