@@ -645,7 +645,8 @@ describe('e-mail (Resend mocked)', () => {
     const r = await call('POST', `/admin/conversations/${c.id}/messages`, { token: admin2, body: { body: 'בטח, נוסיף', send_email: true } });
     assert.equal(r.body.emailed, true);
     assert.match(sent.at(-1).body.text, /בטח, נוסיף/);
-    assert.match(sent.at(-1).body.subject, new RegExp(`\\[#${c.id}\\]`));
+    assert.equal(sent.at(-1).body.subject, 'Re: הודעה ממערכת זמני התפילות', 'a thread of its own, no tag');
+    assert.match(sent.at(-1).body.headers['Message-ID'], /^<zm-\d+-.+@example\.com>$/);
     assert.equal(sent.at(-1).body.reply_to, 'zmanim@smti.uk');
     assert.equal((await call('GET', '/me/messages', { token: login.body.token })).body.messages.at(-1).body, 'בטח, נוסיף');
   });
@@ -960,7 +961,7 @@ describe('e-mail (Resend mocked)', () => {
     };
 
     // someone outside the system writes
-    await mail('דוד לוי <david@out.com>', 'שאלה על מניין', 'מתי מנחה בבית הכנסת?\n\nOn Mon, someone wrote:\n> old');
+    await mail('דוד לוי <david@out.com>', 'שאלה על מניין', 'מתי מנחה בבית הכנסת?\n\nOn Mon, someone wrote:\n> old', { 'Message-ID': '<first@gmail.com>' });
     let list = (await call('GET', '/admin/conversations', { token: admin })).body;
     assert.equal(list.length, 1);
     assert.deepEqual([list[0].email, list[0].name, list[0].subject, list[0].user_id], ['david@out.com', 'דוד לוי', 'שאלה על מניין', null]);
@@ -973,10 +974,15 @@ describe('e-mail (Resend mocked)', () => {
     await call('POST', `/admin/conversations/${list[0].id}/messages`, { token: admin, body: { body: 'בשעה 13:30' } });
     assert.equal(sent.length, before + 1);
     assert.equal(sent.at(-1).body.to[0], 'david@out.com');
-    assert.match(sent.at(-1).body.subject, /Re: שאלה על מניין \[#\d+\]/);
+    // the answer continues his e-mail thread: same subject, In-Reply-To / References his mail
+    assert.equal(sent.at(-1).body.subject, 'Re: שאלה על מניין');
+    assert.equal(sent.at(-1).body.headers['In-Reply-To'], '<first@gmail.com>');
+    assert.equal(sent.at(-1).body.headers.References, '<first@gmail.com>');
+    const ours = sent.at(-1).body.headers['Message-ID'];
+    assert.equal(sent.at(-1).body.html.includes('<h1'), false, 'looks like a personal e-mail, not a system notice');
 
-    // his reply lands in the same conversation
-    await mail('david@out.com', `Re: שאלה על מניין [#${list[0].id}]`, 'תודה רבה!');
+    // his reply (In-Reply-To our answer) lands in the same conversation, even with another subject
+    await mail('david@out.com', 'Re: שאלה על מניין', 'תודה רבה!', { 'Message-ID': '<second@gmail.com>', 'In-Reply-To': ours, References: `<first@gmail.com> ${ours}` });
     assert.equal((await call('GET', `/admin/conversations/${list[0].id}`, { token: admin })).body.messages.at(-1).body, 'תודה רבה!');
 
     // the staff answers from the mailbox: goes into the conversation and on to the person
@@ -986,6 +992,8 @@ describe('e-mail (Resend mocked)', () => {
     assert.deepEqual([last.sender, last.body, last.via], ['staff', 'בשמחה', 'email']);
     assert.equal(sent.length, n + 1);
     assert.equal(sent.at(-1).body.to[0], 'david@out.com');
+    assert.equal(sent.at(-1).body.headers['In-Reply-To'], '<second@gmail.com>', 'still the same thread');
+    assert.match(sent.at(-1).body.headers.References, /<first@gmail\.com> .* <second@gmail\.com>/);
 
     // auto-replies and blocked senders are ignored
     await mail('bot@out.com', 'Out of office', 'away', { 'Auto-Submitted': 'auto-replied' });

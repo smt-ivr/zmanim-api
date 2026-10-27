@@ -67,6 +67,16 @@ export function renderMail({ brand = 'מערכת זמני התפילות', title
 </td></tr></table></body></html>`;
 }
 
+/** A personal-looking e-mail (a reply in a thread): the text, a short signature, an optional link. */
+function renderPlain({ paragraphs = [], signature = '', link }) {
+  const p = (t) => `<p style="margin:0 0 12px;line-height:1.7;white-space:pre-wrap">${esc(t)}</p>`;
+  return `<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8"></head>
+<body dir="rtl" style="margin:0;padding:12px;font-family:${FONT};font-size:15px;color:${C.text}">
+<div dir="rtl">${paragraphs.filter(Boolean).map(p).join('')}
+<p style="margin:18px 0 0;color:${C.muted};font-size:13px">${esc(signature)}${link ? ` · <a href="${esc(link.url)}" style="color:${C.primary2}">${esc(link.label)}</a>` : ''}</p></div>
+</body></html>`;
+}
+
 /**
  * Sends one e-mail. Throws 409 when mail is not configured, 502 when Resend refuses (with its reason).
  * mail: { to, subject, title, preheader?, paragraphs?, details?: [[label, value]], quotes?: [{ label, text, accent? }],
@@ -78,8 +88,8 @@ export async function sendMail(env, mail) {
   const to = normalizeEmail(mail.to);
   if (!to) throw new HttpError(422, 'BAD_EMAIL', `כתובת המייל של הנמען אינה תקינה: ${clean(mail.to)}`);
   const title = mail.title || mail.subject;
-  const html = renderMail({ ...mail, brand: s.system_name, title, preheader: mail.preheader || mail.paragraphs?.[0] || '', footer: { phone: s.listen_enabled ? s.listen_phone : '', site: mail.site } });
-  const text = [
+  const html = mail.plain ? renderPlain(mail) : renderMail({ ...mail, brand: s.system_name, title, preheader: mail.preheader || mail.paragraphs?.[0] || '', footer: { phone: s.listen_enabled ? s.listen_phone : '', site: mail.site } });
+  const text = mail.plain ? [...(mail.paragraphs || []).filter(Boolean), `--\n${mail.signature || ''}`].join('\n\n') : [
     title, ...(mail.paragraphs || []).filter(Boolean),
     ...(mail.details || []).map(([k, v]) => `${k}: ${v}`),
     ...(mail.quotes || []).map((q) => `${q.label}\n${q.text}`),

@@ -59,18 +59,44 @@ async function notifyStaff(env, url, conv, body) {
 }
 
 /** E-mails a staff answer to the person; replies come back to the inbound address with [#id]. */
+// ------------------------------------------------------------------ e-mail threads
+// A conversation remembers the Message-IDs of its e-mail thread. An answer from the chat is sent as a
+// reply in that thread (same subject, In-Reply-To / References), so the person sees one e-mail
+// conversation, as if talking by e-mail; their reply is matched back by those IDs.
+const ids = (text) => String(text || '').match(/<[^<>\s]+>/g) || [];
+const refsOf = (conv) => ids(conv.email_refs);
+const saveRefs = (env, convId, refs) => run(env, `UPDATE conversations SET email_refs = ? WHERE id = ?`, [...new Set(refs)].slice(-20).join(' '), convId);
+
+/** The conversation an incoming e-mail answers (by In-Reply-To / References), if any. */
+async function conversationByThread(env, parsed) {
+  for (const mid of [...ids(parsed.inReplyTo), ...ids(parsed.references).reverse()]) {
+    const c = await first(env, `SELECT * FROM conversations WHERE instr(email_refs, ?) > 0`, mid);
+    if (c) return c;
+  }
+  return null;
+}
+
+/** E-mails a staff answer to the person as the next mail in their thread. */
 async function emailAnswer(env, url, conv, body) {
   const s = await getSettings(env);
+  const fresh = await first(env, `SELECT * FROM conversations WHERE id = ?`, conv.id);
+  const refs = refsOf(fresh);
+  const subject = fresh.subject || `הודעה מ${s.system_name}`;
+  if (!fresh.subject) await run(env, `UPDATE conversations SET subject = ? WHERE id = ?`, subject, conv.id);
+  const domain = (/@([^>\s]+)/.exec(s.mail_from) || [])[1] || 'localhost';
+  const messageId = `<zm-${conv.id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}@${domain}>`;
   await sendMail(env, {
-    to: conv.email,
-    subject: `${conv.subject ? `Re: ${conv.subject}` : `הודעה מ${s.system_name}`} [#${conv.id}]`,
-    title: `שלום ${conv.name || ''}`.trim(),
-    site: siteUrl(env, url),
+    to: fresh.email,
+    subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`,
+    plain: true,
     paragraphs: body.split(/\n{2,}/),
-    button: conv.user_id ? { label: 'לכל השיחה במערכת', url: adminUrl(env, url, '/feedback') } : undefined,
-    note: s.inbound_email ? 'אפשר להשיב ישירות למייל הזה.' : '',
+    signature: s.system_name,
+    site: siteUrl(env, url),
+    link: fresh.user_id ? { label: 'לכל השיחה במערכת', url: adminUrl(env, url, '/messages') } : undefined,
     replyTo: s.inbound_email || undefined,
+    headers: { 'Message-ID': messageId, ...(refs.length ? { 'In-Reply-To': refs.at(-1), References: refs.join(' ') } : {}) },
   });
+  await saveRefs(env, conv.id, [...refs, messageId]);
 }
 
 // ------------------------------------------------------------------ the user's side
@@ -236,14 +262,20 @@ async function receive(message, env) {
   }
 
   let conv = tagged ? await first(env, `SELECT * FROM conversations WHERE id = ? AND email = ?`, Number(tagged[1]), from) : null;
+  if (!conv) conv = await conversationByThread(env, parsed);
   if (!conv && sender) conv = await ensureConversation(env, sender);
   if (!conv) conv = await first(env, `SELECT * FROM conversations WHERE user_id IS NULL AND email = ?`, from);
   if (!conv) {
     const res = await run(env, `INSERT INTO conversations (email, name, subject) VALUES (?, ?, ?)`, from, clean(parsed.from?.name || '').slice(0, 80), subject);
     conv = await first(env, `SELECT * FROM conversations WHERE id = ?`, res.meta.last_row_id);
-  } else if (!conv.subject && subject) {
-    await run(env, `UPDATE conversations SET subject = ? WHERE id = ?`, subject, conv.id);
+  } else if (subject && subject !== conv.subject) {
+    await run(env, `UPDATE conversations SET subject = ? WHERE id = ?`, subject, conv.id); // answers continue the latest thread
   }
+  // Their thread: a reply carries the whole chain in References; a new e-mail starts a new chain.
+  const own = ids(parsed.messageId);
+  const chain = [...ids(parsed.references), ...ids(parsed.inReplyTo), ...own];
+  const continues = chain.some((m) => refsOf(conv).includes(m));
+  await saveRefs(env, conv.id, continues ? [...refsOf(conv), ...chain] : chain);
   await addMessage(env, conv, { sender: 'user', body, via: 'email' });
   await notifyStaff(env, url, conv, body);
   return { status: 'accepted', detail: `נוסף לשיחה #${conv.id}`, subject: subjectRaw };
