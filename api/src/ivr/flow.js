@@ -8,7 +8,7 @@ import { describe, diff, logMinyan } from '../minyanLog.js';
 import { INFO_FIELDS, MINYAN_COLUMNS, insertMinyan, parseFields, requireSeasonAccess } from '../routes/workspace.js';
 import { currentSeason, getSettings, visibleDays } from '../settings.js';
 import { normalizePhone } from '../validate.js';
-import { callStore, chosenIndex, end, go, goodbye, invalid, listChoice, menu, number, readParams, reply, runCall } from './engine.js';
+import { callStore, chosenIndex, end, go, goodbye, invalid, listChoice, menu, number, numberedList, readParams, reply, runCall } from './engine.js';
 import { speakMinyan as speakFull, speakPhone, text } from './yemot.js';
 
 const PASSWORD_LIMIT = { max: 5, window: 30 * 60, lock: 30 * 60 };
@@ -68,24 +68,20 @@ async function mySynagogues(c) {
     : all(c.env, `SELECT s.id, s.name FROM synagogue_managers sm JOIN synagogues s ON s.id = sm.synagogue_id WHERE sm.user_id = ? ORDER BY s.name`, c.user.id);
 }
 
-const PAGE = 8;
-
-/** One page of the synagogues this caller can open (admins: in the chosen area), alphabetically. */
-function listPage(c, page) {
+/** The synagogues this caller can open (admins: in the chosen area), alphabetically. */
+function listSynagogues(c) {
   if (c.actor.role === 'admin') {
     const area = c.state.data.area;
-    return all(c.env, `SELECT id, name FROM synagogues ${area ? 'WHERE area_id = ?' : ''} ORDER BY name LIMIT ? OFFSET ?`,
-      ...(area ? [area] : []), PAGE + 1, page * PAGE);
+    return all(c.env, `SELECT id, name FROM synagogues ${area ? 'WHERE area_id = ?' : ''} ORDER BY name LIMIT 999`, ...(area ? [area] : []));
   }
-  return all(c.env, `SELECT s.id, s.name FROM synagogue_managers sm JOIN synagogues s ON s.id = sm.synagogue_id WHERE sm.user_id = ? ORDER BY s.name LIMIT ? OFFSET ?`,
-    c.user.id, PAGE + 1, page * PAGE);
+  return all(c.env, `SELECT s.id, s.name FROM synagogue_managers sm JOIN synagogues s ON s.id = sm.synagogue_id WHERE sm.user_id = ? ORDER BY s.name`, c.user.id);
 }
 
 /** Areas first when there is more than one with synagogues; otherwise straight to the list. */
 async function goAreas(c, { back = false } = {}) {
   const { n } = await first(c.env, `SELECT COUNT(DISTINCT area_id) AS n FROM synagogues WHERE area_id IS NOT NULL`);
   if (n > 1) return go(c, 'synArea');
-  return back ? go(c, 'home') : go(c, 'synList', { area: null, page: 0 });
+  return back ? go(c, 'home') : go(c, 'synList', { area: null });
 }
 
 async function goHome(c) {
@@ -93,7 +89,7 @@ async function goHome(c) {
   const list = await mySynagogues(c);
   if (list.length === 0) return end(c, 'עדיין לא שויכת לאף בית כנסת. פנו להנהלה');
   if (list.length === 1) return go(c, 'syn', { sid: list[0].id, single: true });
-  return go(c, 'synList', { page: 0 });
+  return go(c, 'synList');
 }
 
 const goSynagogueOrHome = (c) => (c.state.data.sid ? go(c, 'syn') : goHome(c));
@@ -123,7 +119,7 @@ async function goManage(c, { back = false } = {}) {
   const list = await seasonMinyanim(c);
   if (!list.length) { c.say.push(text('אין עדיין מניינים בעונה זו')); return go(c, 'syn'); }
   if (new Set(list.map((m) => m.prayer_id)).size > 1) return go(c, 'mFilter');
-  return back ? go(c, 'syn') : go(c, 'mList', { listPrayer: null, listPage: 0 });
+  return back ? go(c, 'syn') : go(c, 'mList', { listPrayer: null });
 }
 
 /** Who did it, for the change log. */
@@ -196,28 +192,21 @@ const SCREENS = {
     handle(c, input) {
       const i = chosenIndex(input, c.state.data.areas, { zero: true });
       if (i === null) return invalid(c);
-      return go(c, 'synList', { area: i === -1 ? null : c.state.data.areas[i], page: 0 });
+      return go(c, 'synList', { area: i === -1 ? null : c.state.data.areas[i] });
     },
   },
   synList: {
     back: (c) => (c.actor.role === 'admin' ? goAreas(c, { back: true }) : end(c)),
     async prompt(c) {
-      const page = c.state.data.page || 0;
-      const rows = await listPage(c, page);
-      c.state.data.list = rows.slice(0, PAGE).map((s) => s.id);
+      const rows = await listSynagogues(c);
+      c.state.data.list = rows.map((s) => s.id);
       if (!rows.length) {
-        c.say.push(text(page ? 'אין בתי כנסת נוספים' : 'אין בתי כנסת'));
-        if (page) return go(c, 'synList', { page: page - 1 });
+        c.say.push(text('אין בתי כנסת'));
         return c.actor.role === 'admin' ? go(c, 'home') : end(c, 'עדיין לא שויכת לאף בית כנסת. פנו להנהלה');
       }
-      const items = rows.slice(0, PAGE).map((s, i) => [String(i + 1), s.name]);
-      if (rows.length > PAGE) items.push(['9', 'בתי כנסת נוספים']);
-      if (page > 0) items.push(['0', 'בתי הכנסת הקודמים']);
-      return menu(c, page ? '' : 'בחירת בית כנסת', items, { star: c.actor.role === 'admin' });
+      return numberedList('בחירת בית כנסת', rows.map((s, i) => `ל${s.name} הקישו ${i + 1}`), { star: c.actor.role === 'admin' });
     },
     handle(c, input) {
-      if (input === '9') return go(c, 'synList', { page: (c.state.data.page || 0) + 1 });
-      if (input === '0' && c.state.data.page > 0) return go(c, 'synList', { page: c.state.data.page - 1 });
       const sid = c.state.data.list?.[Number(input) - 1];
       return sid ? go(c, 'syn', { sid, single: false }) : invalid(c);
     },
@@ -461,32 +450,24 @@ const SCREENS = {
     handle(c, input) {
       const i = chosenIndex(input, c.state.data.filterPrayers, { zero: true });
       if (i === null) return invalid(c);
-      return go(c, 'mList', { listPrayer: i === -1 ? null : c.state.data.filterPrayers[i], listPage: 0 });
+      return go(c, 'mList', { listPrayer: i === -1 ? null : c.state.data.filterPrayers[i] });
     },
   },
   mList: {
     back: (c) => goManage(c, { back: true }),
     async prompt(c) {
-      const page = c.state.data.listPage || 0;
-      const all = (await seasonMinyanim(c)).filter((m) => !c.state.data.listPrayer || m.prayer_id === c.state.data.listPrayer);
-      if (!all.length) { c.say.push(text('אין מניינים')); return go(c, 'syn'); }
-      if (page * PAGE >= all.length) return go(c, 'mList', { listPage: Math.max(0, Math.ceil(all.length / PAGE) - 1) });
-      const rows = all.slice(page * PAGE, page * PAGE + PAGE);
+      const rows = (await seasonMinyanim(c)).filter((m) => !c.state.data.listPrayer || m.prayer_id === c.state.data.listPrayer);
+      if (!rows.length) { c.say.push(text('אין מניינים')); return go(c, 'syn'); }
       c.state.data.list = rows.map((m) => m.id);
       // With one prayer chosen its name is not repeated for every minyan
       const say = (m) => speakMinyanFor(c)({ ...m, prayer_name: c.state.data.listPrayer ? null : m.prayer_name });
       // "שחרית בשעה 6 30, ראשון עד שישי, בהיכל הראשי: הקישו 1"
-      const parts = [];
-      if (!page) parts.push(text(all.length === 1 ? 'יש מניין אחד' : `יש ${all.length} מניינים`), text('לבחירת מניין הקישו את המספר שלו'));
-      rows.forEach((m, i) => parts.push(text(`${say(m)}: הקישו ${i + 1}`)));
-      if (all.length > (page + 1) * PAGE) parts.push(text('למניינים הבאים הקישו 9'));
-      if (page > 0) parts.push(text('למניינים הקודמים הקישו 0'));
-      parts.push(text('לחזרה הקישו כוכבית'));
-      return { messages: parts, opts: { max: 1, min: 1 } };
+      const count = rows.length === 1 ? 'יש מניין אחד' : `יש ${rows.length} מניינים`;
+      const ask = numberedList(count, rows.map((m, i) => `${say(m)}: הקישו ${i + 1}`));
+      if (rows.length <= 9) ask.messages.splice(1, 0, text('לבחירת מניין הקישו את המספר שלו'));
+      return ask;
     },
     handle(c, input) {
-      if (input === '9') return go(c, 'mList', { listPage: (c.state.data.listPage || 0) + 1 });
-      if (input === '0' && c.state.data.listPage > 0) return go(c, 'mList', { listPage: c.state.data.listPage - 1 });
       const id = c.state.data.list?.[Number(input) - 1];
       return id ? go(c, 'mEdit', { editId: id }) : invalid(c);
     },

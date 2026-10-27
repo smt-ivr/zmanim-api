@@ -8,6 +8,7 @@ import { adminUrl, mailReady, sendMail, siteUrl } from '../mail.js';
 import { getSettings } from '../settings.js';
 import { clean, fields, id, normalizeEmail } from '../validate.js';
 import PostalMime from '../vendor/postal-mime/postal-mime.js';
+import { nameRow } from '../names.js';
 
 const ONLINE = 15 * 60; // signed in and active within this time = online (no e-mail needed)
 const NOTIFY_EVERY = 20 * 60; // at most one "new message" e-mail per conversation in this time
@@ -159,13 +160,13 @@ async function loadConversation(env, rawId) {
 }
 
 /** GET /admin/conversations/:id (marks it read) */
-export async function getConversation({ env, params }) {
+export async function getConversation({ env, actor, params }) {
   const c = await loadConversation(env, params.id);
-  const messages = await all(env, `SELECT m.id, m.sender, m.body, m.via, m.emailed, m.opened_at, m.open_count, m.created_at, u.name AS staff_name
+  const messages = await all(env, `SELECT m.id, m.sender, m.body, m.via, m.emailed, m.opened_at, m.open_count, m.created_at, u.name AS staff_name, u.id AS st_id, u.role AS st_role, u.is_super AS st_super
     FROM messages m LEFT JOIN users u ON u.id = m.staff_user_id WHERE m.conversation_id = ? ORDER BY m.id`, c.id);
   if (c.staff_unread) await run(env, `UPDATE conversations SET staff_unread = 0 WHERE id = ?`, c.id);
   const { notified_at, ...conversation } = c;
-  return json({ conversation: { ...conversation, staff_unread: 0, can_message: c.user_id ? c.can_message === 1 : null }, messages });
+  return json({ conversation: { ...conversation, staff_unread: 0, can_message: c.user_id ? c.can_message === 1 : null }, messages: messages.map((m) => nameRow(actor, m, 'st', 'staff_name')) });
 }
 
 /** POST /admin/conversations/:id/messages { body, send_email } (an outside sender is always answered by e-mail) */

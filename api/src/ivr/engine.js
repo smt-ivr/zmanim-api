@@ -130,6 +130,14 @@ export function menu(c, intro, items, { star = true } = {}) {
   return { messages: parts, opts: { max: 1, min: 1 } };
 }
 
+/** A list read in full and numbered on (1, 2, … 10, 11 …); past 9 items the caller ends the number with #. */
+export function numberedList(intro, lines, { star = true } = {}) {
+  const many = lines.length > 9;
+  const parts = [...(intro ? [text(intro)] : []), ...(many ? [text('הקישו את המספר ואחריו סולמית')] : []), ...lines.map((l) => text(l))];
+  if (star) parts.push(text('לחזרה הקישו כוכבית'));
+  return { messages: parts, opts: { max: String(lines.length).length, min: 1 } };
+}
+
 /** Free number ending with #. */
 export const number = (messages, { min = 1, max = '' } = {}) => ({ messages: messages.map((m) => (typeof m === 'string' ? text(m) : m)), opts: { min, max } });
 

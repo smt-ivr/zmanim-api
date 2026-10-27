@@ -98,7 +98,7 @@ export async function get({ env, actor, params }) {
     s.area_id ? first(env, `SELECT name FROM areas WHERE id = ?`, s.area_id) : null,
     synagogueSettings(env, s),
     listLocations(env, s.id),
-    listMinyanim(env, s.id),
+    listMinyanim(env, s.id, { viewer: actor }),
     all(env, `SELECT id, name, earliest, latest, has_rosh_chodesh FROM prayers ORDER BY sort, id`),
     all(env, `SELECT id, name, is_default, starts_md FROM seasons ORDER BY sort, id`),
     anchorsWithPrayers(env),
@@ -235,7 +235,7 @@ async function loadMinyanRow(env, s, rawId) {
   return row;
 }
 
-/** who: { userId, via } for the change log; how: { action, note } (note: e.g. where it was copied from). */
+/** who: { userId, via, actor? } for the change log (actor: who sees the result); how: { action, note } (note: e.g. where it was copied from). */
 export async function insertMinyan(env, s, m, who = null, { action = 'create', note = '' } = {}) {
   const { n } = await first(env, `SELECT COUNT(*) AS n FROM minyanim WHERE synagogue_id = ?`, s.id);
   if (s.max_minyanim && n >= s.max_minyanim) throw conflict(`הגעתם למכסה של ${s.max_minyanim} מניינים`, 'LIMIT_REACHED');
@@ -248,17 +248,17 @@ export async function insertMinyan(env, s, m, who = null, { action = 'create', n
   const words = { create: 'נוסף', duplicate: 'שוכפל', copy: 'הועתק' };
   const created = await getMinyan(env, res.meta.last_row_id);
   await logMinyan(env, who, { synagogueId: s.id, minyanId: created.id, action, summary: `${words[action] || 'נוסף'}: ${describe(created)}${note ? ` (${note})` : ''}` });
-  return getMinyan(env, created.id);
+  return getMinyan(env, created.id, who?.actor);
 }
 
 /** Who did it, for the change log: the web session's user. */
-const byWeb = (actor) => ({ userId: actor.id, via: 'web' });
+const byWeb = (actor) => ({ userId: actor.id, via: 'web', actor });
 
 /** GET /synagogues/:sid/log[?minyan_id=] */
 export async function log({ env, actor, params, url }) {
   const s = await loadSynagogue(env, actor, params.sid);
   const mid = url.searchParams.get('minyan_id');
-  return json(await listLog(env, s.id, mid ? id(mid) : null));
+  return json(await listLog(env, s.id, mid ? id(mid) : null, actor));
 }
 
 export async function createMinyan({ env, actor, params, request }) {
@@ -286,7 +286,7 @@ export async function patchMinyan({ env, actor, params, request }) {
     const action = changes === 'הוצג לציבור' ? 'show' : changes === 'הוסתר מהציבור' ? 'hide' : 'update';
     await logMinyan(env, byWeb(actor), { synagogueId: s.id, minyanId: current.id, action, summary: `${after.prayer_name} ${before.time_label}: ${changes}` });
   }
-  return json(await getMinyan(env, current.id));
+  return json(await getMinyan(env, current.id, actor));
 }
 
 export async function duplicateMinyan({ env, actor, params }) {

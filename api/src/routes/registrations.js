@@ -9,6 +9,7 @@ import { adminUrl, mailReady, sendMail, siteUrl } from '../mail.js';
 import { getSettings, saveSettings } from '../settings.js';
 import { clean, fields, id, normalizeEmail, normalizePhone } from '../validate.js';
 import { welcomeMail } from './admin.js';
+import { nameRow } from '../names.js';
 
 const enc = new TextEncoder();
 const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -156,18 +157,18 @@ async function notifyApprovers(env, url, r) {
 }
 
 // ------------------------------------------------------------------ approvers
-const LIST_SQL = `SELECT r.*, a.name AS area_name, u.name AS decided_by_name, s.name AS synagogue_current_name,
+const LIST_SQL = `SELECT r.*, a.name AS area_name, u.name AS decided_by_name, u.id AS dec_id, u.role AS dec_role, u.is_super AS dec_super, s.name AS synagogue_current_name,
   (SELECT id FROM users WHERE email = r.email) AS existing_user_id
   FROM registrations r LEFT JOIN areas a ON a.id = r.area_id LEFT JOIN users u ON u.id = r.decided_by
   LEFT JOIN synagogues s ON s.id = r.synagogue_id`;
-const serialize = ({ token_hash, token_expires, ...r }) => ({ ...r, existing_user: Boolean(r.existing_user_id) });
+const serialize = (viewer, { token_hash, token_expires, ...r }) => ({ ...nameRow(viewer, r, 'dec', 'decided_by_name'), existing_user: Boolean(r.existing_user_id) });
 
 /** GET /admin/registrations: every request, including those still waiting for e-mail verification. */
-export async function list({ env }) {
+export async function list({ env, actor }) {
   const rows = await all(env, `${LIST_SQL} ORDER BY r.status = 'pending' DESC, r.status = 'unverified' DESC, r.id DESC LIMIT 500`);
   const s = await getSettings(env);
   return json({
-    items: rows.map((r) => ({ ...serialize(r), expired: r.status === 'unverified' && r.token_expires < nowSec(), blocked: blocked(s.registration_blocklist, { email: r.email, phone: r.phone, ip: r.ip }) })),
+    items: rows.map((r) => ({ ...serialize(actor, r), expired: r.status === 'unverified' && r.token_expires < nowSec(), blocked: blocked(s.registration_blocklist, { email: r.email, phone: r.phone, ip: r.ip }) })),
     unverified: rows.filter((r) => r.status === 'unverified').length,
   });
 }

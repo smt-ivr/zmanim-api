@@ -256,7 +256,7 @@ describe('ivr management', () => {
     assert.doesNotMatch(body, /מנהל על/);
   });
 
-  test('choosing a synagogue: by area, then pages of 8 (no numbers to remember)', async () => {
+  test('choosing a synagogue: by area, then the whole list numbered on (10, 11 …)', async () => {
     await q(`INSERT INTO areas (name) VALUES ('גבעת שאול')`).run();
     const names = Array.from({ length: 10 }, (_, i) => `בית כנסת ${String.fromCharCode(1488 + i)}`);
     for (const n of names) await q(`INSERT INTO synagogues (name, area_id) VALUES (?, 2)`).bind(n).run();
@@ -266,13 +266,10 @@ describe('ivr management', () => {
     let body = await call.press('1');
     assert.match(body, /בחירת אזור\.t-לכל האזורים הקישו 0/);
     body = await call.press('1'); // גבעת שאול (areas are read alphabetically)
-    assert.match(body, /לבית כנסת א הקישו 1/);
-    assert.match(body, /לבתי כנסת נוספים הקישו 9/);
-    assert.doesNotMatch(body, /אחר/);
-    body = await call.press('9');
-    assert.match(body, /לבית כנסת ט הקישו 1\.t-לבית כנסת י הקישו 2/);
-    assert.match(body, /לבתי הכנסת הקודמים הקישו 0/);
-    body = await call.press('2');
+    assert.match(body, /בחירת בית כנסת\.t-הקישו את המספר ואחריו סולמית\.t-לבית כנסת א הקישו 1/);
+    assert.match(body, /לבית כנסת י הקישו 10\.t-לחזרה הקישו כוכבית=s\d+,no,2,1,/); // up to 2 digits
+    assert.doesNotMatch(body, /לאחר הקישו|נוספים/);
+    body = await call.press('10');
     assert.match(body, /read=t-בית כנסת י, זמני/);
   });
 

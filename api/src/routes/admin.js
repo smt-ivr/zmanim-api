@@ -7,6 +7,7 @@ import { fields, id } from '../validate.js';
 import { getSettings } from '../settings.js';
 import { CALCS } from '../zmanim.js';
 import { INFO_FIELDS, copySeason, parseFields, synagogueInfo, synagogueSettings } from './workspace.js';
+import { nameRow } from '../names.js';
 
 // ------------------------------------------------------------------ helpers
 async function assertIdsExist(env, table, ids, field) {
@@ -21,7 +22,7 @@ const replaceLinks = (env, table, ownerCol, ownerId, otherCol, ids) => [
 ];
 
 // ------------------------------------------------------------------ stats
-export async function stats({ env }) {
+export async function stats({ env, actor }) {
   const row = await first(
     env,
     `SELECT (SELECT COUNT(*) FROM synagogues) AS synagogues,
@@ -35,9 +36,9 @@ export async function stats({ env }) {
     `SELECT s.id, s.name, MAX(m.updated_at) AS updated_at FROM minyanim m JOIN synagogues s ON s.id = m.synagogue_id
      GROUP BY s.id ORDER BY updated_at DESC LIMIT 8`
   );
-  const activity = await all(env, `SELECT l.*, u.name AS user_name, s.name AS synagogue_name FROM minyan_log l
+  const activity = await all(env, `SELECT l.*, u.name AS user_name, u.id AS by_id, u.role AS by_role, u.is_super AS by_super, s.name AS synagogue_name FROM minyan_log l
     LEFT JOIN users u ON u.id = l.user_id JOIN synagogues s ON s.id = l.synagogue_id ORDER BY l.id DESC LIMIT 30`);
-  return json({ ...row, recent, activity });
+  return json({ ...row, recent, activity: activity.map((r) => nameRow(actor, r, 'by', 'user_name')) });
 }
 
 /** POST /admin/synagogues/:id/managers { user_id } — makes an existing manager responsible for the synagogue too. */
@@ -200,7 +201,7 @@ export async function listUsers({ env, actor }) {
     env,
     `SELECT u.*, (SELECT json_group_array(json_object('id', s.id, 'name', s.name))
                     FROM synagogue_managers sm JOIN synagogues s ON s.id = sm.synagogue_id WHERE sm.user_id = u.id) AS synagogues_json
-     FROM users u ${actor.is_super ? '' : 'WHERE NOT (u.is_super = 1 AND u.is_hidden = 1)'} ORDER BY u.is_super DESC, u.role, u.name`
+     FROM users u ${actor.is_super ? '' : 'WHERE u.is_super = 0'} ORDER BY u.is_super DESC, u.role, u.name`
   );
   const locks = await all(env, `SELECT key, locked_until FROM login_attempts WHERE locked_until > ?`, Math.floor(Date.now() / 1000));
   const lockedUntil = (u) => Math.max(0, ...locks.filter((l) =>
@@ -450,7 +451,7 @@ async function rotate(env) {
 
 /** The UI builds the full api_link from its own origin + this path. */
 export async function getIvr({ env, actor }) {
-  const hidden = actor?.is_super ? '' : 'AND NOT (is_super = 1 AND is_hidden = 1)';
+  const hidden = actor?.is_super ? '' : 'AND is_super = 0';
   const phones = await all(env, `SELECT name, phone, role FROM users WHERE phone IS NOT NULL AND is_active = 1 ${hidden} ORDER BY role, name`);
   return json({ key: await ivrKey(env), path: '/api/ivr', listen_path: '/api/ivr/listen', base_path: env.BASE_PATH || '', phones });
 }

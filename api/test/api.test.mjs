@@ -351,12 +351,33 @@ describe('super admin, profile, messages, control', () => {
     const { superToken, other, superId } = await superAndAdmin();
     assert.equal((await call('PATCH', `/admin/users/${superId}`, { token: other, body: { name: 'x' } })).status, 404);
     assert.equal((await call('DELETE', `/admin/users/${superId}`, { token: other })).status, 404);
-    assert.ok((await call('GET', '/admin/users', { token: other })).body.some((u) => u.id === superId));
+    assert.ok(!(await call('GET', '/admin/users', { token: other })).body.some((u) => u.id === superId)); // never listed to others
     await call('PATCH', '/me', { token: superToken, body: { is_hidden: true } });
     assert.ok(!(await call('GET', '/admin/users', { token: other })).body.some((u) => u.id === superId));
     assert.ok((await call('GET', '/admin/users', { token: superToken })).body.some((u) => u.id === superId));
     assert.equal((await call('PATCH', '/me', { token: other, body: { is_hidden: true } })).status, 403);
     assert.equal((await call('GET', '/admin/control', { token: other })).status, 403);
+  });
+
+  test('names in the history: the super admin is never named to others; managers see admins only as "מנהל"', async () => {
+    const { superToken, other } = await superAndAdmin();
+    await env.DB.prepare(`UPDATE users SET name = 'שם פרטי' WHERE is_super = 1`).run();
+    const s = await newSynagogue(superToken);
+    const g = await createManager(superToken, 'gg@x.com', [s.id]);
+    const add = (token, time) => call('POST', `/synagogues/${s.id}/minyanim`, { token, body: { prayer_id: 1, time_kind: 'fixed', time } });
+    assert.equal((await add(superToken, '06:00')).body.updated_by_name, 'שם פרטי'); // own name
+    await add(other, '07:00');
+    await add(g.token, '08:00');
+    const who = async (token) => (await call('GET', `/synagogues/${s.id}/log`, { token })).body.map((l) => l.user_name);
+    assert.deepEqual(await who(superToken), ['גבאי', 'מנהל שני', 'שם פרטי']);
+    assert.deepEqual(await who(other), ['גבאי', 'מנהל שני', 'מנהל']);
+    assert.deepEqual(await who(g.token), ['גבאי', 'מנהל', 'מנהל']);
+    const ws = (await call('GET', `/synagogues/${s.id}`, { token: g.token })).body.minyanim.map((m) => m.updated_by_name);
+    assert.deepEqual(ws, ['מנהל', 'מנהל', 'גבאי']);
+    const activity = (await call('GET', '/admin/stats', { token: other })).body.activity.map((l) => l.user_name);
+    assert.ok(!activity.includes('שם פרטי'));
+    assert.ok((await call('GET', '/public/minyanim')).body.every?.((m) => !m.updated_by_name) ?? true);
+    assert.ok(!JSON.stringify((await call('GET', '/public/minyanim')).body).includes('שם פרטי'));
   });
 
   test('users change only e-mail and password, unless blocked; login history', async () => {

@@ -1,5 +1,6 @@
 // History of minyan changes: who (user), how (web / phone), what (a short Hebrew summary).
 import { all, run } from './db.js';
+import { nameRow } from './names.js';
 
 /** One line describing a minyan, e.g. "שחרית 07:00, א׳-ה׳, היכל ראשי (זמני קיץ)". */
 export const describe = (m) =>
@@ -29,8 +30,9 @@ export async function logMinyan(env, who, { synagogueId, minyanId = null, action
   }
 }
 
-/** GET /synagogues/:sid/log[?minyan_id=] (newest first). */
-export const listLog = (env, synagogueId, minyanId = null) =>
-  all(env, `SELECT l.*, u.name AS user_name FROM minyan_log l LEFT JOIN users u ON u.id = l.user_id
+/** GET /synagogues/:sid/log[?minyan_id=] (newest first), with names as the viewer may see them. */
+export const listLog = async (env, synagogueId, minyanId = null, viewer = null) =>
+  (await all(env, `SELECT l.*, u.name AS user_name, u.id AS by_id, u.role AS by_role, u.is_super AS by_super
+    FROM minyan_log l LEFT JOIN users u ON u.id = l.user_id
     WHERE l.synagogue_id = ? ${minyanId ? 'AND l.minyan_id = ?' : ''} ORDER BY l.id DESC LIMIT 200`,
-    ...(minyanId ? [synagogueId, minyanId] : [synagogueId]));
+    ...(minyanId ? [synagogueId, minyanId] : [synagogueId]))).map((r) => nameRow(viewer, r, 'by', 'user_name'));

@@ -2,6 +2,7 @@
 import { all, first } from './db.js';
 import { invalid } from './http.js';
 import { SHABBAT_BIT, getSettings } from './settings.js';
+import { shownName } from './names.js';
 
 export const DAY_NAMES = ['א׳', 'ב׳', 'ג׳', 'ד׳', 'ה׳', 'ו׳', 'שבת'];
 export const ALL_DAYS = 127;
@@ -27,7 +28,8 @@ export function timeLabel(m) {
 
 export const MINYAN_SELECT = `
   SELECT m.*, p.name AS prayer_name, p.sort AS prayer_sort, l.name AS location_name,
-         se.name AS season_name, a.name AS anchor_name, a.calc AS anchor_calc, p.has_rosh_chodesh, ub.name AS updated_by_name
+         se.name AS season_name, a.name AS anchor_name, a.calc AS anchor_calc, p.has_rosh_chodesh,
+         ub.name AS updated_by_name, ub.id AS ub_id, ub.role AS ub_role, ub.is_super AS ub_super
   FROM minyanim m
   LEFT JOIN users ub ON ub.id = m.updated_by
   JOIN prayers p ON p.id = m.prayer_id
@@ -38,7 +40,8 @@ export const MINYAN_SELECT = `
 // Prayer order, then fixed times chronologically, then relative ones.
 export const MINYAN_ORDER = `ORDER BY p.sort, p.id, m.time_kind, m.time, m.anchor_id, m.offset_minutes, m.id`;
 
-export function serializeMinyan(r) {
+/** viewer: who will see it (the name of whoever updated it last is shown only to signed-in users, see names.js). */
+export function serializeMinyan(r, viewer = null) {
   return {
     id: r.id,
     synagogue_id: r.synagogue_id,
@@ -63,23 +66,23 @@ export function serializeMinyan(r) {
     notes: r.notes,
     is_active: r.is_active === 1,
     updated_at: r.updated_at,
-    updated_by_name: r.updated_by_name ?? null,
+    updated_by_name: viewer && r.updated_by_name ? shownName(viewer, { id: r.ub_id, name: r.updated_by_name, role: r.ub_role, is_super: r.ub_super }) : null,
     updated_via: r.updated_via ?? null,
   };
 }
 
-export async function getMinyan(env, id) {
+export async function getMinyan(env, id, viewer = null) {
   const row = await first(env, `${MINYAN_SELECT} WHERE m.id = ?`, id);
-  return row ? serializeMinyan(row) : null;
+  return row ? serializeMinyan(row, viewer) : null;
 }
 
-export async function listMinyanim(env, synagogueId, { activeOnly = false } = {}) {
+export async function listMinyanim(env, synagogueId, { activeOnly = false, viewer = null } = {}) {
   const rows = await all(
     env,
     `${MINYAN_SELECT} WHERE m.synagogue_id = ? ${activeOnly ? 'AND m.is_active = 1' : ''} ${MINYAN_ORDER}`,
     synagogueId
   );
-  return rows.map(serializeMinyan);
+  return rows.map((r) => serializeMinyan(r, viewer));
 }
 
 /**
