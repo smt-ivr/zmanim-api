@@ -233,10 +233,6 @@ function Home({ data, season: pickedSeason, setSeason }) {
         <span class="hero-phone-icon"><${Icon} name="phone" size=${20} /></span>
         <span><small>${phone.ready ? 'שמיעת הזמנים בטלפון' : 'בקרוב: שמיעת הזמנים בטלפון'}</small><b dir="ltr">${formatPhone(phone.phone)}</b></span>
       </a>`}
-      ${catalog.site?.contact_email && html`<a class="hero-phone hero-mail" href=${`mailto:${catalog.site.contact_email}`}>
-        <span class="hero-phone-icon"><${Icon} name="mail" size=${20} /></span>
-        <span><small>לפניות, תיקונים ובקשות</small><b dir="ltr">${catalog.site.contact_email}</b></span>
-      </a>`}
     </section>
 
     <div class="days" role="tablist" aria-label="יום">

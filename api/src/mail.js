@@ -75,7 +75,7 @@ export function renderPlain({ paragraphs = [], signature, pixel }) {
   const p = (t) => `<p style="margin:0 0 14px;line-height:1.8;font-size:15.5px;color:${C.text};white-space:pre-wrap">${esc(t)}</p>`;
   const sig = signature ? `<tr><td style="padding:14px 6px 0" dir="rtl">
       <a href="${esc(signature.url)}" style="text-decoration:none;color:${C.muted};font-size:13px;font-family:${FONT}">
-        <span style="display:inline-block;width:18px;height:18px;line-height:18px;border-radius:5px;background:${C.primary};color:#fff;text-align:center;font-size:11px;vertical-align:middle;margin-left:7px">&#128339;</span><span style="vertical-align:middle">${esc(signature.name)}</span></a>
+        ${esc(signature.name)}</a>
     </td></tr>` : '';
   return `<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"></head>
 <body dir="rtl" style="margin:0;padding:0;background:${C.bg};font-family:${FONT}">

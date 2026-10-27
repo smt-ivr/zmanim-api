@@ -115,7 +115,7 @@ describe('ivr management', () => {
     body = await admin.press('1');
     assert.match(body, /בית הכנסת נוצר, מספרו 1/);
     assert.equal((await q(`SELECT area_id FROM synagogues`).first()).area_id, 1);
-    body = await admin.press('6'); // managers
+    body = await admin.press('5'); // managers
     assert.match(body, /אין מנהלים/);
     body = await admin.press('1');
     body = await admin.press('0521112233');
@@ -162,10 +162,16 @@ describe('ivr management', () => {
       [['fixed', '06:30', null, null, 63], ['relative', null, 2, -15, 31]]
     );
 
-    // listen
+    // manage: choose a prayer (or 0 for all), the list is read, choose one
     body = await m.press('1');
-    assert.match(body, /מניין 1, שחרית, בשעה 6 30, ראשון עד שישי/);
-    assert.match(body, /מניין 2, מנחה, 15 דקות לפני שקיעה/);
+    assert.match(body, /בחירת תפילה\.t-לכל המניינים הקישו 0\.t-למנייני שחרית הקישו 1\.t-למנייני מנחה הקישו 2/);
+    body = await m.press('0');
+    assert.match(body, /יש 2 מניינים\.t-לבחירת מניין הקישו את המספר שלו\.t-שחרית, בשעה 6 30, ראשון עד שישי: הקישו 1\.t-מנחה, 15 דקות לפני שקיעה, ראשון עד חמישי: הקישו 2/);
+    body = await m.press('*');
+    body = await m.press('2'); // only mincha: its name is not repeated
+    assert.match(body, /יש מניין אחד\.t-לבחירת מניין הקישו את המספר שלו\.t-15 דקות לפני שקיעה, ראשון עד חמישי: הקישו 1/);
+    body = await m.press('1');
+    assert.match(body, /read=t-מנחה, 15 דקות לפני שקיעה, ראשון עד חמישי\.t-לשינוי שעה הקישו 1/);
   });
 
   test('validation errors are spoken, not crashed', async () => {
@@ -190,10 +196,10 @@ describe('ivr management', () => {
     await q(`INSERT INTO minyanim (synagogue_id, prayer_id, time_kind, time, season_id) VALUES (1, 1, 'fixed', '07:00', 1)`).run();
     const call = yemotCall('0583206823');
     await call.start();
+    await call.press('1'); // choose a synagogue
     await call.press('1');
-    await call.press('1');
-    await call.press('3'); // edit
-    let body = await call.press('1'); // minyan #1
+    await call.press('1'); // manage minyanim (one prayer: straight to the list)
+    let body = await call.press('1'); // the first minyan
     assert.match(body, /שחרית, בשעה 7/);
     body = await call.press('4'); // hide
     assert.match(body, /הוסתר/);
@@ -204,12 +210,9 @@ describe('ivr management', () => {
     assert.match(body, /בשעה 7 45/);
     await call.press('1');
     assert.equal((await q(`SELECT time FROM minyanim`).first()).time, '07:45');
-    await call.press('3');
-    await call.press('1');
+    await call.press('1'); // back in the list after saving: the minyan again
     body = await call.press('5'); // duplicate -> over quota
     assert.match(body, /הגעתם למכסה של 1 מניינים/);
-    await call.press('3');
-    await call.press('1');
     await call.press('6');
     body = await call.press('1');
     assert.match(body, /המניין נמחק/);

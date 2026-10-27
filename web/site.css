@@ -171,9 +171,3 @@ a.row:hover { background: var(--surface-2); }
 .credit { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); opacity: .85; }
 .credit:hover { opacity: 1; }
 .smt-logo { height: 15px; width: auto; color: var(--text); }
-.hero-phone:has(+ .hero-mail) { grid-row: 1; }
-.hero-mail { grid-row: 2; margin-top: 8px; }
-.hero-mail b { font-size: 16px; }
-.hero-mail .hero-phone-icon { background: rgba(255,255,255,.9); color: #234a9c; }
-@media (max-width: 720px) { .hero-mail { grid-row: auto; } }
-@media (max-width: 720px) { .hero-phone:has(+ .hero-mail) { grid-row: auto; } }

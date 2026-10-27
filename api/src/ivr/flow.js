@@ -118,6 +118,14 @@ async function anchorsFor(c, prayerId) {
 
 /** Spoken minyan; Shabbat is not mentioned while Shabbat is switched off. */
 // The caller always works inside one season (announced in the menu), so it is not repeated per minyan.
+/** Minyan management: prayer choice first when there is more than one prayer, otherwise straight to the list. */
+async function goManage(c, { back = false } = {}) {
+  const list = await seasonMinyanim(c);
+  if (!list.length) { c.say.push(text('אין עדיין מניינים בעונה זו')); return go(c, 'syn'); }
+  if (new Set(list.map((m) => m.prayer_id)).size > 1) return go(c, 'mFilter');
+  return back ? go(c, 'syn') : go(c, 'mList', { listPrayer: null, listPage: 0 });
+}
+
 /** Who did it, for the change log. */
 const byPhone = (c) => ({ userId: c.actor.id, via: 'phone' });
 
@@ -252,24 +260,19 @@ const SCREENS = {
     async prompt(c) {
       const s = await synagogue(c);
       const season = await workSeason(c);
-      const items = [['1', 'שמיעת המניינים']];
-      if (can(c, 'minyanim')) items.push(['2', 'הוספת מניין'], ['3', 'עריכת מניין'], ['4', 'ניהול מיקומים']);
-      if (c.actor.role === 'admin' && can(c, 'synagogues')) items.push(['5', 'הגדרות בית הכנסת']);
-      if (c.actor.role === 'admin' && can(c, 'managers')) items.push(['6', 'מנהלי בית הכנסת']);
+      const items = [['1', 'ניהול המניינים']];
+      if (can(c, 'minyanim')) items.push(['2', 'הוספת מניין'], ['3', 'ניהול מיקומים']);
+      if (c.actor.role === 'admin' && can(c, 'synagogues')) items.push(['4', 'הגדרות בית הכנסת']);
+      if (c.actor.role === 'admin' && can(c, 'managers')) items.push(['5', 'מנהלי בית הכנסת']);
       if ((await seasonsFor(c)).length > 1) items.push(['7', 'מעבר לעונה אחרת']);
       if (c.actor.role !== 'admin') items.push(['9', 'דרישת סיסמה בשיחה']);
       return menu(c, season ? `${s.name}, זמני ${season.name}` : s.name, items, { star: !c.state.data.single });
     },
     async handle(c, input) {
       const admin = c.actor.role === 'admin';
-      if (['2', '3', '4'].includes(input) && !can(c, 'minyanim')) return invalid(c);
+      if (['2', '3'].includes(input) && !can(c, 'minyanim')) return invalid(c);
       switch (input) {
-        case '1': {
-          const list = await seasonMinyanim(c);
-          if (!list.length) c.say.push(text('אין עדיין מניינים בעונה זו'));
-          list.forEach((m, i) => c.say.push(text(`מניין ${i + 1}, ${speakMinyanFor(c)(m)}`)));
-          return go(c, 'syn');
-        }
+        case '1': return goManage(c);
         case '2': {
           c.state.data.mode = 'add';
           const season = await workSeason(c);
@@ -277,10 +280,9 @@ const SCREENS = {
           c.state.data.draft = { days: c.settings.shabbat_enabled ? 127 : 63, location_id: null, season_id: season.id, notes: '', is_active: true };
           return go(c, 'mPrayer');
         }
-        case '3': return go(c, 'mEditPick');
-        case '4': return go(c, 'locs');
-        case '5': return admin && can(c, 'synagogues') ? go(c, 'synSettings') : invalid(c);
-        case '6': return admin && can(c, 'managers') ? go(c, 'synManagers') : invalid(c);
+        case '3': return go(c, 'locs');
+        case '4': return admin && can(c, 'synagogues') ? go(c, 'synSettings') : invalid(c);
+        case '5': return admin && can(c, 'managers') ? go(c, 'synManagers') : invalid(c);
         case '7': return (await seasonsFor(c)).length > 1 ? go(c, 'synSeason') : invalid(c);
         case '9': return c.actor.role !== 'admin' ? go(c, 'phonePw') : invalid(c);
         default: return invalid(c);
@@ -423,7 +425,7 @@ const SCREENS = {
       return menu(c, `המניין: ${summary}`, [['1', 'שמירה'], ['2', 'ביטול']]);
     },
     async handle(c, input) {
-      if (input === '2') { c.say.push(text('בוטל')); return go(c, 'syn'); }
+      if (input === '2') { c.say.push(text('בוטל')); return go(c, c.state.data.mode === 'edit' ? 'mEdit' : 'syn'); }
       if (input !== '1') return invalid(c);
       const s = await synagogue(c);
       const d = c.state.data.draft;
@@ -440,39 +442,71 @@ const SCREENS = {
         const changes = diff(before, after);
         if (changes) await logMinyan(c.env, byPhone(c), { synagogueId: s.id, minyanId: after.id, action: 'update', summary: `${after.prayer_name} ${before.time_label}: ${changes}` });
         c.say.push(text('המניין עודכן'));
+        return go(c, 'mList');
       }
       return go(c, 'syn');
     },
   },
 
-  mEditPick: {
+  // Managing minyanim: first which prayer (or 0 for all), then the list is read out, 8 at a time,
+  // and choosing one opens it. No numbers to remember.
+  mFilter: {
     back: 'syn',
     async prompt(c) {
       const list = await seasonMinyanim(c);
-      c.state.data.mins = list.map((m) => m.id);
-      if (!list.length) return { ...menu(c, 'אין עדיין מניינים בעונה זו', []) };
-      return number(['הקישו את מספר המניין וסולמית. מספרי המניינים מושמעים בשמיעת המניינים. לחזרה הקישו כוכבית']);
+      const prayers = [...new Map(list.map((m) => [m.prayer_id, { id: m.prayer_id, name: m.prayer_name }])).values()];
+      c.state.data.filterPrayers = prayers.map((p) => p.id);
+      return listChoice(c, 'בחירת תפילה', prayers, (p) => `מנייני ${p.name}`, { zero: 'כל המניינים' });
     },
-    async handle(c, input) {
-      const id = c.state.data.mins[Number(input) - 1];
-      if (!id) return invalid(c);
-      return go(c, 'mEdit', { editId: id });
+    handle(c, input) {
+      const i = chosenIndex(input, c.state.data.filterPrayers, { zero: true });
+      if (i === null) return invalid(c);
+      return go(c, 'mList', { listPrayer: i === -1 ? null : c.state.data.filterPrayers[i], listPage: 0 });
+    },
+  },
+  mList: {
+    back: (c) => goManage(c, { back: true }),
+    async prompt(c) {
+      const page = c.state.data.listPage || 0;
+      const all = (await seasonMinyanim(c)).filter((m) => !c.state.data.listPrayer || m.prayer_id === c.state.data.listPrayer);
+      if (!all.length) { c.say.push(text('אין מניינים')); return go(c, 'syn'); }
+      if (page * PAGE >= all.length) return go(c, 'mList', { listPage: Math.max(0, Math.ceil(all.length / PAGE) - 1) });
+      const rows = all.slice(page * PAGE, page * PAGE + PAGE);
+      c.state.data.list = rows.map((m) => m.id);
+      // With one prayer chosen its name is not repeated for every minyan
+      const say = (m) => speakMinyanFor(c)({ ...m, prayer_name: c.state.data.listPrayer ? null : m.prayer_name });
+      // "שחרית בשעה 6 30, ראשון עד שישי, בהיכל הראשי: הקישו 1"
+      const parts = [];
+      if (!page) parts.push(text(all.length === 1 ? 'יש מניין אחד' : `יש ${all.length} מניינים`), text('לבחירת מניין הקישו את המספר שלו'));
+      rows.forEach((m, i) => parts.push(text(`${say(m)}: הקישו ${i + 1}`)));
+      if (all.length > (page + 1) * PAGE) parts.push(text('למניינים הבאים הקישו 9'));
+      if (page > 0) parts.push(text('למניינים הקודמים הקישו 0'));
+      parts.push(text('לחזרה הקישו כוכבית'));
+      return { messages: parts, opts: { max: 1, min: 1 } };
+    },
+    handle(c, input) {
+      if (input === '9') return go(c, 'mList', { listPage: (c.state.data.listPage || 0) + 1 });
+      if (input === '0' && c.state.data.listPage > 0) return go(c, 'mList', { listPage: c.state.data.listPage - 1 });
+      const id = c.state.data.list?.[Number(input) - 1];
+      return id ? go(c, 'mEdit', { editId: id }) : invalid(c);
     },
   },
   mEdit: {
-    back: 'syn',
+    back: 'mList',
     async prompt(c) {
       const m = await getMinyan(c.env, c.state.data.editId);
-      if (!m || m.synagogue_id !== c.state.data.sid) { c.say.push(text('המניין לא נמצא')); return SCREENS.syn.prompt((c.state.screen = 'syn', c)); }
+      if (!m || m.synagogue_id !== c.state.data.sid) { c.say.push(text('המניין לא נמצא')); return go(c, 'mList'); }
+      if (!can(c, 'minyanim')) return menu(c, speakMinyanFor(c)(m), []); // looking only
       return menu(c, speakMinyanFor(c)(m), [
         ['1', 'שינוי שעה'], ['2', 'שינוי ימים'], ['3', 'שינוי מיקום'], ['4', m.is_active ? 'הסתרה מהציבור' : 'הצגה לציבור'],
         ['5', 'שכפול'], ['6', 'מחיקה'],
       ]);
     },
     async handle(c, input) {
+      if (!can(c, 'minyanim')) return invalid(c);
       const s = await synagogue(c);
       const m = await first(c.env, `SELECT * FROM minyanim WHERE id = ? AND synagogue_id = ?`, c.state.data.editId, s.id);
-      if (!m) return go(c, 'syn');
+      if (!m) return go(c, 'mList');
       await requireSeasonAccess(c.env, c.actor, s, m.season_id); // other seasons are read-only for managers
       c.state.data.mode = 'edit';
       c.state.data.origSeason = m.season_id;
@@ -489,9 +523,15 @@ const SCREENS = {
           c.say.push(text(m.is_active ? 'המניין הוסתר מהציבור' : 'המניין מוצג לציבור'));
           return go(c, 'mEdit');
         case '5':
-          await insertMinyan(c.env, s, { ...c.state.data.draft, is_active: false }, byPhone(c), { action: 'duplicate' });
+          try {
+            await insertMinyan(c.env, s, { ...c.state.data.draft, is_active: false }, byPhone(c), { action: 'duplicate' });
+          } catch (err) { // e.g. over quota: say why and stay on this minyan
+            if (!(err instanceof HttpError)) throw err;
+            c.say.push(text(err.fields ? Object.values(err.fields).join(', ') : err.message));
+            return go(c, 'mEdit');
+          }
           c.say.push(text('המניין שוכפל ונשמר מוסתר. שנו את השעה שלו והציגו אותו לציבור'));
-          return go(c, 'syn');
+          return go(c, 'mList');
         case '6': return go(c, 'mDelete');
         default: return invalid(c);
       }
@@ -506,7 +546,7 @@ const SCREENS = {
         const res = await run(c.env, `DELETE FROM minyanim WHERE id = ? AND synagogue_id = ?`, c.state.data.editId, c.state.data.sid);
         if (res.meta.changes) await logMinyan(c.env, byPhone(c), { synagogueId: c.state.data.sid, minyanId: before.id, action: 'delete', summary: `נמחק: ${describe(before)}` });
         c.say.push(text('המניין נמחק'));
-        return go(c, 'syn');
+        return go(c, 'mList');
       }
       return input === '2' ? go(c, 'mEdit') : invalid(c);
     },
