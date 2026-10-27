@@ -53,7 +53,7 @@ export function AdminUsers({ me, system }) {
       : html`<div class="table-wrap card"><table class="table">
           <thead><tr><th>שם</th><th>תפקיד</th><th>בתי כנסת</th><th>כניסה אחרונה</th><th /></tr></thead>
           <tbody>${shown.map((u) => html`<tr key=${u.id} class=${u.is_active ? '' : 'inactive'}>
-            <td><b>${u.name}</b>${u.is_super && html` <${Badge} tone="info">מנהל על<//>`}${u.is_super && u.is_hidden && html` <${Badge}>מוסתר<//>`}${u.id === me.id && html` <${Badge} tone="info">זה אתה<//>`}${!u.is_active && html` <${Badge} tone="warn">מושבת<//>`}
+            <td><b>${u.name}</b>${u.is_super && u.is_hidden && html` <${Badge}>מוסתר<//>`}${u.id === me.id && html` <${Badge} tone="info">זה אתה<//>`}${!u.is_active && html` <${Badge} tone="warn">מושבת<//>`}
               <div class="muted small" dir="ltr">${[u.email, u.phone].filter(Boolean).join(' · ')}</div>
               <div class="row gap-sm">${u.locked_until && html`<${Badge} tone="warn">נעול עד ${new Date(u.locked_until * 1000).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}<//>`}${u.role === 'admin' && !u.is_super && u.perms.length < Object.keys(PERMS).length - 1 && html`<${Badge} tone="info">${u.perms.length ? `הרשאות חלקיות (${u.perms.length})` : 'צפייה בלבד'}<//>`}${u.must_change_password && html`<${Badge} tone="warn">חייב להחליף סיסמה<//>`}${u.phone_requires_password && html`<${Badge}>סיסמה בטלפון<//>`}${!u.can_message && html`<${Badge} tone="warn">חסום מפניות<//>`}</div></td>
             <td><${Badge} tone=${u.role === 'admin' ? 'info' : 'neutral'}>${ROLE[u.role]}<//></td>
@@ -117,7 +117,7 @@ function UserModal({ user, me, mailReady, synagogues, onClose, onSaved }) {
         ? html`<${Field} group label="בתי הכנסת שהוא מנהל" error=${errors.synagogue_ids}>
             <${CheckList} searchable options=${synagogues.map((s) => ({ value: s.id, label: s.name, sub: s.area_name || '' }))} value=${v.synagogue_ids} onChange=${set('synagogue_ids')} empty="אין בתי כנסת" /><//>`
         : user?.is_super
-          ? html`<div class="alert alert-info">מנהל העל יכול לעשות הכל.</div>`
+          ? html`<div class="alert alert-info">למשתמש זה יש את כל ההרשאות.</div>`
           : me.is_super
             ? html`<${Field} group label="מה מנהל המערכת הזה יכול לעשות" hint="צפייה בכל בתי הכנסת והמשתמשים מותרת תמיד. מה שלא מסומן חסום, גם באתר וגם בטלפון">
                 <${CheckList} options=${Object.entries(PERMS).map(([value, label]) => ({ value, label }))} value=${v.admin_perms} onChange=${set('admin_perms')} />
@@ -126,7 +126,7 @@ function UserModal({ user, me, mailReady, synagogues, onClose, onSaved }) {
                   <button type="button" class="link" onClick=${() => set('admin_perms')(DEFAULT_PERMS)}>ברירת מחדל</button>
                   <button type="button" class="link" onClick=${() => set('admin_perms')([])}>צפייה בלבד</button>
                 </div><//>`
-            : html`<div class="alert alert-info">את ההרשאות של מנהלי מערכת קובע מנהל העל.</div>`}
+            : html`<div class="alert alert-info">אין לך הרשאה לשנות הרשאות של מנהלים.</div>`}
       ${!self && html`<${Toggle} checked=${v.is_active} onChange=${set('is_active')} label="משתמש פעיל" hint="השבתה מנתקת את המשתמש מיד ומונעת כניסה" />`}
       ${!self && html`<${Toggle} checked=${v.must_change_password} onChange=${set('must_change_password')}
         label="חיוב החלפת סיסמה בכניסה הבאה" hint="המשתמש לא יוכל לעשות שום דבר עד שיבחר סיסמה משלו" />`}

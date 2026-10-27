@@ -83,7 +83,7 @@ export async function login(env, request, identifier, password) {
   if (!user || !user.password_hash || !ok || !user.is_active) {
     await recordFailure(env, keys.email, LIMITS.email);
     await recordFailure(env, keys.ip, LIMITS.ip);
-    throw unauthorized(user && ok ? 'המשתמש מושבת. פנו למנהל המערכת' : 'שם משתמש או סיסמה שגויים');
+    throw unauthorized(user && ok ? 'המשתמש מושבת. פנו להנהלה' : 'שם משתמש או סיסמה שגויים');
   }
   await run(env, `DELETE FROM login_attempts WHERE key = ?`, keys.email);
   return createSession(env, request, user, 'סיסמה');
@@ -169,6 +169,7 @@ export const cleanup = (env) =>
     env.DB.prepare(`DELETE FROM login_log WHERE created_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-180 days')`),
     env.DB.prepare(`DELETE FROM email_tokens WHERE expires_at < ?`).bind(nowSec() - 86400),
     env.DB.prepare(`DELETE FROM registrations WHERE status = 'unverified' AND token_expires < ?`).bind(nowSec() - 86400),
+    env.DB.prepare(`DELETE FROM minyan_log WHERE created_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-2 years')`),
   ]);
 
 // ------------------------------------------------------------------ admin permissions
@@ -195,7 +196,7 @@ function permsOf(u) {
 
 export function requirePerm(actor, perm) {
   requireAdmin(actor);
-  if (!actor.perms.includes(perm)) throw forbidden(`אין לך הרשאה לפעולה זו (${PERMS[perm]}). לשינוי פנו למנהל העל`);
+  if (!actor.perms.includes(perm)) throw forbidden(`אין לך הרשאה לפעולה זו (${PERMS[perm]}). לשינוי פנו להנהלה`);
 }
 
 export function publicUser(u) {
@@ -222,11 +223,11 @@ export function publicUser(u) {
 
 // ------------------------------------------------------------------ access checks
 export function requireAdmin(actor) {
-  if (actor.role !== 'admin') throw forbidden('פעולה זו שמורה למנהל המערכת');
+  if (actor.role !== 'admin') throw forbidden('אין לך הרשאה לפעולה זו');
 }
 
 export function requireSuper(actor) {
-  if (!actor.is_super) throw forbidden('פעולה זו שמורה למנהל העל');
+  if (!actor.is_super) throw forbidden('אין לך הרשאה לפעולה זו');
 }
 
 export const canAccess = (actor, synagogueId) => actor.role === 'admin' || actor.synagogue_ids.includes(synagogueId);

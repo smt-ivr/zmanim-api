@@ -187,7 +187,7 @@ export function Inbox() {
   };
 
   return html`<div class="page narrow">
-    <header class="page-head"><div><h1>פניות לצוות הפיתוח</h1><p class="muted">רק מנהל העל רואה את הפניות. ${unread ? `${unread} לא נקראו` : 'הכל נקרא'}</p></div>
+    <header class="page-head"><div><h1>פניות לצוות הפיתוח</h1><p class="muted">${unread ? `${unread} לא נקראו` : 'הכל נקרא'}</p></div>
       <div class="segmented"><button class=${cx(filter === 'all' && 'on')} onClick=${() => setFilter('all')}>הכל</button><button class=${cx(filter === 'unread' && 'on')} onClick=${() => setFilter('unread')}>לא נקראו</button></div>
     </header>
     ${shown.length === 0

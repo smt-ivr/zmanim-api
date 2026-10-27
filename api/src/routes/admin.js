@@ -48,8 +48,8 @@ function parseSynagogue(body, partial) {
     .str('notes', { max: 1000 })
     .bool('is_active', { default: true })
     .subset('editable_fields', INFO_FIELDS, { default: [] })
-    .int('max_locations', { min: 0, max: 100, default: 5 })
-    .int('max_minyanim', { min: 0, max: 1000, default: 50 })
+    .int('max_locations', { min: 0, max: 1000, default: 0 }) // 0 = unlimited
+    .int('max_minyanim', { min: 0, max: 10000, default: 0 })
     .bool('restrict_prayers', { default: false })
     .bool('allow_other_seasons', { default: false })
     .bool('allow_interval', { default: false })
@@ -247,8 +247,8 @@ export async function patchUser(ctx) {
   guardSuper(actor, current);
   const d = parseUser(await readJson(request), true);
   if (uid !== actor.id) requireUserPerm(actor, current.role, d.role);
-  if (d.admin_perms !== undefined && !actor.is_super) throw forbidden('רק מנהל העל קובע הרשאות של מנהלים');
-  if (current.is_super && d.role && d.role !== 'admin') throw forbidden('מנהל העל נשאר מנהל מערכת');
+  if (d.admin_perms !== undefined && !actor.is_super) throw forbidden('אין לך הרשאה לשנות הרשאות');
+  if (current.is_super && d.role && d.role !== 'admin') throw forbidden('לא ניתן לשנות את התפקיד של משתמש זה');
 
   if (uid === actor.id && ((d.role && d.role !== 'admin') || d.is_active === false)) {
     throw forbidden('לא ניתן להוריד הרשאות או להשבית את עצמך');
@@ -286,7 +286,7 @@ export async function deleteUser({ env, actor, params }) {
   const target = await first(env, `SELECT * FROM users WHERE id = ?`, uid);
   if (!target) throw notFound('המשתמש לא נמצא');
   guardSuper(actor, target);
-  if (target.is_super) throw forbidden('לא ניתן למחוק את מנהל העל');
+  if (target.is_super) throw forbidden('לא ניתן למחוק משתמש זה');
   requireUserPerm(actor, target.role);
   const res = await run(env, `DELETE FROM users WHERE id = ?`, uid);
   if (!res.meta.changes) throw notFound('המשתמש לא נמצא');

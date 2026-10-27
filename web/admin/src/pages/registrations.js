@@ -24,19 +24,19 @@ export function RegisterPage() {
   if (!form) return html`<${AuthCard} title="הצטרפות בית כנסת" subtitle="טוען…"><div class="loading"><span class="spinner" /></div><//>`;
   if (!form.enabled) {
     return html`<${AuthCard} title="הצטרפות בית כנסת" subtitle="ההרשמה העצמית סגורה כרגע">
-      <p class="muted center">להוספת בית כנסת פנו למנהל המערכת.</p><a class="btn btn-secondary btn-block" href="#/">למסך הכניסה</a><//>`;
+      <p class="muted center">להוספת בית כנסת פנו להנהלה.</p><a class="btn btn-secondary btn-block" href="#/">למסך הכניסה</a><//>`;
   }
   if (sent) {
     return html`<${AuthCard} title="כמעט סיימנו" subtitle=${`שלחנו מייל אל ${v.email}`}>
       <div class="steps">
         <div class="step done"><b>1</b><span>שליחת הבקשה</span></div>
         <div class="step on"><b>2</b><span>אימות המייל: לחצו על הכפתור במייל</span></div>
-        <div class="step"><b>3</b><span>אישור מנהל המערכת, ומייל עם כניסה ישירה</span></div>
+        <div class="step"><b>3</b><span>אישור, ומייל עם כניסה ישירה</span></div>
       </div>
       <p class="muted small center">לא הגיע? בדקו בתיקיית הספאם. הקישור תקף ל-24 שעות.</p>
       <a class="btn btn-secondary btn-block" href="#/">למסך הכניסה</a><//>`;
   }
-  return html`<${AuthCard} title="הצטרפות בית כנסת" subtitle="אחרי אימות המייל ואישור מנהל המערכת תקבלו כניסה לעדכון הזמנים">
+  return html`<${AuthCard} title="הצטרפות בית כנסת" subtitle="אחרי אימות המייל והאישור תקבלו כניסה לעדכון הזמנים">
     <form class="form" onSubmit=${submit}>
       ${error && html`<div class="alert alert-error">${error}</div>`}
       <${Field} label="שם בית הכנסת" error=${fields.synagogue_name}><${Input} value=${v.synagogue_name} onInput=${set('synagogue_name')} required maxlength="80" autofocus /><//>
@@ -72,7 +72,7 @@ export function VerifyPage({ token }) {
   const decided = state.status === 'approved' ? 'הבקשה כבר אושרה. בדקו במייל את פרטי הכניסה.' : state.status === 'rejected' ? 'הבקשה כבר טופלה.' : null;
   return html`<${AuthCard} title="המייל אומת" subtitle=${state.synagogue_name}>
     <div class="auth-success"><span>✓</span></div>
-    <p class="center">${decided || 'הבקשה הועברה לאישור מנהל המערכת. כשתאושר יישלח אליכם מייל עם כפתור לכניסה ישירה.'}</p>
+    <p class="center">${decided || 'הבקשה הועברה לאישור. כשתאושר יישלח אליכם מייל עם כפתור לכניסה ישירה.'}</p>
     <a class="btn btn-secondary btn-block" href="#/">למסך הכניסה</a>
   <//>`;
 }
@@ -175,7 +175,7 @@ function BlockModal({ r, onClose, onDone }) {
       <${Field} group label="מה לחסום מהצטרפות" hint=${/gmail|walla|yahoo|hotmail|outlook/.test(r.email) ? 'שימו לב: חסימת דומיין של שירות מייל ציבורי תחסום את כל המשתמשים בו' : ''}>
         <${CheckList} options=${options.map(([value, label]) => ({ value, label }))} value=${v.what} onChange=${set('what')} /><//>
       ${(r.status === 'pending' || r.status === 'unverified') && html`<div class="alert alert-info">הבקשה תסומן כנדחתה, בלי לשלוח מייל למבקש.</div>`}
-      <p class="muted small">את רשימת החסומים המלאה מנהל העל מנהל בעמוד "חסימות ונעילות".</p>`}
+      <p class="muted small">את רשימת החסומים המלאה מנהלים בעמוד "חסימות ונעילות".</p>`}
   <//>`;
 }
 

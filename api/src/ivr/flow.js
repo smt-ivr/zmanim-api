@@ -4,6 +4,7 @@ import { actorFor, checkLock, logLoginStatement, recordFailure, verifyPassword }
 import { all, first, nowIso, run, setClause } from '../db.js';
 import { HttpError } from '../http.js';
 import { getMinyan, listMinyanim, validateMinyan } from '../minyan.js';
+import { describe, diff, logMinyan } from '../minyanLog.js';
 import { INFO_FIELDS, MINYAN_COLUMNS, insertMinyan, parseFields, requireSeasonAccess } from '../routes/workspace.js';
 import { currentSeason, getSettings, visibleDays } from '../settings.js';
 import { normalizePhone } from '../validate.js';
@@ -67,12 +68,32 @@ async function mySynagogues(c) {
     : all(c.env, `SELECT s.id, s.name FROM synagogue_managers sm JOIN synagogues s ON s.id = sm.synagogue_id WHERE sm.user_id = ? ORDER BY s.name`, c.user.id);
 }
 
+const PAGE = 8;
+
+/** One page of the synagogues this caller can open (admins: in the chosen area), alphabetically. */
+function listPage(c, page) {
+  if (c.actor.role === 'admin') {
+    const area = c.state.data.area;
+    return all(c.env, `SELECT id, name FROM synagogues ${area ? 'WHERE area_id = ?' : ''} ORDER BY name LIMIT ? OFFSET ?`,
+      ...(area ? [area] : []), PAGE + 1, page * PAGE);
+  }
+  return all(c.env, `SELECT s.id, s.name FROM synagogue_managers sm JOIN synagogues s ON s.id = sm.synagogue_id WHERE sm.user_id = ? ORDER BY s.name LIMIT ? OFFSET ?`,
+    c.user.id, PAGE + 1, page * PAGE);
+}
+
+/** Areas first when there is more than one with synagogues; otherwise straight to the list. */
+async function goAreas(c, { back = false } = {}) {
+  const { n } = await first(c.env, `SELECT COUNT(DISTINCT area_id) AS n FROM synagogues WHERE area_id IS NOT NULL`);
+  if (n > 1) return go(c, 'synArea');
+  return back ? go(c, 'home') : go(c, 'synList', { area: null, page: 0 });
+}
+
 async function goHome(c) {
   if (c.actor.role === 'admin') return go(c, 'home');
   const list = await mySynagogues(c);
-  if (list.length === 0) return end(c, 'עדיין לא שויכת לאף בית כנסת. פנו למנהל המערכת');
+  if (list.length === 0) return end(c, 'עדיין לא שויכת לאף בית כנסת. פנו להנהלה');
   if (list.length === 1) return go(c, 'syn', { sid: list[0].id, single: true });
-  return go(c, 'home');
+  return go(c, 'synList', { page: 0 });
 }
 
 const goSynagogueOrHome = (c) => (c.state.data.sid ? go(c, 'syn') : goHome(c));
@@ -97,6 +118,9 @@ async function anchorsFor(c, prayerId) {
 
 /** Spoken minyan; Shabbat is not mentioned while Shabbat is switched off. */
 // The caller always works inside one season (announced in the menu), so it is not repeated per minyan.
+/** Who did it, for the change log. */
+const byPhone = (c) => ({ userId: c.actor.id, via: 'phone' });
+
 /** Managers may always edit their own synagogues; admins need the permission. */
 const can = (c, perm) => c.actor.role !== 'admin' || c.actor.perms.includes(perm);
 
@@ -135,43 +159,59 @@ const SCREENS = {
     async prompt(c) {
       if (c.actor.role === 'admin') {
         return menu(c, 'תפריט ראשי', [
-          ['1', 'כניסה לבית כנסת לפי מספר'], ['2', 'שמיעת רשימת בתי הכנסת'],
-          ...(can(c, 'synagogues') ? [['3', 'הוספת בית כנסת']] : []),
-          ...(can(c, 'admins') ? [['4', 'ניהול מנהלי מערכת']] : []),
-          ['5', 'דרישת סיסמה בשיחה'],
+          ['1', 'בחירת בית כנסת'],
+          ...(can(c, 'synagogues') ? [['2', 'הוספת בית כנסת']] : []),
+          ...(can(c, 'admins') ? [['3', 'ניהול מנהלי מערכת']] : []),
+          ['4', 'דרישת סיסמה בשיחה'],
         ], { star: false });
       }
-      const list = await mySynagogues(c);
-      c.state.data.list = list.map((s) => s.id);
-      return menu(c, 'בחירת בית כנסת', [...list.slice(0, 8).map((s, i) => [String(i + 1), s.name]), ['9', 'דרישת סיסמה בשיחה']], { star: false });
+      return SCREENS.synList.prompt(c);
     },
     async handle(c, input) {
-      if (c.actor.role !== 'admin') {
-        if (input === '9') return go(c, 'phonePw');
-        const sid = c.state.data.list?.[Number(input) - 1];
-        return sid ? go(c, 'syn', { sid, single: false }) : invalid(c);
-      }
-      if (input === '1') return go(c, 'synPick');
-      if (input === '2') {
-        const list = await mySynagogues(c);
-        if (!list.length) c.say.push(text('אין עדיין בתי כנסת'));
-        for (const s of list.slice(0, 40)) c.say.push(text(`בית כנסת מספר ${s.id}, ${s.name}`));
-        return go(c, 'home');
-      }
-      if (input === '3') return can(c, 'synagogues') ? go(c, 'synNewName') : invalid(c);
-      if (input === '4') return can(c, 'admins') ? go(c, 'admins') : invalid(c);
-      if (input === '5') return go(c, 'phonePw');
+      if (c.actor.role !== 'admin') return SCREENS.synList.handle(c, input);
+      if (input === '1') return goAreas(c);
+      if (input === '2') return can(c, 'synagogues') ? go(c, 'synNewName') : invalid(c);
+      if (input === '3') return can(c, 'admins') ? go(c, 'admins') : invalid(c);
+      if (input === '4') return go(c, 'phonePw');
       return invalid(c);
     },
   },
 
-  synPick: {
+  // Choosing a synagogue: by area, then a list read 8 at a time (no numbers to remember).
+  synArea: {
     back: 'home',
-    prompt: () => number(['הקישו את מספר בית הכנסת וסולמית. לחזרה הקישו כוכבית']),
-    async handle(c, input) {
-      const s = await first(c.env, `SELECT id FROM synagogues WHERE id = ?`, Number(input));
-      if (!s) { c.say.push(text('בית כנסת לא נמצא')); return go(c, 'synPick'); }
-      return go(c, 'syn', { sid: s.id, single: false });
+    async prompt(c) {
+      const areas = await all(c.env, `SELECT a.id, a.name FROM areas a WHERE EXISTS (SELECT 1 FROM synagogues s WHERE s.area_id = a.id) ORDER BY a.sort, a.name`);
+      c.state.data.areas = areas.map((a) => a.id);
+      return listChoice(c, 'בחירת אזור', areas, (a) => a.name, { zero: 'כל האזורים' });
+    },
+    handle(c, input) {
+      const i = chosenIndex(input, c.state.data.areas, { zero: true });
+      if (i === null) return invalid(c);
+      return go(c, 'synList', { area: i === -1 ? null : c.state.data.areas[i], page: 0 });
+    },
+  },
+  synList: {
+    back: (c) => (c.actor.role === 'admin' ? goAreas(c, { back: true }) : end(c)),
+    async prompt(c) {
+      const page = c.state.data.page || 0;
+      const rows = await listPage(c, page);
+      c.state.data.list = rows.slice(0, PAGE).map((s) => s.id);
+      if (!rows.length) {
+        c.say.push(text(page ? 'אין בתי כנסת נוספים' : 'אין בתי כנסת'));
+        if (page) return go(c, 'synList', { page: page - 1 });
+        return c.actor.role === 'admin' ? go(c, 'home') : end(c, 'עדיין לא שויכת לאף בית כנסת. פנו להנהלה');
+      }
+      const items = rows.slice(0, PAGE).map((s, i) => [String(i + 1), s.name]);
+      if (rows.length > PAGE) items.push(['9', 'בתי כנסת נוספים']);
+      if (page > 0) items.push(['0', 'בתי הכנסת הקודמים']);
+      return menu(c, page ? '' : 'בחירת בית כנסת', items, { star: c.actor.role === 'admin' });
+    },
+    handle(c, input) {
+      if (input === '9') return go(c, 'synList', { page: (c.state.data.page || 0) + 1 });
+      if (input === '0' && c.state.data.page > 0) return go(c, 'synList', { page: c.state.data.page - 1 });
+      const sid = c.state.data.list?.[Number(input) - 1];
+      return sid ? go(c, 'syn', { sid, single: false }) : invalid(c);
     },
   },
 
@@ -200,7 +240,7 @@ const SCREENS = {
     async handle(c, input) {
       const i = chosenIndex(input, c.state.data.areas);
       if (i === null) return invalid(c);
-      const res = await run(c.env, `INSERT INTO synagogues (name, area_id) VALUES (?, ?)`, c.state.data.newName, c.state.data.areas[i]);
+      const res = await run(c.env, `INSERT INTO synagogues (name, area_id, max_minyanim, max_locations) VALUES (?, ?, 0, 0)`, c.state.data.newName, c.state.data.areas[i]);
       c.say.push(text(`בית הכנסת נוצר, מספרו ${res.meta.last_row_id}`));
       return go(c, 'syn', { sid: res.meta.last_row_id, single: false });
     },
@@ -208,7 +248,7 @@ const SCREENS = {
 
   // -------------------------------------------------------------- inside a synagogue
   syn: {
-    back: (c) => (c.state.data.single ? end(c) : goHome(c)),
+    back: (c) => (c.state.data.single ? end(c) : go(c, 'synList')),
     async prompt(c) {
       const s = await synagogue(c);
       const season = await workSeason(c);
@@ -217,7 +257,7 @@ const SCREENS = {
       if (c.actor.role === 'admin' && can(c, 'synagogues')) items.push(['5', 'הגדרות בית הכנסת']);
       if (c.actor.role === 'admin' && can(c, 'managers')) items.push(['6', 'מנהלי בית הכנסת']);
       if ((await seasonsFor(c)).length > 1) items.push(['7', 'מעבר לעונה אחרת']);
-      if (c.state.data.single) items.push(['9', 'דרישת סיסמה בשיחה']);
+      if (c.actor.role !== 'admin') items.push(['9', 'דרישת סיסמה בשיחה']);
       return menu(c, season ? `${s.name}, זמני ${season.name}` : s.name, items, { star: !c.state.data.single });
     },
     async handle(c, input) {
@@ -242,7 +282,7 @@ const SCREENS = {
         case '5': return admin && can(c, 'synagogues') ? go(c, 'synSettings') : invalid(c);
         case '6': return admin && can(c, 'managers') ? go(c, 'synManagers') : invalid(c);
         case '7': return (await seasonsFor(c)).length > 1 ? go(c, 'synSeason') : invalid(c);
-        case '9': return c.state.data.single ? go(c, 'phonePw') : invalid(c);
+        case '9': return c.actor.role !== 'admin' ? go(c, 'phonePw') : invalid(c);
         default: return invalid(c);
       }
     },
@@ -389,12 +429,16 @@ const SCREENS = {
       const d = c.state.data.draft;
       await requireSeasonAccess(c.env, c.actor, s, d.season_id, c.state.data.origSeason);
       if (c.state.data.mode === 'add') {
-        await insertMinyan(c.env, s, d);
+        await insertMinyan(c.env, s, d, byPhone(c));
         c.say.push(text('המניין נשמר'));
       } else {
         const row = await validateMinyan(c.env, s, { ...d, id: c.state.data.editId });
         const set = setClause(row, MINYAN_COLUMNS);
+        const before = await getMinyan(c.env, c.state.data.editId);
         await run(c.env, `UPDATE minyanim SET ${set.sql}, updated_at = ? WHERE id = ? AND synagogue_id = ?`, ...set.params, nowIso(), c.state.data.editId, s.id);
+        const after = await getMinyan(c.env, c.state.data.editId);
+        const changes = diff(before, after);
+        if (changes) await logMinyan(c.env, byPhone(c), { synagogueId: s.id, minyanId: after.id, action: 'update', summary: `${after.prayer_name} ${before.time_label}: ${changes}` });
         c.say.push(text('המניין עודכן'));
       }
       return go(c, 'syn');
@@ -440,10 +484,12 @@ const SCREENS = {
         case '4':
           if (!m.is_active) await validateMinyan(c.env, s, { ...c.state.data.draft, id: m.id, is_active: true }); // no clash when shown
           await run(c.env, `UPDATE minyanim SET is_active = ?, updated_at = ? WHERE id = ?`, m.is_active ? 0 : 1, nowIso(), m.id);
+          await logMinyan(c.env, byPhone(c), { synagogueId: s.id, minyanId: m.id, action: m.is_active ? 'hide' : 'show',
+            summary: `${describe(await getMinyan(c.env, m.id))}: ${m.is_active ? 'הוסתר מהציבור' : 'הוצג לציבור'}` });
           c.say.push(text(m.is_active ? 'המניין הוסתר מהציבור' : 'המניין מוצג לציבור'));
           return go(c, 'mEdit');
         case '5':
-          await insertMinyan(c.env, s, { ...c.state.data.draft, is_active: false });
+          await insertMinyan(c.env, s, { ...c.state.data.draft, is_active: false }, byPhone(c), { action: 'duplicate' });
           c.say.push(text('המניין שוכפל ונשמר מוסתר. שנו את השעה שלו והציגו אותו לציבור'));
           return go(c, 'syn');
         case '6': return go(c, 'mDelete');
@@ -456,7 +502,9 @@ const SCREENS = {
     prompt: (c) => menu(c, 'למחיקת המניין', [['1', 'אישור מחיקה'], ['2', 'ביטול']]),
     async handle(c, input) {
       if (input === '1') {
-        await run(c.env, `DELETE FROM minyanim WHERE id = ? AND synagogue_id = ?`, c.state.data.editId, c.state.data.sid);
+        const before = await getMinyan(c.env, c.state.data.editId);
+        const res = await run(c.env, `DELETE FROM minyanim WHERE id = ? AND synagogue_id = ?`, c.state.data.editId, c.state.data.sid);
+        if (res.meta.changes) await logMinyan(c.env, byPhone(c), { synagogueId: c.state.data.sid, minyanId: before.id, action: 'delete', summary: `נמחק: ${describe(before)}` });
         c.say.push(text('המניין נמחק'));
         return go(c, 'syn');
       }
@@ -492,7 +540,7 @@ const SCREENS = {
       if (input !== '1') return invalid(c);
       const s = await synagogue(c);
       const { n, top } = await first(c.env, `SELECT COUNT(*) AS n, COALESCE(MAX(sort), 0) AS top FROM locations WHERE synagogue_id = ?`, s.id);
-      if (n >= s.max_locations) { c.say.push(text(`הגעתם למכסה של ${s.max_locations} מיקומים`)); return go(c, 'locs'); }
+      if (s.max_locations && n >= s.max_locations) { c.say.push(text(`הגעתם למכסה של ${s.max_locations} מיקומים`)); return go(c, 'locs'); }
       await run(c.env, `INSERT INTO locations (synagogue_id, name, sort) VALUES (?, ?, ?)`, s.id, c.state.data.newName, top + 10);
       c.say.push(text('המיקום נוסף'));
       return go(c, 'locs');
@@ -516,7 +564,7 @@ const SCREENS = {
     async prompt(c) {
       const s = await synagogue(c);
       const open = parseFields(s.editable_fields).length > 0;
-      const status = `${s.is_active ? 'מוצג לציבור' : 'מוסתר מהציבור'}, מכסת מניינים ${s.max_minyanim}, מכסת מיקומים ${s.max_locations}, עריכת פרטים על ידי המנהל ${open ? 'פתוחה' : 'חסומה'}`;
+      const status = `${s.is_active ? 'מוצג לציבור' : 'מוסתר מהציבור'}, מכסת מניינים ${s.max_minyanim || 'ללא הגבלה'}, מכסת מיקומים ${s.max_locations || 'ללא הגבלה'}, עריכת פרטים על ידי המנהל ${open ? 'פתוחה' : 'חסומה'}`;
       return menu(c, status, [
         ['1', s.is_active ? 'הסתרה מהציבור' : 'הצגה לציבור'], ['2', 'שינוי מכסת מניינים'], ['3', 'שינוי מכסת מיקומים'],
         ['4', open ? 'חסימת עריכת כל הפרטים' : 'פתיחת כל הפרטים לעריכה'], ['5', 'מחיקת בית הכנסת'],
@@ -548,10 +596,10 @@ const SCREENS = {
   },
   synLimit: {
     back: 'synSettings',
-    prompt: () => number(['הקישו את המכסה החדשה וסולמית'], { max: 4 }),
+    prompt: () => number(['הקישו את המכסה החדשה וסולמית. ללא הגבלה הקישו 0 וסולמית'], { max: 5 }),
     async handle(c, input) {
       const n = Number(input);
-      const max = c.state.data.limitCol === 'max_minyanim' ? 1000 : 100;
+      const max = c.state.data.limitCol === 'max_minyanim' ? 10000 : 1000;
       if (!/^\d+$/.test(input) || n > max) return invalid(c);
       // limitCol comes from our own menu, never from input
       const col = c.state.data.limitCol === 'max_minyanim' ? 'max_minyanim' : 'max_locations';
@@ -657,7 +705,7 @@ const SCREENS = {
       if (!id) return invalid(c);
       if (id === c.user.id) { c.say.push(text('לא ניתן להסיר את עצמך')); return go(c, 'admins'); }
       const target = await first(c.env, `SELECT is_super FROM users WHERE id = ?`, id);
-      if (target?.is_super) { c.say.push(text('לא ניתן להסיר את מנהל העל')); return go(c, 'admins'); }
+      if (target?.is_super) { c.say.push(text('לא ניתן להסיר משתמש זה')); return go(c, 'admins'); }
       await run(c.env, `UPDATE users SET is_active = 0, updated_at = ? WHERE id = ?`, nowIso(), id);
       await run(c.env, `DELETE FROM sessions WHERE user_id = ?`, id);
       c.say.push(text('מנהל המערכת הושבת'));

@@ -23,7 +23,7 @@ export function Profile({ user, onChanged }) {
   const [email, setEmail] = useState(user.email || '');
   const [pw, setPw] = useState({ current_password: '', new_password: '' });
   const [phonePw, setPhonePw] = useState('');
-  const locked = html`<span class="muted small">לשינוי פנו למנהל המערכת</span>`;
+  const locked = html`<span class="muted small">לשינוי פנו להנהלה</span>`;
 
   const saveEmail = (e) => (e.preventDefault(), run('email', async () => { await api.patch('/me', { email }); await onChanged(); toast('המייל עודכן'); }));
   const savePw = (e) => (e.preventDefault(), run('pw', async () => {
@@ -41,7 +41,7 @@ export function Profile({ user, onChanged }) {
 
   return html`<div class="page narrow">
     <header class="page-head"><div><h1>הפרופיל שלי</h1>
-      <p class="muted">${user.is_super ? 'מנהל על' : user.role === 'admin' ? 'מנהל מערכת' : 'מנהל בית כנסת'} · כניסה אחרונה ${formatDate(user.last_login_at)}</p></div></header>
+      <p class="muted">${user.role === 'admin' ? 'מנהל מערכת' : 'מנהל בית כנסת'} · כניסה אחרונה ${formatDate(user.last_login_at)}</p></div></header>
 
     <section class="card form">
       <h3>פרטים אישיים</h3>
@@ -49,7 +49,7 @@ export function Profile({ user, onChanged }) {
         <${Field} label="שם"><div class="readonly-value">${user.name}</div><//>
         <${Field} label="טלפון (כניסה ושלוחת ניהול)"><div class="readonly-value" dir="ltr">${user.phone || '—'}</div><//>
       </div>
-      <p class="muted small">את השם והטלפון קובע מנהל המערכת.</p>
+      <p class="muted small">את השם והטלפון מעדכנת ההנהלה.</p>
     </section>
 
     <form class="card form" onSubmit=${saveEmail}>
@@ -86,7 +86,7 @@ export function Profile({ user, onChanged }) {
     </section>
 
     ${user.is_super && html`<section class="card">
-      <h3><${Icon} name="shield" /> מנהל על</h3>
+      <h3><${Icon} name="shield" /> פרטיות</h3>
       <div class="setting"><${Toggle} checked=${user.is_hidden} onChange=${setHidden} label="הסתרה משאר המנהלים"
         hint="מנהלים אחרים לא יראו אותך ברשימות המשתמשים ובשלוחה. גם כשאתה גלוי, הם לא יכולים לערוך או למחוק אותך" /></div>
     </section>`}

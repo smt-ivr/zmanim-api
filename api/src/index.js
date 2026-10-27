@@ -11,6 +11,8 @@ import { handleListen } from './ivr/listen.js';
 import * as control from './routes/control.js';
 import * as reg from './routes/registrations.js';
 import * as security from './routes/security.js';
+import * as messages from './routes/messages.js';
+import { handleEmail } from './routes/messages.js';
 
 const PUBLIC = { auth: 'none' };
 const ADMIN = { auth: 'admin' };
@@ -49,8 +51,8 @@ export const router = new Router()
   .put('/me/password', auth.putPassword)
   .put('/me/phone-password', auth.putPhonePassword)
   .get('/me/logins', auth.getLogins)
-  .get('/me/feedback', control.myFeedback)
-  .post('/me/feedback', control.sendFeedback)
+  .get('/me/messages', messages.myMessages)
+  .post('/me/messages', messages.sendMyMessage)
   // synagogue workspace (manager of the synagogue, or admin)
   .get('/synagogues', ws.list)
   .get('/synagogues/:sid', ws.get)
@@ -64,6 +66,7 @@ export const router = new Router()
   .delete('/synagogues/:sid/minyanim/:id', ws.deleteMinyan)
   .post('/synagogues/:sid/minyanim/:id/duplicate', ws.duplicateMinyan)
   .post('/synagogues/:sid/seasons/copy', ws.copySeasonRoute)
+  .get('/synagogues/:sid/log', ws.log)
   // admin
   .get('/admin/stats', admin.stats, ADMIN)
   .get('/admin/ivr', admin.getIvr, perm('phone'))
@@ -98,9 +101,12 @@ export const router = new Router()
   .post('/admin/locks', security.lock, SUPER)
   .delete('/admin/locks', security.unlock, SUPER)
   .post('/admin/users/:id/unlock', security.unlockUser, perm('managers'))
-  .get('/admin/feedback', control.listFeedback, SUPER)
-  .patch('/admin/feedback/:id', control.patchFeedback, SUPER)
-  .delete('/admin/feedback/:id', control.deleteFeedback, SUPER);
+  .get('/admin/conversations', messages.listConversations, SUPER)
+  .post('/admin/conversations', messages.startConversation, SUPER)
+  .get('/admin/conversations/:id', messages.getConversation, SUPER)
+  .post('/admin/conversations/:id/messages', messages.answer, SUPER)
+  .patch('/admin/conversations/:id', messages.patchConversation, SUPER)
+  .delete('/admin/conversations/:id', messages.deleteConversation, SUPER);
 
 function cors(env, request) {
   const origin = request.headers.get('Origin');
@@ -187,5 +193,10 @@ export default {
 
   async scheduled(_event, env) {
     await cleanup(env);
+  },
+
+  // Cloudflare Email Routing: mail to the inbound address (e.g. zmanim@smti.uk) becomes a chat message.
+  async email(message, env) {
+    try { await handleEmail(message, env); } catch (err) { console.error('[email]', err?.stack || err); }
   },
 };

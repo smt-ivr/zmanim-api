@@ -125,7 +125,7 @@ function App() {
 
   return html`<div class=${cx('shell', menuOpen && 'menu-open')}>
     <aside class="sidebar">
-      <div class="brand"><span class="brand-mark"><${Icon} name="clock" /></span><div><b>${appName}</b><small>${user.is_super ? 'מנהל על' : isAdmin ? 'מנהל מערכת' : 'מנהל בית כנסת'}</small></div></div>
+      <div class="brand"><span class="brand-mark"><${Icon} name="clock" /></span><div><b>${appName}</b><small>${isAdmin ? 'מנהל מערכת' : 'מנהל בית כנסת'}</small></div></div>
       <nav>
         ${isAdmin && html`
           <div class="nav-section">ניהול כללי</div>
@@ -136,7 +136,7 @@ function App() {
           ${can('registrations') && html`<a href="#/admin/registrations" class=${cx('nav-link', path === '/admin/registrations' && 'active')}>
             <${Icon} name="plus" /><span>בקשות הצטרפות</span>${system.pending_registrations > 0 && html`<b class="nav-count">${system.pending_registrations}</b>`}</a>`}`}
         ${user.is_super && html`
-          <div class="nav-section">מנהל על</div>
+          <div class="nav-section">מערכת</div>
           ${link('/admin/control', 'settings', 'הגדרות שליטה', path === '/admin/control')}
           ${link('/admin/inbox', 'mail', 'פניות לצוות', path === '/admin/inbox')}
           ${link('/admin/security', 'shield', 'חסימות ונעילות', path === '/admin/security')}`}

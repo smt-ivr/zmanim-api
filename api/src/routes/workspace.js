@@ -4,6 +4,7 @@ import { requireSynagogue } from '../auth.js';
 import { all, batch, first, nowIso, q, run, setClause } from '../db.js';
 import { HttpError, conflict, forbidden, invalid, json, noContent, notFound, readJson } from '../http.js';
 import { ALL_DAYS, getMinyan, listMinyanim, validateMinyan } from '../minyan.js';
+import { describe, diff, listLog, logMinyan } from '../minyanLog.js';
 import { currentSeason, getSettings } from '../settings.js';
 import { fields, id } from '../validate.js';
 
@@ -132,7 +133,7 @@ export async function patch({ env, actor, params, request }) {
     const open = parseFields(s.editable_fields);
     // Unchanged values are fine (the form sends everything); only real changes need permission.
     const changed = Object.keys(d).filter((k) => d[k] !== s[k]);
-    if (changed.some((k) => !open.includes(k))) throw forbidden('כדי לשנות פרטים אלה, פנו למנהל המערכת');
+    if (changed.some((k) => !open.includes(k))) throw forbidden('כדי לשנות פרטים אלה, פנו להנהלה');
   }
   if (d.area_id && !(await first(env, `SELECT id FROM areas WHERE id = ?`, d.area_id))) throw notFound('האזור לא קיים');
   const set = setClause(d, ['name', 'area_id', 'address', 'phone', 'notes']);
@@ -145,7 +146,7 @@ export async function createLocation({ env, actor, params, request }) {
   const s = await loadSynagogue(env, actor, params.sid);
   const d = fields(await readJson(request)).str('name', { required: true, max: 80 }).done();
   const { n, top } = await first(env, `SELECT COUNT(*) AS n, COALESCE(MAX(sort), 0) AS top FROM locations WHERE synagogue_id = ?`, s.id);
-  if (n >= s.max_locations) throw conflict(`הגעתם למכסה של ${s.max_locations} מיקומים`, 'LIMIT_REACHED');
+  if (s.max_locations && n >= s.max_locations) throw conflict(`הגעתם למכסה של ${s.max_locations} מיקומים`, 'LIMIT_REACHED');
   const res = await run(env, `INSERT INTO locations (synagogue_id, name, sort) VALUES (?, ?, ?)`, s.id, d.name, top + 10);
   return json(await first(env, `SELECT id, name, sort, 0 AS minyanim_count FROM locations WHERE id = ?`, res.meta.last_row_id), 201);
 }
@@ -213,7 +214,7 @@ export async function requireSeasonAccess(env, actor, s, ...seasonIds) {
   if (actor.role === 'admin' || s.allow_other_seasons) return;
   const current = await currentSeason(env);
   if (seasonIds.some((sid) => sid !== undefined && sid !== current?.id)) {
-    throw forbidden(`ניתן לעדכן רק את ${current ? `זמני ${current.name}` : 'העונה הנוכחית'}. לעונות אחרות פנו למנהל המערכת`);
+    throw forbidden(`ניתן לעדכן רק את ${current ? `זמני ${current.name}` : 'העונה הנוכחית'}. לעונות אחרות פנו להנהלה`);
   }
 }
 
@@ -223,23 +224,37 @@ async function loadMinyanRow(env, s, rawId) {
   return row;
 }
 
-export async function insertMinyan(env, s, m) {
+/** who: { userId, via } for the change log; how: { action, note } (note: e.g. where it was copied from). */
+export async function insertMinyan(env, s, m, who = null, { action = 'create', note = '' } = {}) {
   const { n } = await first(env, `SELECT COUNT(*) AS n FROM minyanim WHERE synagogue_id = ?`, s.id);
-  if (n >= s.max_minyanim) throw conflict(`הגעתם למכסה של ${s.max_minyanim} מניינים`, 'LIMIT_REACHED');
+  if (s.max_minyanim && n >= s.max_minyanim) throw conflict(`הגעתם למכסה של ${s.max_minyanim} מניינים`, 'LIMIT_REACHED');
   const row = await validateMinyan(env, s, m);
   const res = await run(
     env,
     `INSERT INTO minyanim (synagogue_id, ${MINYAN_COLUMNS.join(', ')}) VALUES (?, ${MINYAN_COLUMNS.map(() => '?').join(', ')})`,
     s.id, ...MINYAN_COLUMNS.map((c) => (typeof row[c] === 'boolean' ? (row[c] ? 1 : 0) : row[c] ?? null))
   );
-  return getMinyan(env, res.meta.last_row_id);
+  const words = { create: 'נוסף', duplicate: 'שוכפל', copy: 'הועתק' };
+  const created = await getMinyan(env, res.meta.last_row_id);
+  await logMinyan(env, who, { synagogueId: s.id, minyanId: created.id, action, summary: `${words[action] || 'נוסף'}: ${describe(created)}${note ? ` (${note})` : ''}` });
+  return getMinyan(env, created.id);
+}
+
+/** Who did it, for the change log: the web session's user. */
+const byWeb = (actor) => ({ userId: actor.id, via: 'web' });
+
+/** GET /synagogues/:sid/log[?minyan_id=] */
+export async function log({ env, actor, params, url }) {
+  const s = await loadSynagogue(env, actor, params.sid);
+  const mid = url.searchParams.get('minyan_id');
+  return json(await listLog(env, s.id, mid ? id(mid) : null));
 }
 
 export async function createMinyan({ env, actor, params, request }) {
   const s = await loadSynagogue(env, actor, params.sid);
   const d = parseMinyan(await readJson(request), false);
   await requireSeasonAccess(env, actor, s, d.season_id);
-  return json(await insertMinyan(env, s, { notes: '', ...d }), 201);
+  return json(await insertMinyan(env, s, { notes: '', ...d }, byWeb(actor)), 201);
 }
 
 /** PATCH: send only what changes; the merged result is validated as a whole. */
@@ -252,7 +267,14 @@ export async function patchMinyan({ env, actor, params, request }) {
   merged.is_active = merged.is_active === true || merged.is_active === 1;
   const row = await validateMinyan(env, s, merged);
   const set = setClause(row, MINYAN_COLUMNS);
+  const before = await getMinyan(env, current.id);
   await run(env, `UPDATE minyanim SET ${set.sql}, updated_at = ? WHERE id = ?`, ...set.params, nowIso(), current.id);
+  const after = await getMinyan(env, current.id);
+  const changes = diff(before, after);
+  if (changes) {
+    const action = changes === 'הוצג לציבור' ? 'show' : changes === 'הוסתר מהציבור' ? 'hide' : 'update';
+    await logMinyan(env, byWeb(actor), { synagogueId: s.id, minyanId: current.id, action, summary: `${after.prayer_name} ${before.time_label}: ${changes}` });
+  }
   return json(await getMinyan(env, current.id));
 }
 
@@ -262,14 +284,16 @@ export async function duplicateMinyan({ env, actor, params }) {
   await requireSeasonAccess(env, actor, s, current.season_id);
   const copy = Object.fromEntries(MINYAN_COLUMNS.map((c) => [c, current[c]]));
   // The copy starts hidden: it has the same time and place until it is edited.
-  return json(await insertMinyan(env, s, { ...copy, is_active: false }), 201);
+  return json(await insertMinyan(env, s, { ...copy, is_active: false }, byWeb(actor), { action: 'duplicate' }), 201);
 }
 
 export async function deleteMinyan({ env, actor, params }) {
   const s = await loadSynagogue(env, actor, params.sid);
   const current = await loadMinyanRow(env, s, params.id);
   await requireSeasonAccess(env, actor, s, current.season_id);
+  const before = await getMinyan(env, current.id);
   await run(env, `DELETE FROM minyanim WHERE id = ?`, current.id);
+  await logMinyan(env, byWeb(actor), { synagogueId: s.id, minyanId: current.id, action: 'delete', summary: `נמחק: ${describe(before)}` });
   return noContent();
 }
 
@@ -279,26 +303,32 @@ export async function deleteMinyan({ env, actor, params }) {
  * replace = delete what the target season has first; otherwise existing minyanim stay and copies that
  * would clash with them (same time and place) are skipped. Managers may write only into seasons they may edit.
  */
-export async function copySeason(env, actor, s, { from, to, ids = null, prayerIds = null, replace = false }) {
+export async function copySeason(env, actor, s, { from, to, ids = null, prayerIds = null, replace = false }, who = byWeb(actor)) {
   if (from === to) throw invalid({ to_season_id: 'יש לבחור עונת יעד אחרת' });
-  const found = await all(env, `SELECT id FROM seasons WHERE id IN (?, ?)`, from, to);
+  const found = await all(env, `SELECT id, name FROM seasons WHERE id IN (?, ?)`, from, to);
   if (found.length !== 2) throw invalid({ to_season_id: 'העונה לא קיימת' });
+  const fromName = found.find((x) => x.id === from).name;
+  const toName = found.find((x) => x.id === to).name;
   await requireSeasonAccess(env, actor, s, to);
 
   let rows = await all(env, `SELECT * FROM minyanim WHERE synagogue_id = ? AND season_id = ? ORDER BY id`, s.id, from);
   if (ids) rows = rows.filter((r) => ids.includes(r.id));
   if (prayerIds) rows = rows.filter((r) => prayerIds.includes(r.prayer_id));
   // replace: clears the target season (only the chosen prayers, when prayers were chosen)
+  let removed = null;
   if (replace && prayerIds) {
-    if (prayerIds.length) await run(env, `DELETE FROM minyanim WHERE synagogue_id = ? AND season_id = ? AND prayer_id IN (${prayerIds.map(() => '?').join(',')})`, s.id, to, ...prayerIds);
-  } else if (replace) await run(env, `DELETE FROM minyanim WHERE synagogue_id = ? AND season_id = ?`, s.id, to);
+    if (prayerIds.length) removed = await run(env, `DELETE FROM minyanim WHERE synagogue_id = ? AND season_id = ? AND prayer_id IN (${prayerIds.map(() => '?').join(',')})`, s.id, to, ...prayerIds);
+  } else if (replace) removed = await run(env, `DELETE FROM minyanim WHERE synagogue_id = ? AND season_id = ?`, s.id, to);
+  if (removed?.meta.changes) {
+    await logMinyan(env, who, { synagogueId: s.id, action: 'bulk', summary: `נמחקו ${removed.meta.changes} מניינים מזמני ${toName} לפני העתקה מזמני ${fromName}` });
+  }
 
   let copied = 0;
   const skipped = [];
   for (const r of rows) {
     const copy = Object.fromEntries(MINYAN_COLUMNS.map((c) => [c, r[c]]));
     try {
-      await insertMinyan(env, s, { ...copy, season_id: to, is_active: r.is_active === 1 });
+      await insertMinyan(env, s, { ...copy, season_id: to, is_active: r.is_active === 1 }, who, { action: 'copy', note: `מזמני ${fromName}` });
       copied++;
     } catch (err) {
       if (!(err instanceof HttpError)) throw err;

@@ -107,7 +107,7 @@ describe('manager scope', () => {
     const ws = await call('GET', `/synagogues/${mine.id}`, { token: m.token });
     assert.equal(ws.status, 200);
     assert.equal(ws.body.synagogue.name, 'שלי');
-    assert.equal(ws.body.settings.max_minyanim, 50);
+    assert.equal(ws.body.settings.max_minyanim, 0, 'unlimited by default');
     assert.ok(ws.body.catalog.prayers.length >= 3);
 
     assert.equal((await call('GET', `/synagogues/${other.id}`, { token: m.token })).status, 404);
@@ -122,7 +122,7 @@ describe('manager scope', () => {
     const m = await createManager(admin, 'g@x.com', [s.id]);
     const locked = await call('PATCH', `/synagogues/${s.id}`, { token: m.token, body: { address: 'רחוב' } });
     assert.equal(locked.status, 403);
-    assert.match(locked.body.error.message, /פנו למנהל המערכת/);
+    assert.match(locked.body.error.message, /פנו להנהלה/);
     assert.equal((await call('PATCH', `/synagogues/${s.id}`, { token: admin, body: { address: 'רחוב' } })).body.synagogue.address, 'רחוב');
 
     await call('PATCH', `/admin/synagogues/${s.id}`, { token: admin, body: { editable_fields: ['address', 'phone'] } });
@@ -378,20 +378,31 @@ describe('super admin, profile, messages, control', () => {
     assert.equal(bad.status, 422);
   });
 
-  test('messages to developers: only the super admin reads them; can be blocked per user or globally', async () => {
+  test('messages are a chat: only the staff reads them; can be blocked per user or globally', async () => {
     const { superToken, other } = await superAndAdmin();
-    assert.equal((await call('POST', '/me/feedback', { token: other, body: { body: 'בקשה לשיפור' } })).status, 201);
-    const inbox = await call('GET', '/admin/feedback', { token: superToken });
-    assert.equal(inbox.body[0].body, 'בקשה לשיפור');
-    assert.equal((await call('GET', '/admin/feedback', { token: other })).status, 403);
-    await call('PATCH', `/admin/feedback/${inbox.body[0].id}`, { token: superToken, body: { is_read: true } });
-    const otherId = inbox.body[0].user_id;
+    assert.equal((await call('POST', '/me/messages', { token: other, body: { body: 'בקשה לשיפור' } })).status, 201);
+    await call('POST', '/me/messages', { token: other, body: { body: 'ועוד משהו' } });
+    const inbox = (await call('GET', '/admin/conversations', { token: superToken })).body;
+    assert.equal(inbox.length, 1, 'one conversation per user');
+    assert.deepEqual([inbox[0].staff_unread, inbox[0].last_body], [2, 'ועוד משהו']);
+    assert.equal((await call('GET', '/admin/conversations', { token: other })).status, 403);
+    assert.equal((await call('GET', '/me', { token: superToken })).body.system.unread_messages, 2);
+
+    const conv = (await call('GET', `/admin/conversations/${inbox[0].id}`, { token: superToken })).body;
+    assert.deepEqual(conv.messages.map((m) => m.sender), ['user', 'user']);
+    assert.equal((await call('GET', '/admin/conversations', { token: superToken })).body[0].staff_unread, 0, 'opened = read');
+    await call('POST', `/admin/conversations/${inbox[0].id}/messages`, { token: superToken, body: { body: 'תודה, נבדוק' } });
+    assert.equal((await call('GET', '/me', { token: other })).body.system.unread_messages, 1);
+    const mine = (await call('GET', '/me/messages', { token: other })).body;
+    assert.deepEqual(mine.messages.map((m) => [m.sender, m.body]), [['user', 'בקשה לשיפור'], ['user', 'ועוד משהו'], ['staff', 'תודה, נבדוק']]);
+    assert.equal((await call('GET', '/me', { token: other })).body.system.unread_messages, 0);
+
+    const otherId = inbox[0].user_id;
     await call('PATCH', `/admin/users/${otherId}`, { token: superToken, body: { can_message: false } });
-    assert.equal((await call('POST', '/me/feedback', { token: other, body: { body: 'שוב' } })).status, 403);
+    assert.equal((await call('POST', '/me/messages', { token: other, body: { body: 'שוב' } })).status, 403);
     await call('PATCH', `/admin/users/${otherId}`, { token: superToken, body: { can_message: true } });
     await call('PATCH', '/admin/control', { token: superToken, body: { feedback_enabled: false } });
-    const mine = await call('GET', '/me/feedback', { token: other });
-    assert.equal(mine.body.blocked, 'השירות לפניות סגור כרגע');
+    assert.equal((await call('GET', '/me/messages', { token: other })).body.blocked, 'שליחת הודעות סגורה כרגע');
   });
 
   test('control settings round-trip; anchors limited to prayers', async () => {
@@ -613,12 +624,25 @@ describe('e-mail (Resend mocked)', () => {
     const login = await call('POST', '/auth/email-link/verify', { body: { token: linkToken() } });
     assert.equal(login.body.user.email, 'g@x.com');
 
-    await call('POST', '/me/feedback', { token: login.body.token, body: { body: 'אפשר להוסיף ערבית?' } });
-    const [f] = (await call('GET', '/admin/feedback', { token: admin })).body;
-    const r = await call('PATCH', `/admin/feedback/${f.id}`, { token: admin, body: { reply: 'בטח, נוסיף', send_email: true } });
+    // the staff is not signed in: a new message is e-mailed to them; the answer goes out by e-mail
+    await env.DB.prepare(`DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE is_super = 1)`).run();
+    await setSetting('inbound_email', 'zmanim@smti.uk');
+    const before = sent.length;
+    await call('POST', '/me/messages', { token: login.body.token, body: { body: 'אפשר להוסיף ערבית?' } });
+    assert.equal(sent.length, before + 1);
+    assert.match(sent.at(-1).body.subject, /הודעה חדשה מגבאי \[#\d+\]/);
+    assert.equal(sent.at(-1).body.reply_to, 'zmanim@smti.uk');
+    await call('POST', '/me/messages', { token: login.body.token, body: { body: 'ועוד שאלה' } });
+    assert.equal(sent.length, before + 1, 'not again within 20 minutes');
+
+    const admin2 = (await call('POST', '/auth/login', { body: { login: 'admin@x.com', password: 'admin-pass-1' } })).body.token;
+    const [c] = (await call('GET', '/admin/conversations', { token: admin2 })).body;
+    const r = await call('POST', `/admin/conversations/${c.id}/messages`, { token: admin2, body: { body: 'בטח, נוסיף', send_email: true } });
     assert.equal(r.body.emailed, true);
     assert.match(sent.at(-1).body.text, /בטח, נוסיף/);
-    assert.equal((await call('GET', '/me/feedback', { token: login.body.token })).body.items[0].reply, 'בטח, נוסיף');
+    assert.match(sent.at(-1).body.subject, new RegExp(`\\[#${c.id}\\]`));
+    assert.equal(sent.at(-1).body.reply_to, 'zmanim@smti.uk');
+    assert.equal((await call('GET', '/me/messages', { token: login.body.token })).body.messages.at(-1).body, 'בטח, נוסיף');
   });
 
   test('invisible characters are removed; a bad recipient gets a clear error', async () => {
@@ -892,5 +916,76 @@ describe('e-mail (Resend mocked)', () => {
     assert.equal((await call('DELETE', '/admin/locks', { token: admin })).status, 204, 'unlock everything');
     assert.equal((await call('POST', '/auth/login', { body: { login: '0541234567', password: 'right123' } })).status, 200);
     assert.equal((await call('GET', '/admin/locks', { token: m.body.token })).status, 401);
+  });
+
+  test('every minyan change is logged: who, how, what', async () => {
+    const admin = await setupAdmin();
+    const s = await newSynagogue(admin);
+    const m = await createManager(admin, 'log@x.com', [s.id]);
+    const base = `/synagogues/${s.id}/minyanim`;
+    const created = (await call('POST', base, { token: m.token, body: { prayer_id: 1, time_kind: 'fixed', time: '07:00', season_id: 1 } })).body;
+    assert.equal(created.updated_by_name, 'גבאי');
+    assert.equal(created.updated_via, 'web');
+    await call('PATCH', `${base}/${created.id}`, { token: admin, body: { time: '07:15' } });
+    await call('PATCH', `${base}/${created.id}`, { token: admin, body: { is_active: false } });
+    await call('POST', `${base}/${created.id}/duplicate`, { token: m.token });
+    await call('DELETE', `${base}/${created.id}`, { token: m.token });
+    const log = (await call('GET', `/synagogues/${s.id}/log`, { token: m.token })).body;
+    assert.deepEqual(log.map((l) => l.action), ['delete', 'duplicate', 'hide', 'update', 'create']);
+    assert.match(log.find((l) => l.action === 'update').summary, /שעה: 07:00 ← 07:15/);
+    assert.equal(log.find((l) => l.action === 'update').user_name, 'מנהל');
+    assert.match(log[0].summary, /^נמחק: שחרית 07:15/);
+    const one = (await call('GET', `/synagogues/${s.id}/log?minyan_id=${created.id}`, { token: m.token })).body;
+    assert.equal(one.length, 4);
+  });
+
+  test('incoming e-mail: replies, outside senders, the staff answering from the mailbox', async () => {
+    const admin = await setupAdmin();
+    await env.DB.prepare(`UPDATE users SET is_super = 1`).run();
+    await enableMail();
+    await setSetting('inbound_email', 'zmanim@smti.uk');
+    const { default: worker } = await import('../src/index.js');
+    const mail = (from, subject, text, headers = {}) => {
+      const raw = [`From: ${from}`, 'To: zmanim@smti.uk', `Subject: =?UTF-8?B?${Buffer.from(subject).toString('base64')}?=`,
+        ...Object.entries(headers).map(([k, v]) => `${k}: ${v}`), 'Content-Type: text/plain; charset=utf-8', 'Content-Transfer-Encoding: base64', '',
+        Buffer.from(text).toString('base64')].join('\r\n');
+      const bytes = new TextEncoder().encode(raw);
+      return worker.email({ from: from.replace(/.*</, '').replace('>', ''), to: 'zmanim@smti.uk', rawSize: bytes.length,
+        headers: new Headers(headers), raw: new Response(bytes).body }, env);
+    };
+
+    // someone outside the system writes
+    await mail('דוד לוי <david@out.com>', 'שאלה על מניין', 'מתי מנחה בבית הכנסת?\n\nOn Mon, someone wrote:\n> old');
+    let list = (await call('GET', '/admin/conversations', { token: admin })).body;
+    assert.equal(list.length, 1);
+    assert.deepEqual([list[0].email, list[0].name, list[0].subject, list[0].user_id], ['david@out.com', 'דוד לוי', 'שאלה על מניין', null]);
+    const conv = (await call('GET', `/admin/conversations/${list[0].id}`, { token: admin })).body;
+    assert.equal(conv.messages[0].body, 'מתי מנחה בבית הכנסת?', 'quoted part removed');
+    assert.equal(conv.messages[0].via, 'email');
+
+    // the staff answers in the system: always by e-mail for outside senders, tagged for the reply
+    const before = sent.length;
+    await call('POST', `/admin/conversations/${list[0].id}/messages`, { token: admin, body: { body: 'בשעה 13:30' } });
+    assert.equal(sent.length, before + 1);
+    assert.equal(sent.at(-1).body.to[0], 'david@out.com');
+    assert.match(sent.at(-1).body.subject, /Re: שאלה על מניין \[#\d+\]/);
+
+    // his reply lands in the same conversation
+    await mail('david@out.com', `Re: שאלה על מניין [#${list[0].id}]`, 'תודה רבה!');
+    assert.equal((await call('GET', `/admin/conversations/${list[0].id}`, { token: admin })).body.messages.at(-1).body, 'תודה רבה!');
+
+    // the staff answers from the mailbox: goes into the conversation and on to the person
+    const n = sent.length;
+    await mail('admin@x.com', `Re: הודעה חדשה מדוד לוי [#${list[0].id}]`, 'בשמחה');
+    const last = (await call('GET', `/admin/conversations/${list[0].id}`, { token: admin })).body.messages.at(-1);
+    assert.deepEqual([last.sender, last.body, last.via], ['staff', 'בשמחה', 'email']);
+    assert.equal(sent.length, n + 1);
+    assert.equal(sent.at(-1).body.to[0], 'david@out.com');
+
+    // auto-replies and blocked senders are ignored
+    await mail('bot@out.com', 'Out of office', 'away', { 'Auto-Submitted': 'auto-replied' });
+    await setSetting('registration_blocklist', '@spam.com');
+    await mail('x@spam.com', 'buy', 'buy now');
+    assert.equal((await call('GET', '/admin/conversations', { token: admin })).body.length, 1);
   });
 });

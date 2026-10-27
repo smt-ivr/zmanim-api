@@ -69,7 +69,7 @@ export function renderMail({ brand = 'מערכת זמני התפילות', title
 /**
  * Sends one e-mail. Throws 409 when mail is not configured, 502 when Resend refuses (with its reason).
  * mail: { to, subject, title, preheader?, paragraphs?, details?: [[label, value]], quotes?: [{ label, text, accent? }],
- *         button?: { label, url, hint? }, note?, site? (public site address for the footer) }
+ *         button?: { label, url, hint? }, note?, site? (public site address for the footer), replyTo?, headers? }
  */
 export async function sendMail(env, mail) {
   const s = await getSettings(env);
@@ -87,7 +87,11 @@ export async function sendMail(env, mail) {
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: `Bearer ${s.resend_api_key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: s.mail_from, to: [to], subject: mail.subject, html, text }),
+    body: JSON.stringify({
+      from: s.mail_from, to: [to], subject: mail.subject, html, text,
+      ...(mail.replyTo ? { reply_to: mail.replyTo } : {}),
+      ...(mail.headers ? { headers: mail.headers } : {}),
+    }),
   });
   if (!res.ok) {
     const raw = (await res.text()).slice(0, 300);

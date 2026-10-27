@@ -32,13 +32,16 @@ export async function getMe({ env, actor }) {
         );
   const settings = await getSettings(env);
   const user = publicUser(await first(env, `SELECT * FROM users WHERE id = ?`, actor.id));
+  const unread = user.is_super
+    ? (await first(env, `SELECT COALESCE(SUM(staff_unread), 0) AS n FROM conversations`)).n
+    : (await first(env, `SELECT COALESCE(user_unread, 0) AS n FROM conversations WHERE user_id = ?`, actor.id))?.n ?? 0;
   const pending = user.perms.includes('registrations')
     ? (await first(env, `SELECT COUNT(*) AS n FROM registrations WHERE status = 'pending'`)).n : 0;
   return json({
     user,
     synagogues,
     // What the UI needs to know about the system
-    system: { name: settings.system_name, pending_registrations: pending, shabbat_enabled: settings.shabbat_enabled, feedback_enabled: settings.feedback_enabled, mail_ready: await mailReady(env) },
+    system: { name: settings.system_name, pending_registrations: pending, unread_messages: unread, shabbat_enabled: settings.shabbat_enabled, feedback_enabled: settings.feedback_enabled, mail_ready: await mailReady(env) },
   });
 }
 
@@ -49,12 +52,12 @@ export async function getMe({ env, actor }) {
 export async function patchMe({ env, actor, request }) {
   const d = fields(await readJson(request), { partial: true }).email('email', { required: true }).bool('is_hidden').done();
   if (d.email !== undefined) {
-    if (!actor.can_edit_email) throw forbidden('שינוי המייל חסום. לשינוי פנו למנהל המערכת');
+    if (!actor.can_edit_email) throw forbidden('שינוי המייל חסום. לשינוי פנו להנהלה');
     if (await first(env, `SELECT id FROM users WHERE email = ? AND id != ?`, d.email, actor.id)) throw invalid({ email: 'המייל כבר רשום במערכת' });
     await run(env, `UPDATE users SET email = ?, updated_at = ? WHERE id = ?`, d.email, nowIso(), actor.id);
   }
   if (d.is_hidden !== undefined) {
-    if (!actor.is_super) throw forbidden('רק מנהל העל יכול להסתיר את עצמו');
+    if (!actor.is_super) throw forbidden('אין לך הרשאה לפעולה זו');
     await run(env, `UPDATE users SET is_hidden = ? WHERE id = ?`, d.is_hidden ? 1 : 0, actor.id);
   }
   return getMe({ env, actor });
@@ -80,7 +83,7 @@ export async function putPhonePassword({ env, actor, request }) {
 export async function putPassword({ env, actor, request }) {
   // Required by the admin: no current password needed (the user may have come in by link or Google).
   const forced = actor.must_change_password;
-  if (!actor.can_edit_password && !forced) throw forbidden('שינוי הסיסמה חסום. לשינוי פנו למנהל המערכת');
+  if (!actor.can_edit_password && !forced) throw forbidden('שינוי הסיסמה חסום. לשינוי פנו להנהלה');
   const d = fields(await readJson(request)).str('current_password', { required: !forced, max: 200 }).password('new_password', { required: true }).done();
   const row = await first(env, `SELECT password_hash, phone_requires_password FROM users WHERE id = ?`, actor.id);
   if (row.phone_requires_password && !/^\d{4,}$/.test(d.new_password)) {
@@ -128,7 +131,7 @@ export async function postGoogle({ env, request }) {
   const user = email && (await first(env, `SELECT * FROM users WHERE email = ? AND is_active = 1`, email));
   if (!user) {
     await recordFailure(env, key, { max: 5, window: 900, lock: 900 });
-    throw unauthorized(`אין במערכת משתמש פעיל עם המייל ${g.email}. פנו למנהל המערכת`);
+    throw unauthorized(`אין במערכת משתמש פעיל עם המייל ${g.email}. פנו להנהלה`);
   }
   return json(await createSession(env, request, user, 'Google'));
 }
@@ -141,7 +144,7 @@ async function sendLink(ctx, purpose) {
   const { env, request, url } = ctx;
   const s = await getSettings(env);
   const enabled = purpose === 'login' ? s.magic_link_enabled : s.password_reset_enabled;
-  if (!enabled || !(await mailReady(env))) throw forbidden('האפשרות סגורה כרגע. פנו למנהל המערכת');
+  if (!enabled || !(await mailReady(env))) throw forbidden('האפשרות סגורה כרגע. פנו להנהלה');
   const d = fields(await readJson(request)).str('login', { required: true, max: 200 }).done();
   const user = await findUserByLogin(env, d.login);
   if (!user?.email) return noContent();
@@ -181,7 +184,7 @@ export async function postReset({ env, request }) {
   if (!s.password_reset_enabled) throw forbidden('איפוס הסיסמה סגור כרגע');
   const d = fields(await readJson(request)).str('token', { required: true, max: 200 }).password('new_password', { required: true }).done();
   const user = await consumeEmailToken(env, d.token, 'reset');
-  if (!user.can_edit_password) throw forbidden('שינוי הסיסמה חסום. פנו למנהל המערכת');
+  if (!user.can_edit_password) throw forbidden('שינוי הסיסמה חסום. פנו להנהלה');
   if (user.phone_requires_password && !/^\d{4,}$/.test(d.new_password)) {
     throw invalid({ new_password: 'הסיסמה נדרשת גם בטלפון, ולכן חייבת להכיל ספרות בלבד' });
   }

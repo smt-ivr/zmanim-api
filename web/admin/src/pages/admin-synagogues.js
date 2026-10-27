@@ -56,7 +56,7 @@ export function AdminSynagogues({ onChanged, perms = [] }) {
               <div class="muted small">${s.address}</div></td>
             <td>${s.area_name || html`<span class="muted">—</span>`}</td>
             <td>${s.managers.length ? s.managers.map((m) => m.name).join(', ') : html`<${Badge} tone="warn">ללא מנהל<//>`}</td>
-            <td dir="ltr" class="start"><span class="num">${s.minyanim_count}</span><span class="muted"> / ${s.settings.max_minyanim}</span></td>
+            <td dir="ltr" class="start"><span class="num">${s.minyanim_count}</span>${s.settings.max_minyanim ? html`<span class="muted"> / ${s.settings.max_minyanim}</span>` : ''}</td>
             <td class="small">
               ${s.settings.editable_fields.length > 0 && html`<${Badge} tone="info">עריכת ${s.settings.editable_fields.length} פרטים<//> `}
               ${s.settings.restrict_prayers && html`<${Badge}>תפילות מוגבלות<//> `}
@@ -83,7 +83,7 @@ function SynagogueModal({ synagogue, data, onClose, onSaved }) {
   const initial = {
     name: synagogue?.name ?? '', area_id: synagogue?.area_id ?? data.areas[0]?.id ?? null, address: synagogue?.address ?? '', phone: synagogue?.phone ?? '',
     notes: synagogue?.notes ?? '', is_active: synagogue?.is_active ?? true,
-    editable_fields: st?.editable_fields ?? [], max_locations: st?.max_locations ?? 5, max_minyanim: st?.max_minyanim ?? 50,
+    editable_fields: st?.editable_fields ?? [], max_locations: st?.max_locations ?? 0, max_minyanim: st?.max_minyanim ?? 0,
     restrict_prayers: st?.restrict_prayers ?? false, allow_other_seasons: st?.allow_other_seasons ?? false, allow_interval: st?.allow_interval ?? false, allowed_prayer_ids: st?.allowed_prayer_ids ?? data.prayers.map((p) => p.id),
     manager_ids: synagogue?.managers.map((m) => m.id) ?? [],
   };
@@ -119,8 +119,8 @@ function SynagogueModal({ synagogue, data, onClose, onSaved }) {
             <${CheckList} options=${[['name', 'שם'], ['area_id', 'אזור'], ['address', 'כתובת'], ['phone', 'טלפון'], ['notes', 'הערות']].map(([value, label]) => ({ value, label }))}
               value=${v.editable_fields} onChange=${set('editable_fields')} /><//>
           <div class="grid-2">
-            <${Field} label="מקסימום מניינים" error=${errors.max_minyanim}><${Input} type="number" min="0" max="1000" dir="ltr" value=${v.max_minyanim} onInput=${set('max_minyanim')} /><//>
-            <${Field} label="מקסימום מיקומים" error=${errors.max_locations}><${Input} type="number" min="0" max="100" dir="ltr" value=${v.max_locations} onInput=${set('max_locations')} /><//>
+            <${Field} label="מקסימום מניינים" hint="0 = ללא הגבלה" error=${errors.max_minyanim}><${Input} type="number" min="0" max="10000" dir="ltr" value=${v.max_minyanim} onInput=${set('max_minyanim')} /><//>
+            <${Field} label="מקסימום מיקומים" hint="0 = ללא הגבלה" error=${errors.max_locations}><${Input} type="number" min="0" max="1000" dir="ltr" value=${v.max_locations} onInput=${set('max_locations')} /><//>
           </div>
           <${Toggle} checked=${v.allow_other_seasons} onChange=${set('allow_other_seasons')} label="עדכון עונות אחרות" hint="כבוי: המנהל מעדכן רק את זמני העונה הנוכחית" />
           <${Toggle} checked=${v.allow_interval} onChange=${set('allow_interval')} label="מניינים בסבב (שטיבלאך)" hint="מניין כל כמה דקות בטווח שעות" />

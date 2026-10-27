@@ -117,7 +117,7 @@ async function verificationMail(env, url, r, token) {
     site: siteUrl(env, url),
     paragraphs: [`קיבלנו בקשה להוסיף את ${r.synagogue_name} ל${s.system_name}.`, 'כדי שהבקשה תעבור לאישור, אמתו את כתובת המייל בלחיצה על הכפתור.'],
     button: { label: 'אימות המייל', url: adminUrl(env, url, `/verify?t=${token}`), hint: 'הכפתור תקף ל-24 שעות.' },
-    note: 'אחרי האימות הבקשה תועבר למנהל המערכת, ונעדכן אותך במייל כשתאושר. אם לא ביקשת, אפשר להתעלם מהמייל.',
+    note: 'אחרי האימות הבקשה תועבר לאישור, ונעדכן אותך במייל כשתאושר. אם לא ביקשת, אפשר להתעלם מהמייל.',
   });
 }
 
@@ -249,7 +249,7 @@ export async function approve(ctx) {
     const phoneOwner = await first(env, `SELECT name FROM users WHERE phone = ?`, r.phone);
     if (phoneOwner) throw conflict(`הטלפון ${r.phone} כבר רשום אצל ${phoneOwner.name}. אפשר לשנות אותו או לפתוח ידנית`);
   }
-  const syn = await run(env, `INSERT INTO synagogues (name, area_id, address) VALUES (?, ?, ?)`, name, areaId, d.address ?? r.address);
+  const syn = await run(env, `INSERT INTO synagogues (name, area_id, address, max_minyanim, max_locations) VALUES (?, ?, ?, 0, 0)`, name, areaId, d.address ?? r.address);
   const sid = syn.meta.last_row_id;
   let created = false;
   if (!user) {
@@ -281,7 +281,7 @@ export async function reject({ env, actor, params, request, url }) {
         to: r.email, subject: `הבקשה לפתיחת ${r.synagogue_name} - ${s.system_name}`, title: `שלום ${r.contact_name}`, site: siteUrl(env, url),
         paragraphs: [`הבקשה להוסיף את ${r.synagogue_name} לא אושרה.`],
         quotes: d.reason ? [{ label: 'הסיבה', text: d.reason }] : [],
-        note: 'לשאלות אפשר לפנות למנהל המערכת.',
+        note: 'לשאלות אפשר להשיב למייל הזה.',
       });
       mail = 'sent';
     } catch (e) { mail = e.message; }

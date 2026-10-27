@@ -9,7 +9,7 @@ import {
 export function SynagoguePicker({ synagogues }) {
   if (!synagogues.length) {
     return html`<div class="page"><${Empty} icon="building" title="עדיין לא שויכת לבית כנסת">
-      מנהל המערכת צריך לשייך אותך לבית הכנסת שלך. לאחר השיוך הוא יופיע כאן.<//></div>`;
+      ההנהלה צריכה לשייך אותך לבית הכנסת שלך. לאחר השיוך הוא יופיע כאן.<//></div>`;
   }
   return html`<div class="page">
     <header class="page-head"><h1>בתי הכנסת שלי</h1></header>
@@ -54,8 +54,8 @@ export function Workspace({ id, user, system, onChanged }) {
           ${isAdmin && html` · מנהלים: ${managers.length ? managers.map((m) => m.name).join(', ') : 'אין'}`}</p>
       </div>
       <div class="ws-meters">
-        <${Meter} label="מניינים" used=${usage.minyanim} max=${settings.max_minyanim} />
-        <${Meter} label="מיקומים" used=${usage.locations} max=${settings.max_locations} />
+        ${settings.max_minyanim > 0 && html`<${Meter} label="מניינים" used=${usage.minyanim} max=${settings.max_minyanim} />`}
+        ${settings.max_locations > 0 && html`<${Meter} label="מיקומים" used=${usage.locations} max=${settings.max_locations} />`}
       </div>
     </header>
 
@@ -89,7 +89,7 @@ function MinyanimTab({ data, update, shabbat }) {
 
   const setViewSaved = (v) => { setView(v); try { localStorage.setItem('zmanim.view', v); } catch { /* ignore */ } };
   const base = `/synagogues/${s.id}/minyanim`;
-  const full = minyanim.length >= settings.max_minyanim;
+  const full = Boolean(settings.max_minyanim) && minyanim.length >= settings.max_minyanim; // 0 = unlimited
 
   const shown = useMemo(() => minyanim.filter((m) =>
     m.season_id === season &&
@@ -121,7 +121,7 @@ function MinyanimTab({ data, update, shabbat }) {
   const reload = async () => { const d = await api.get(`/synagogues/${s.id}`); update(() => d); };
 
   if (season === null) {
-    return html`<${Empty} icon="clock" title="לא הוגדרו עונות">לפני הוספת מניינים מנהל המערכת צריך להגדיר עונות (למשל קיץ וחורף).<//>`;
+    return html`<${Empty} icon="clock" title="לא הוגדרו עונות">לפני הוספת מניינים יש להגדיר עונות (למשל קיץ וחורף). פנו להנהלה.<//>`;
   }
 
   return html`<section>
@@ -133,8 +133,8 @@ function MinyanimTab({ data, update, shabbat }) {
       <span class="muted small">כדי לקבוע מניינים לעונה, בחרו אותה כאן והוסיפו בה</span>
     </div>`}
     ${settings.read_only
-      ? html`<div class="alert alert-info">צפייה בלבד: אין לך הרשאה לעדכן זמנים בבתי כנסת. לשינוי פנו למנהל העל.</div>`
-      : !seasonEditable && html`<div class="alert alert-info">אפשר לעדכן רק את זמני העונה הנוכחית. לעדכון זמני ${seasonName} פנו למנהל המערכת.</div>`}
+      ? html`<div class="alert alert-info">צפייה בלבד: אין לך הרשאה לעדכן זמנים בבתי כנסת. לשינוי פנו להנהלה.</div>`
+      : !seasonEditable && html`<div class="alert alert-info">אפשר לעדכן רק את זמני העונה הנוכחית. לעדכון זמני ${seasonName} פנו להנהלה.</div>`}
     <div class="toolbar">
       <div class="search"><${Icon} name="search" /><input class="input" placeholder="חיפוש מניין…" value=${q} onInput=${(e) => setQ(e.currentTarget.value)} /></div>
       ${locations.length > 0 && html`<${Select} value=${location} onChange=${setLocation} placeholder="כל המיקומים"
@@ -208,7 +208,7 @@ function MinyanList({ minyanim, actions, shabbat, notes }) {
                 <${Button} kind="ghost" small icon="edit" title="עריכה" onClick=${() => actions.edit(m)} />
                 <${Button} kind="ghost" small icon="trash" title="מחיקה" onClick=${() => actions.remove(m)} />
               </div>`
-            : html`<span class="muted small">לעדכון עונה זו פנו למנהל המערכת</span>`}
+            : html`<span class="muted small">לעדכון עונה זו פנו להנהלה</span>`}
         </div>`)}
       </div>
     </div>`)}
@@ -384,7 +384,7 @@ function LocationsTab({ data, update }) {
   const [editingId, setEditingId] = useState(null);
   const [editName, setEditName] = useState('');
   const base = `/synagogues/${s.id}/locations`;
-  const full = locations.length >= settings.max_locations;
+  const full = Boolean(settings.max_locations) && locations.length >= settings.max_locations;
 
   async function add(e) {
     e.preventDefault();
@@ -492,7 +492,7 @@ function InfoTab({ data, isAdmin, onSaved }) {
         <${Field} label="טלפון" error=${errors.phone}><${Input} dir="ltr" value=${v.phone} onInput=${set('phone')} disabled=${!open('phone')} /><//>
       </div>
       <${Field} label="הערות כלליות" error=${errors.notes}><${TextArea} value=${v.notes} onInput=${set('notes')} disabled=${!open('notes')} /><//>
-      ${!isAdmin && settings.editable_fields.length < 5 && html`<p class="muted small">כדי לשנות ${anyOpen ? 'את שאר' : 'את'} הפרטים, פנו למנהל המערכת.</p>`}
+      ${!isAdmin && settings.editable_fields.length < 5 && html`<p class="muted small">כדי לשנות ${anyOpen ? 'את שאר' : 'את'} הפרטים, פנו להנהלה.</p>`}
       ${anyOpen && html`<div class="row end"><${Button} kind="primary" type="submit" loading=${busy}>שמירה<//></div>`}
     </form>
     <aside class="card">
@@ -503,7 +503,7 @@ function InfoTab({ data, isAdmin, onSaved }) {
         <li><span>פרטים שאפשר לערוך</span><b>${settings.editable_fields.length ? settings.editable_fields.map((k) => FIELD_LABELS[k]).join(', ') : 'אין'}</b></li>
         <li><span>תפילות</span><b>${allowed ? catalog.prayers.map((p) => p.name).join(', ') || 'אין' : 'כל התפילות'}</b></li>
       </ul>
-      <p class="muted small">ההגדרות נקבעות על ידי מנהל המערכת.</p>
+      <p class="muted small">ההגדרות נקבעות על ידי ההנהלה.</p>
     </aside>
   </section>`;
 }

@@ -61,7 +61,7 @@ describe('ivr access', () => {
   test('admin gets the main menu; read syntax is well formed; hangup clears state', async () => {
     const call = yemotCall('+972583206823');
     const body = await call.start();
-    assert.match(body, /^id_list_message=t-שלום מנהל על&read=t-תפריט ראשי\.t-לכניסה/);
+    assert.match(body, /^id_list_message=t-שלום מנהל על&read=t-תפריט ראשי\.t-לבחירת בית כנסת/);
     assert.match(body, /=s1,no,1,1,10,No,no,no,,,2,Ok,None,$/);
     assert.equal(await call.hangup(), '');
     assert.equal((await q(`SELECT COUNT(*) AS n FROM ivr_calls`).first()).n, 0);
@@ -96,7 +96,7 @@ describe('ivr access', () => {
     await q(`INSERT INTO synagogues (name) VALUES ('בית "אהל" משה - רמות.')`).run();
     const call = yemotCall('0583206823');
     await call.start();
-    const body = await call.press('2'); // list synagogues
+    const body = await call.press('1'); // choose a synagogue: the list is read
     const messages = body.split('&').map((part) => part.replace(/^(id_list_message|read)=/, '').split('=')[0]);
     for (const msg of messages) for (const piece of msg.split('.')) assert.doesNotMatch(piece.slice(2), /["'&|=\-]/);
   });
@@ -106,7 +106,7 @@ describe('ivr management', () => {
   test('admin: create synagogue by voice, add manager by phone, manager adds minyanim', async () => {
     const admin = yemotCall('0583206823');
     await admin.start();
-    let body = await admin.press('3'); // new synagogue
+    let body = await admin.press('2'); // new synagogue
     assert.match(body, /,voice,he-IL/);
     body = await admin.press('אהל משה');
     assert.match(body, /שם בית הכנסת: אהל משה/);
@@ -155,6 +155,8 @@ describe('ivr management', () => {
 
     const rows = await q(`SELECT * FROM minyanim ORDER BY id`).all();
     assert.equal(rows.results.length, 2);
+    const log = await q(`SELECT via, action, user_id FROM minyan_log ORDER BY id`).all();
+    assert.deepEqual(log.results.map((l) => [l.via, l.action, l.user_id]), [['phone', 'create', mgr.id], ['phone', 'create', mgr.id]], 'phone changes are logged');
     assert.deepEqual(
       rows.results.map((r) => [r.time_kind, r.time, r.anchor_id, r.offset_minutes, r.days]),
       [['fixed', '06:30', null, null, 63], ['relative', null, 2, -15, 31]]
@@ -217,11 +219,11 @@ describe('ivr management', () => {
   test('phone password: enable with the real password, then asked on every call; login is logged', async () => {
     const call = yemotCall('0583206823');
     await call.start();
-    let body = await call.press('5');
+    let body = await call.press('4');
     assert.match(body, /כרגע אין דרישת סיסמה/);
     body = await call.press('9999');
     assert.match(body, /הסיסמה שגויה/);
-    await call.press('5');
+    await call.press('4');
     body = await call.press('4321');
     assert.match(body, /תתבקשו להקיש את הסיסמה/);
     const next = yemotCall('0583206823');
@@ -239,16 +241,36 @@ describe('ivr management', () => {
     await q(`INSERT INTO users (name, email, phone, role, password_hash) VALUES ('מנהל שני', 'b@x.com', '0547778899', 'admin', 'x')`).run();
     const other = yemotCall('0547778899');
     await other.start();
-    let body = await other.press('4');
+    let body = await other.press('3');
     assert.match(body, /1, מנהל על/);
     await other.press('2');
     body = await other.press('1');
-    assert.match(body, /לא ניתן להסיר את מנהל העל/);
+    assert.match(body, /לא ניתן להסיר משתמש זה/);
     await q(`UPDATE users SET is_hidden = 1 WHERE is_super = 1`).run();
     const again = yemotCall('0547778899');
     await again.start();
-    body = await again.press('4');
+    body = await again.press('3');
     assert.doesNotMatch(body, /מנהל על/);
+  });
+
+  test('choosing a synagogue: by area, then pages of 8 (no numbers to remember)', async () => {
+    await q(`INSERT INTO areas (name) VALUES ('גבעת שאול')`).run();
+    const names = Array.from({ length: 10 }, (_, i) => `בית כנסת ${String.fromCharCode(1488 + i)}`);
+    for (const n of names) await q(`INSERT INTO synagogues (name, area_id) VALUES (?, 2)`).bind(n).run();
+    await q(`INSERT INTO synagogues (name, area_id) VALUES ('אחר', 1)`).run();
+    const call = yemotCall('0583206823');
+    await call.start();
+    let body = await call.press('1');
+    assert.match(body, /בחירת אזור\.t-לכל האזורים הקישו 0/);
+    body = await call.press('1'); // גבעת שאול (areas are read alphabetically)
+    assert.match(body, /לבית כנסת א הקישו 1/);
+    assert.match(body, /לבתי כנסת נוספים הקישו 9/);
+    assert.doesNotMatch(body, /אחר/);
+    body = await call.press('9');
+    assert.match(body, /לבית כנסת ט הקישו 1\.t-לבית כנסת י הקישו 2/);
+    assert.match(body, /לבתי הכנסת הקודמים הקישו 0/);
+    body = await call.press('2');
+    assert.match(body, /read=t-בית כנסת י, זמני/);
   });
 
   test('closed management line answers politely', async () => {
@@ -259,7 +281,7 @@ describe('ivr management', () => {
   test('admins: add by phone, cannot remove self', async () => {
     const call = yemotCall('0583206823');
     await call.start();
-    await call.press('4');
+    await call.press('3');
     await call.press('1');
     let body = await call.press('0547778899');
     assert.match(body, /מנהל המערכת נוסף/);

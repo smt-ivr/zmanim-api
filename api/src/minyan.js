@@ -27,8 +27,9 @@ export function timeLabel(m) {
 
 export const MINYAN_SELECT = `
   SELECT m.*, p.name AS prayer_name, p.sort AS prayer_sort, l.name AS location_name,
-         se.name AS season_name, a.name AS anchor_name, a.calc AS anchor_calc, p.has_rosh_chodesh
+         se.name AS season_name, a.name AS anchor_name, a.calc AS anchor_calc, p.has_rosh_chodesh, ub.name AS updated_by_name
   FROM minyanim m
+  LEFT JOIN users ub ON ub.id = m.updated_by
   JOIN prayers p ON p.id = m.prayer_id
   LEFT JOIN locations l ON l.id = m.location_id
   LEFT JOIN seasons se ON se.id = m.season_id
@@ -62,6 +63,8 @@ export function serializeMinyan(r) {
     notes: r.notes,
     is_active: r.is_active === 1,
     updated_at: r.updated_at,
+    updated_by_name: r.updated_by_name ?? null,
+    updated_via: r.updated_via ?? null,
   };
 }
 
