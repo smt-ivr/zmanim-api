@@ -5,6 +5,9 @@ import { ALL_DAYS, DAYS, DAY_PRESETS, cx, html, recentSynagogues, render, useCal
 // ------------------------------------------------------------------ icons (inline, 24px grid)
 const PATHS = {
   plus: 'M12 5v14M5 12h14',
+  clip: 'M21 11.5l-8.6 8.6a5.5 5.5 0 01-7.8-7.8l8.6-8.6a3.7 3.7 0 015.2 5.2l-8.6 8.6a1.8 1.8 0 01-2.6-2.6l7.9-7.9',
+  file: 'M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8zM14 3v5h5',
+  download: 'M12 4v11M7 10l5 5 5-5M5 20h14',
   edit: 'M4 20h4L19 9l-4-4L4 16v4zM14 6l4 4',
   trash: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3',
   copy: 'M9 9h11v11H9zM5 15H4V4h11v1',
@@ -283,8 +286,7 @@ export function useLoad(fn, deps = []) {
 /** "Developed by SMT", small, at the bottom of every screen. */
 export const Credit = ({ class: c }) => html`<a class=${cx('credit', c)} href="https://smti.uk" target="_blank" rel="noopener">
   <span>פותח ע״י</span>
-  <svg class="smt-logo" viewBox="0 0 56 20" aria-label="SMT" role="img"><rect width="56" height="20" rx="5" fill="currentColor" />
-    <text x="28" y="14.5" text-anchor="middle" font-size="12" font-weight="800" font-family="system-ui,Arial,sans-serif" letter-spacing="1.5" fill="var(--surface)">SMT</text></svg>
+  <img class="smt-logo" src="https://smti.uk/smt.png" alt="SMT" draggable="false" />
 </a>`;
 
 export function Avatar({ name = '', size = 32 }) {

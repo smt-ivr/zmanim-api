@@ -8,6 +8,7 @@ import { getSettings } from '../settings.js';
 import { CALCS } from '../zmanim.js';
 import { INFO_FIELDS, copySeason, parseFields, synagogueInfo, synagogueSettings } from './workspace.js';
 import { nameRow } from '../names.js';
+import { linkEmailConversation } from './messages.js';
 
 // ------------------------------------------------------------------ helpers
 async function assertIdsExist(env, table, ids, field) {
@@ -254,6 +255,7 @@ export async function createUser(ctx) {
   if (d.role === 'manager' && d.synagogue_ids.length) {
     await batch(env, replaceLinks(env, 'synagogue_managers', 'user_id', uid, 'synagogue_id', d.synagogue_ids));
   }
+  await linkEmailConversation(env, await first(env, `SELECT * FROM users WHERE id = ?`, uid)); // they may have written by e-mail before
   const user = await adminUser(env, uid);
   if (d.send_welcome) {
     try { await welcomeMail(ctx, uid, { password: d.send_password ? d.password : null }); user.welcome_sent = true; } catch (e) { user.welcome_error = e.message; }
@@ -295,6 +297,7 @@ export async function patchUser(ctx) {
 
   // New password or deactivation signs the user out everywhere.
   if (d.password || d.is_active === false) await revokeSessions(env, uid, uid === actor.id ? actor.session_id : 0);
+  if (d.email && d.email !== current.email) await linkEmailConversation(env, await first(env, `SELECT * FROM users WHERE id = ?`, uid));
   const user = await adminUser(env, uid);
   if (d.send_welcome) {
     try { await welcomeMail(ctx, uid, { password: d.send_password ? d.password : null }); user.welcome_sent = true; } catch (e) { user.welcome_error = e.message; }
@@ -527,4 +530,45 @@ export async function copySeasonAll({ env, actor, request }) {
     skipped += r.skipped.length;
   }
   return json({ copied, skipped, synagogues: synagogues.length });
+}
+
+// ------------------------------------------------------------------ a user's history
+async function historyTarget(actor, env, rawId) {
+  const u = await first(env, `SELECT id, name, role, is_super FROM users WHERE id = ?`, id(rawId));
+  if (!u) throw notFound('המשתמש לא נמצא');
+  guardSuper(actor, u);
+  if (u.id !== actor.id) requireUserPerm(actor, u.role);
+  return u;
+}
+
+/** GET /admin/users/:id/history: the changes the user made (all synagogues) and their sign-ins. */
+export async function userHistory({ env, actor, params }) {
+  const u = await historyTarget(actor, env, params.id);
+  const [changes, logins] = await Promise.all([
+    all(env, `SELECT l.id, l.synagogue_id, s.name AS synagogue_name, l.via, l.action, l.summary, l.created_at
+      FROM minyan_log l LEFT JOIN synagogues s ON s.id = l.synagogue_id WHERE l.user_id = ? ORDER BY l.id DESC LIMIT 300`, u.id),
+    all(env, `SELECT id, channel, detail, created_at FROM login_log WHERE user_id = ? ORDER BY id DESC LIMIT 100`, u.id),
+  ]);
+  return json({ changes, logins, can_delete: actor.is_super });
+}
+
+/** DELETE /admin/log/:id — one entry of the change history (super admin). */
+export async function deleteLogEntry({ env, params }) {
+  await run(env, `DELETE FROM minyan_log WHERE id = ?`, id(params.id));
+  return noContent();
+}
+
+/** DELETE /admin/logins/:id — one sign-in record (super admin). */
+export async function deleteLoginEntry({ env, params }) {
+  await run(env, `DELETE FROM login_log WHERE id = ?`, id(params.id));
+  return noContent();
+}
+
+/** DELETE /admin/users/:id/history?kind=changes|logins — clears that part of a user's history (super admin). */
+export async function clearUserHistory({ env, actor, params, url }) {
+  const u = await historyTarget(actor, env, params.id);
+  const kind = url.searchParams.get('kind');
+  if (kind !== 'logins') await run(env, `DELETE FROM minyan_log WHERE user_id = ?`, u.id);
+  if (kind !== 'changes') await run(env, `DELETE FROM login_log WHERE user_id = ?`, u.id);
+  return noContent();
 }

@@ -5,6 +5,7 @@ import {
   Avatar, Badge, Button, DaysBadge, DaysPicker, Empty, ErrorBox, Field, FormModal, Icon, Input, Meter, Modal, Select, Spinner,
   TextArea, Toggle, confirm, toast, toastError, useLoad,
 } from '../ui.js';
+import { ChangeFeed } from './history.js';
 
 export function SynagoguePicker({ synagogues }) {
   const [q, setQ] = useState('');
@@ -75,7 +76,7 @@ export function Workspace({ id, user, system, onChanged }) {
     ${tab === 'locations' && html`<${LocationsTab} data=${data} update=${update} />`}
     ${tab === 'info' && html`<${InfoTab} data=${data} isAdmin=${isAdmin && !settings.read_only} onSaved=${(d) => { setData(d); onChanged(); }} />`}
     ${tab === 'managers' && html`<${ManagersTab} data=${data} user=${user} reload=${reload} />`}
-    ${tab === 'history' && html`<${HistoryTab} synagogueId=${s.id} />`}
+    ${tab === 'history' && html`<${HistoryTab} synagogueId=${s.id} user=${user} />`}
   </div>`;
 }
 
@@ -234,23 +235,16 @@ function MinyanList({ minyanim, actions, shabbat, notes }) {
   </div>`;
 }
 
-const ACTION_ICON = { create: 'plus', update: 'edit', delete: 'trash', duplicate: 'copy', copy: 'copy', show: 'eye', hide: 'eyeOff', bulk: 'list' };
-
-/** Changes of a synagogue (or one minyan): what, who, how and when. */
-function LogList({ synagogueId, minyanId }) {
-  const { data, error, loading, reload } = useLoad(() => api.get(`/synagogues/${synagogueId}/log${minyanId ? `?minyan_id=${minyanId}` : ''}`), [synagogueId, minyanId]);
+function LogList({ synagogueId, minyanId, canDelete = false }) {
+  const { data, error, loading, reload, setData } = useLoad(() => api.get(`/synagogues/${synagogueId}/log${minyanId ? `?minyan_id=${minyanId}` : ''}`), [synagogueId, minyanId]);
   if (loading && !data) return html`<${Spinner} />`;
   if (error && !data) return html`<${ErrorBox} error=${error} onRetry=${reload} />`;
   if (!data.length) return html`<${Empty} icon="history" title="אין עדיין שינויים רשומים">שינויים מכאן והלאה יירשמו: מי שינה, מה, ואיך (באתר או בטלפון).<//>`;
-  return html`<div class="feed">${data.map((l) => html`<div class="feed-row" key=${l.id}>
-    <span class="feed-icon"><${Icon} name=${ACTION_ICON[l.action] || 'edit'} size=${15} /></span>
-    <div class="grow"><div>${l.summary}</div>
-      <div class="muted small">${l.user_name || 'משתמש שנמחק'} · ${VIA[l.via] || ''} · ${new Date(l.created_at).toLocaleString('he-IL', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</div></div>
-  </div>`)}</div>`;
+  return html`<${ChangeFeed} rows=${data} canDelete=${canDelete} onDeleted=${(id) => setData((d) => d.filter((l) => l.id !== id))} />`;
 }
 
-function HistoryTab({ synagogueId }) {
-  return html`<section class="narrow-section"><div class="card"><${LogList} synagogueId=${synagogueId} /></div></section>`;
+function HistoryTab({ synagogueId, user }) {
+  return html`<section class="narrow-section"><div class="card"><${LogList} synagogueId=${synagogueId} canDelete=${user.is_super} /></div></section>`;
 }
 
 /** Managers of the synagogue (admins): add an existing manager or a new user, remove. */

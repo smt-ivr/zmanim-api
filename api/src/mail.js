@@ -61,7 +61,7 @@ export function renderMail({ brand = 'מערכת זמני התפילות', title
     </td></tr>
     <tr><td style="padding:18px 8px;text-align:center;font-size:12px;color:${C.muted};line-height:1.8">
       ${foot ? `${foot}<br>` : ''}מייל זה נשלח אוטומטית מ${esc(brand)}<br>
-      <span style="font-size:11px;opacity:.75">פותח ע״י <b style="letter-spacing:1px">SMT</b></span>
+      <a href="https://smti.uk" style="font-size:11px;color:${C.muted};text-decoration:none;opacity:.85">פותח ע״י <img src="https://smti.uk/smt.png" alt="SMT" height="18" style="height:18px;width:auto;vertical-align:middle;border:0"></a>
     </td></tr>
   </table>
 </td></tr></table></body></html>`;
@@ -116,6 +116,7 @@ export async function sendMail(env, mail) {
       from: s.mail_from, to: [to], subject: mail.subject, html, text,
       ...(mail.replyTo ? { reply_to: mail.replyTo } : {}),
       ...(mail.headers ? { headers: mail.headers } : {}),
+      ...(mail.attachments?.length ? { attachments: mail.attachments } : {}),
     }),
   });
   if (!res.ok) {

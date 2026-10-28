@@ -1,6 +1,6 @@
 // Messages with the administration, as a chat. Users: one conversation (#/messages).
 // The administration: an inbox of conversations with users and with people who wrote by e-mail (#/admin/inbox).
-import { api } from '../api.js';
+import { api, fileUrl } from '../api.js';
 import { VIA, cx, html, navigate, norm, timeAgo, useEffect, useMemo, useRef, useState } from '../lib.js';
 import { Avatar, Badge, Button, Empty, ErrorBox, Field, FormModal, Icon, Input, Modal, Spinner, Toggle, confirm, toast, toastError, useLoad } from '../ui.js';
 
@@ -14,6 +14,25 @@ const dayLabel = (iso) => {
   if (d.toDateString() === y.toDateString()) return 'אתמול';
   return d.toLocaleDateString('he-IL', { weekday: 'long', day: 'numeric', month: 'long' });
 };
+const MAX_FILES = 5;
+const MAX_FILE = 10 * 1024 * 1024;
+const size = (n) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)}MB` : `${Math.max(1, Math.round(n / 1024))}KB`);
+const isImage = (f) => /^image\/(png|jpe?g|gif|webp|avif|bmp)$/.test(f.type);
+
+/** The files of a message: pictures as previews, other files as a card that opens or downloads. */
+function Files({ files }) {
+  if (!files?.length) return null;
+  return html`<div class="bubble-files">
+    ${files.map((f) => isImage(f)
+      ? html`<a class="file-pic" href=${fileUrl(f.url)} target="_blank" rel="noopener" key=${f.id} title=${f.name}><img src=${fileUrl(f.url)} alt=${f.name} loading="lazy" /></a>`
+      : html`<a class="file-card" href=${fileUrl(f.url)} target="_blank" rel="noopener" key=${f.id}>
+          <span class="file-icon"><${Icon} name="file" size=${18} /></span>
+          <span class="file-text"><b class="ellipsis">${f.name}</b><small>${size(f.size)}</small></span>
+          <${Icon} name="download" size=${16} />
+        </a>`)}
+  </div>`;
+}
+
 const clock = (iso) => new Date(iso).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
 
 /** Bubbles grouped by day. `mine(m)`: whether the message is on "my" side. */
@@ -28,7 +47,8 @@ function Thread({ messages, mine, empty }) {
       const sep = day !== lastDay ? ((lastDay = day), html`<div class="chat-day"><span>${day}</span></div>`) : null;
       return html`${sep}<div class=${cx('bubble', mine(m) ? 'mine' : 'theirs')} key=${m.id}>
         ${m.staff_name && !mine(m) ? html`<small class="bubble-who">${m.staff_name}</small>` : ''}
-        <div class="bubble-body">${m.body}</div>
+        <${Files} files=${m.files} />
+        ${m.body && html`<div class="bubble-body">${m.body}</div>`}
         <small class="bubble-meta">${clock(m.created_at)}${m.via === 'email' ? ' · במייל' : ''}${m.emailed ? ' · נשלח במייל' : ''}
           ${m.emailed && m.sender === 'staff' ? (m.opened_at
             ? html` · <span class="opened" title=${m.open_count > 1 ? `נפתח ${m.open_count} פעמים` : ''}>✓✓ נפתח ${dayLabel(m.opened_at) === 'היום' ? 'היום' : dayLabel(m.opened_at)} ${clock(m.opened_at)}</span>`
@@ -41,23 +61,53 @@ function Thread({ messages, mine, empty }) {
 
 function Composer({ onSend, disabled, placeholder = 'כתבו הודעה…', extra }) {
   const [body, setBody] = useState('');
+  const [files, setFiles] = useState([]);
   const [busy, setBusy] = useState(false);
+  const picker = useRef();
+  const ready = body.trim() || files.length;
+  function add(list) {
+    const next = [...files];
+    for (const f of list) {
+      if (f.size > MAX_FILE) { toast(`הקובץ ${f.name} גדול מדי (עד 10MB)`, 'error'); continue; }
+      if (next.length >= MAX_FILES) { toast(`אפשר לצרף עד ${MAX_FILES} קבצים`, 'error'); break; }
+      next.push(f);
+    }
+    setFiles(next);
+  }
   async function send(e) {
     e?.preventDefault();
-    if (!body.trim() || busy) return;
+    if (!ready || busy) return;
     setBusy(true);
-    try { await onSend(body.trim()); setBody(''); } catch (err) { toastError(err); }
+    try { await onSend(body.trim(), files); setBody(''); setFiles([]); } catch (err) { toastError(err); }
     setBusy(false);
   }
-  return html`<form class="composer" onSubmit=${send}>
+  return html`<form class=${cx('composer', busy && 'busy')} onSubmit=${send}
+      onDragOver=${(e) => e.preventDefault()} onDrop=${(e) => { e.preventDefault(); if (!disabled) add([...e.dataTransfer.files]); }}>
     ${extra}
+    ${files.length > 0 && html`<div class="composer-files">
+      ${files.map((f, i) => html`<span class="file-chip" key=${i}><${Icon} name=${f.type.startsWith('image/') ? 'eye' : 'file'} size=${14} />
+        <span class="ellipsis">${f.name}</span><small>${size(f.size)}</small>
+        <button type="button" aria-label="הסרה" onClick=${() => setFiles(files.filter((_, j) => j !== i))}><${Icon} name="close" size=${13} /></button></span>`)}
+    </div>`}
     <div class="composer-row">
+      <input type="file" multiple hidden ref=${picker} onChange=${(e) => { add([...e.currentTarget.files]); e.currentTarget.value = ''; }} />
+      <${Button} kind="ghost" icon="clip" type="button" class="attach" disabled=${disabled || busy} aria-label="צירוף קובץ" title="צירוף קובץ" onClick=${() => picker.current.click()} />
       <textarea class="input" rows="1" placeholder=${placeholder} value=${body} disabled=${disabled}
         onInput=${(e) => { setBody(e.currentTarget.value); e.currentTarget.style.height = 'auto'; e.currentTarget.style.height = `${Math.min(e.currentTarget.scrollHeight, 160)}px`; }}
-        onKeyDown=${(e) => { if (e.key === 'Enter' && !e.shiftKey) send(e); }} />
-      <${Button} kind="primary" icon="send" type="submit" loading=${busy} disabled=${disabled || !body.trim()} aria-label="שליחה" />
+        onKeyDown=${(e) => { if (e.key === 'Enter' && !e.shiftKey) send(e); }}
+        onPaste=${(e) => { const pasted = [...(e.clipboardData?.files || [])]; if (pasted.length) { e.preventDefault(); add(pasted); } }} />
+      <${Button} kind="primary" icon="send" type="submit" loading=${busy} disabled=${disabled || !ready} aria-label="שליחה" />
     </div>
   </form>`;
+}
+
+/** JSON when there are no files, otherwise a form with the same fields. */
+function asForm(fields, files) {
+  if (!files.length) return fields;
+  const f = new FormData();
+  for (const [k, v] of Object.entries(fields)) f.append(k, String(v));
+  for (const file of files) f.append('files', file, file.name);
+  return f;
 }
 
 // ------------------------------------------------------------------ the user's side
@@ -67,8 +117,8 @@ export function MyMessages({ onRead }) {
   useEffect(() => { if (data) onRead?.(); }, [data?.messages.length]);
   if (loading && !data) return html`<div class="page"><${Spinner} /></div>`;
   if (error && !data) return html`<div class="page"><${ErrorBox} error=${error} onRetry=${reload} /></div>`;
-  const send = async (body) => {
-    const m = await api.post('/me/messages', { body });
+  const send = async (body, files) => {
+    const m = await api.post('/me/messages', asForm({ body }, files));
     setData((d) => ({ ...d, messages: [...d.messages, m] }));
   };
   return html`<div class="page narrow chat-page">
@@ -146,8 +196,8 @@ function Conversation({ id, onBack, onChange }) {
   if (error && !data) return html`<${ErrorBox} error=${error} onRetry=${reload} />`;
   const c = data.conversation;
   const external = !c.user_id;
-  const send = async (body) => {
-    const m = await api.post(`/admin/conversations/${id}/messages`, { body, send_email: byMail });
+  const send = async (body, files) => {
+    const m = await api.post(`/admin/conversations/${id}/messages`, asForm({ body, send_email: byMail }, files));
     setData((d) => ({ ...d, messages: [...d.messages, m] }));
     if (m.emailed) toast('נשלח גם במייל');
   };

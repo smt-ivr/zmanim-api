@@ -13,6 +13,7 @@ import * as reg from './routes/registrations.js';
 import * as security from './routes/security.js';
 import * as messages from './routes/messages.js';
 import { handleEmail } from './routes/messages.js';
+import { serveFile } from './files.js';
 
 const PUBLIC = { auth: 'none' };
 const ADMIN = { auth: 'admin' };
@@ -28,6 +29,7 @@ export const router = new Router()
   .get('/public/synagogues/:id', pub.synagogue, PUBLIC)
   .get('/public/minyanim', pub.minyanim, PUBLIC)
   .get('/o/:token', messages.opened, PUBLIC) // e-mail opened (tracking image)
+  .get('/f/:token', serveFile, PUBLIC) // a file attached to a message (by its unguessable link)
   // self-service synagogue registration
   .get('/public/registrations/form', reg.form, PUBLIC)
   .post('/public/registrations', reg.submit, PUBLIC)
@@ -83,6 +85,10 @@ export const router = new Router()
   .post('/admin/users', admin.createUser, ADMIN)
   .patch('/admin/users/:id', admin.patchUser, ADMIN)
   .delete('/admin/users/:id', admin.deleteUser, ADMIN)
+  .get('/admin/users/:id/history', admin.userHistory, ADMIN)
+  .delete('/admin/users/:id/history', admin.clearUserHistory, SUPER)
+  .delete('/admin/log/:id', admin.deleteLogEntry, SUPER)
+  .delete('/admin/logins/:id', admin.deleteLoginEntry, SUPER)
   .post('/admin/seasons/copy', admin.copySeasonAll, perm('catalog'))
   .get('/admin/registrations', reg.list, perm('registrations'))
   .post('/admin/registrations/:id/approve', reg.approve, perm('registrations'))

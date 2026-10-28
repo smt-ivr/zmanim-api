@@ -27,7 +27,13 @@ const ASSETS = {
   },
 };
 
-const env = { DB: new D1Shim(), ASSETS, BASE_PATH: '/zmanim' };
+const files = new Map(); // R2 stand-in for attachments
+const FILES = {
+  put: async (k, v) => files.set(k, new Uint8Array(await new Response(v).arrayBuffer())),
+  get: async (k) => (files.has(k) ? { body: new Response(files.get(k)).body, arrayBuffer: async () => files.get(k).buffer } : null),
+  delete: async (keys) => [].concat(keys).forEach((k) => files.delete(k)),
+};
+const env = { DB: new D1Shim(), ASSETS, FILES, BASE_PATH: '/zmanim' };
 await env.DB.prepare(`INSERT INTO users (name, email, phone, password_hash, role, is_super) VALUES ('מנהל הדגמה', 'admin@example.com', '0500000000', ?, 'admin', 1)`)
   .bind(await hashPassword('preview')).run();
 // Demo content so the public site has something to show

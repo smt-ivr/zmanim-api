@@ -170,4 +170,4 @@ a.row:hover { background: var(--surface-2); }
 
 .credit { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); opacity: .85; }
 .credit:hover { opacity: 1; }
-.smt-logo { height: 15px; width: auto; color: var(--text); }
+.smt-logo { height: 20px; width: auto; display: block; user-select: none; }

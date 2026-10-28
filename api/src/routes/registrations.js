@@ -10,6 +10,7 @@ import { getSettings, saveSettings } from '../settings.js';
 import { clean, fields, id, normalizeEmail, normalizePhone } from '../validate.js';
 import { welcomeMail } from './admin.js';
 import { nameRow } from '../names.js';
+import { linkEmailConversation } from './messages.js';
 
 const enc = new TextEncoder();
 const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -259,6 +260,7 @@ export async function approve(ctx) {
       r.contact_name, r.email, r.phone, await hashPassword(randomHex(16)));
     user = await first(env, `SELECT * FROM users WHERE id = ?`, res.meta.last_row_id);
     created = true;
+    await linkEmailConversation(env, user); // what they wrote by e-mail before joins their chat
   }
   if (user.role === 'manager') await run(env, `INSERT OR IGNORE INTO synagogue_managers (synagogue_id, user_id) VALUES (?, ?)`, sid, user.id);
   await run(env, `UPDATE registrations SET status = 'approved', decided_at = ?, decided_by = ?, synagogue_id = ?, user_id = ? WHERE id = ?`, nowIso(), actor.id, sid, user.id, r.id);

@@ -16,6 +16,11 @@ database_name = "zmanim"
 database_id = "978af130-5d6b-407e-9b9e-85a85ac785ce"
 migrations_dir = "api/migrations"
 
+# Files attached to messages (shared SMT bucket; this project keeps them under zmanim/chat/)
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "smt"
+
 [vars]
 # Comma-separated front-end origins allowed to call the API from another domain.
 # Empty = any origin (safe: auth is a Bearer token, not a cookie).

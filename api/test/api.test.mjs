@@ -380,6 +380,32 @@ describe('super admin, profile, messages, control', () => {
     assert.ok(!JSON.stringify((await call('GET', '/public/minyanim')).body).includes('שם פרטי'));
   });
 
+  test("a user's history: changes and sign-ins; only the super admin deletes entries", async () => {
+    const { superToken, other } = await superAndAdmin();
+    const s = await newSynagogue(superToken);
+    const g = await createManager(superToken, 'hist@x.com', [s.id]);
+    await call('POST', `/synagogues/${s.id}/minyanim`, { token: g.token, body: { prayer_id: 1, time_kind: 'fixed', time: '06:00' } });
+    let h = (await call('GET', `/admin/users/${g.id}/history`, { token: other })).body;
+    assert.equal(h.changes.length, 1);
+    assert.equal(h.changes[0].synagogue_name, s.name);
+    assert.equal(h.logins.length, 1);
+    assert.equal(h.can_delete, false);
+    assert.equal((await call('DELETE', `/admin/log/${h.changes[0].id}`, { token: other })).status, 403);
+    assert.equal((await call('GET', `/admin/users/${g.id}/history`, { token: g.token })).status, 403);
+    const superId = (await call('GET', '/me', { token: superToken })).body.user.id;
+    assert.equal((await call('GET', `/admin/users/${superId}/history`, { token: other })).status, 404, 'the super admin is not visible');
+    h = (await call('GET', `/admin/users/${g.id}/history`, { token: superToken })).body;
+    assert.equal(h.can_delete, true);
+    assert.equal((await call('DELETE', `/admin/log/${h.changes[0].id}`, { token: superToken })).status, 204);
+    assert.equal((await call('DELETE', `/admin/logins/${h.logins[0].id}`, { token: superToken })).status, 204);
+    h = (await call('GET', `/admin/users/${g.id}/history`, { token: superToken })).body;
+    assert.deepEqual([h.changes.length, h.logins.length], [0, 0]);
+    assert.equal((await call('GET', `/synagogues/${s.id}/log`, { token: superToken })).body.length, 0, 'gone from the synagogue history too');
+    await call('POST', '/auth/login', { body: { login: 'hist@x.com', password: 'manager-pass' } });
+    await call('DELETE', `/admin/users/${g.id}/history?kind=logins`, { token: superToken });
+    assert.equal((await call('GET', `/admin/users/${g.id}/history`, { token: superToken })).body.logins.length, 0);
+  });
+
   test('users change only e-mail and password, unless blocked; login history', async () => {
     const admin = await setupAdmin();
     const s = await newSynagogue(admin);
@@ -964,6 +990,69 @@ describe('e-mail (Resend mocked)', () => {
     assert.match(log[0].summary, /^נמחק: שחרית 07:15/);
     const one = (await call('GET', `/synagogues/${s.id}/log?minyan_id=${created.id}`, { token: m.token })).body;
     assert.equal(one.length, 4);
+  });
+
+  test('files in the chat; an e-mail conversation joins the user who signs up with that address', async () => {
+    const admin = await setupAdmin();
+    await env.DB.prepare(`UPDATE users SET is_super = 1`).run();
+    await enableMail();
+    await setSetting('inbound_email', 'zmanim@smti.uk');
+    const store = new Map(); // R2 stand-in
+    env.FILES = {
+      put: async (k, v) => store.set(k, new Uint8Array(await new Response(v).arrayBuffer())),
+      get: async (k) => (store.has(k) ? { body: new Response(store.get(k)).body, arrayBuffer: async () => store.get(k).buffer } : null),
+      delete: async (keys) => [].concat(keys).forEach((k) => store.delete(k)),
+    };
+    const { default: worker } = await import('../src/index.js');
+    // an outside sender writes with a file attached
+    const raw = ['From: חיים <chaim@out.com>', 'To: zmanim@smti.uk', 'Subject: tables', 'Message-ID: <a1@out.com>',
+      'Content-Type: multipart/mixed; boundary="b"', '', '--b', 'Content-Type: text/plain; charset=utf-8', '', 'מצרף את הלוח', '--b',
+      'Content-Type: application/pdf; name="luach.pdf"', 'Content-Disposition: attachment; filename="luach.pdf"', 'Content-Transfer-Encoding: base64', '',
+      Buffer.from('%PDF-1.4 test').toString('base64'), '--b--', ''].join('\r\n');
+    const bytes = new TextEncoder().encode(raw);
+    await worker.email({ from: 'chaim@out.com', to: 'zmanim@smti.uk', rawSize: bytes.length, headers: new Headers(), raw: new Response(bytes).body }, env);
+    let [c] = (await call('GET', '/admin/conversations', { token: admin })).body;
+    assert.equal(c.user_id, null);
+    let conv = (await call('GET', `/admin/conversations/${c.id}`, { token: admin })).body;
+    assert.deepEqual(conv.messages[0].files.map((f) => [f.name, f.type]), [['luach.pdf', 'application/pdf']]);
+    const file = await worker.fetch(new Request(`https://x.test/${conv.messages[0].files[0].url}`), env);
+    assert.equal(file.status, 200);
+    assert.equal(await file.text(), '%PDF-1.4 test');
+    assert.match(file.headers.get('Content-Disposition'), /^inline; filename\*=UTF-8''luach\.pdf/);
+
+    // he gets an account with that address: the conversation is now his, and he sees it on the site
+    const u = await call('POST', '/admin/users', { token: admin, body: { name: 'חיים', email: 'Chaim@out.com', phone: nextPhone(), password: 'pass1234', role: 'manager' } });
+    [c] = (await call('GET', '/admin/conversations', { token: admin })).body;
+    assert.equal(c.user_id, u.body.id);
+    const token = (await call('POST', '/auth/login', { body: { login: 'chaim@out.com', password: 'pass1234' } })).body.token;
+    const mine = (await call('GET', '/me/messages', { token })).body.messages;
+    assert.equal(mine[0].body, 'מצרף את הלוח');
+    assert.equal(mine[0].files[0].name, 'luach.pdf');
+
+    // he sends a picture from the site; the staff answers with a file, also by e-mail (attached)
+    const form = new FormData();
+    form.append('body', '');
+    form.append('files', new File([new Uint8Array([137, 80, 78, 71])], 'pic.png', { type: 'image/png' }));
+    const sentPic = await worker.fetch(new Request('https://x.test/api/me/messages', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form }), env);
+    assert.equal(sentPic.status, 201);
+    assert.equal((await sentPic.json()).files[0].type, 'image/png');
+    const bad = new FormData();
+    bad.append('files', new File(['x'], 'run.exe'));
+    const refused = await worker.fetch(new Request('https://x.test/api/me/messages', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: bad }), env);
+    assert.equal(refused.status, 422);
+    const ans = new FormData();
+    ans.append('body', 'מצורף המעודכן');
+    ans.append('send_email', 'true');
+    ans.append('files', new File(['hello'], 'new.txt', { type: 'text/plain' }));
+    const r = await worker.fetch(new Request(`https://x.test/api/admin/conversations/${c.id}/messages`, { method: 'POST', headers: { Authorization: `Bearer ${admin}` }, body: ans }), env);
+    assert.equal(r.status, 201);
+    assert.deepEqual(sent.at(-1).body.attachments, [{ filename: 'new.txt', content: Buffer.from('hello').toString('base64') }]);
+    assert.equal(sent.at(-1).body.to[0], 'chaim@out.com');
+
+    // deleting the conversation removes the stored files too
+    assert.equal(store.size, 3);
+    await call('DELETE', `/admin/conversations/${c.id}`, { token: admin });
+    assert.equal(store.size, 0);
   });
 
   test('incoming e-mail: replies, outside senders, the staff answering from the mailbox', async () => {

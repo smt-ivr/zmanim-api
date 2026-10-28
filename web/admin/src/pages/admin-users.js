@@ -4,6 +4,7 @@ import {
   Avatar, Badge, Button, CheckList, Empty, ErrorBox, Field, FormModal, Icon, Input, Pager, Select, Spinner, SynagogueMultiPicker, Toggle,
   confirm, toast, toastError, useLoad,
 } from '../ui.js';
+import { UserHistory } from './history.js';
 
 const ROLE = { admin: 'מנהל מערכת', manager: 'מנהל בית כנסת' };
 const PAGE = 50;
@@ -18,6 +19,7 @@ export function AdminUsers({ me, system }) {
   const [syn, setSyn] = useState('');
   const [page, setPage] = useState(0);
   const [editing, setEditing] = useState(null);
+  const [history, setHistory] = useState(null);
   useEffect(() => setPage(0), [q, role, status, syn]);
 
   const shown = useMemo(() => (data?.users || []).filter((u) =>
@@ -81,6 +83,7 @@ export function AdminUsers({ me, system }) {
             <td class="actions">
               ${mayManage(u) && system?.mail_ready && u.email && html`<${Button} kind="ghost" small icon="mail" title="שליחת פרטי כניסה במייל" onClick=${() => welcome(u)} />`}
               ${mayManage(u) && u.locked_until && html`<${Button} kind="ghost" small icon="key" title="שחרור הנעילה" onClick=${() => unlock(u)} />`}
+              ${(mayManage(u) || me.is_super) && html`<${Button} kind="ghost" small icon="history" title="היסטוריה" onClick=${() => setHistory(u)} />`}
               ${(mayManage(u) || u.id === me.id) && html`<${Button} kind="ghost" small icon="edit" title="עריכה" onClick=${() => setEditing(u)} />`}
               ${mayManage(u) && u.id !== me.id && !u.is_super && html`<${Button} kind="ghost" small icon="trash" title="מחיקה" onClick=${() => remove(u)} />`}
             </td>
@@ -88,6 +91,7 @@ export function AdminUsers({ me, system }) {
           <${Pager} page=${page} pageSize=${PAGE} total=${shown.length} onPage=${setPage} /></div>`}
     ${editing && html`<${UserModal} user=${editing === 'new' ? null : editing} me=${me} mailReady=${system?.mail_ready}
         onClose=${() => setEditing(null)} onSaved=${saved} />`}
+    ${history && html`<${UserHistory} user=${history} onClose=${() => setHistory(null)} />`}
   </div>`;
 }
 

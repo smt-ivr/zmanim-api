@@ -29,10 +29,11 @@ export class ApiError extends Error {
 async function request(method, path, body) {
   const headers = {};
   if (token) headers.Authorization = `Bearer ${token}`;
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  const form = body instanceof FormData; // files: the browser sets the multipart type itself
+  if (body !== undefined && !form) headers['Content-Type'] = 'application/json';
   let res;
   try {
-    res = await fetch(BASE + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    res = await fetch(BASE + path, { method, headers, body: body === undefined ? undefined : form ? body : JSON.stringify(body) });
   } catch {
     throw new ApiError(0, { message: 'אין חיבור לשרת. בדקו את החיבור לאינטרנט' });
   }
@@ -57,3 +58,6 @@ export const api = {
   patch: (p, b) => request('PATCH', p, b),
   del: (p) => request('DELETE', p),
 };
+
+/** Full address of a file link the API returned (e.g. "api/f/<token>"). */
+export const fileUrl = (path) => `${API_ROOT}/${path}`;

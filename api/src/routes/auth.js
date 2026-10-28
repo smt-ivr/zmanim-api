@@ -4,6 +4,7 @@ import { all, first, nowIso, run } from '../db.js';
 import { forbidden, invalid, json, noContent, readJson, tooMany, unauthorized } from '../http.js';
 import { getSettings } from '../settings.js';
 import { fields, normalizeEmail } from '../validate.js';
+import { linkEmailConversation } from './messages.js';
 
 export async function postLogin({ env, request }) {
   // "login" = e-mail or phone ("email" accepted too, for older clients)
@@ -57,6 +58,7 @@ export async function patchMe({ env, actor, request }) {
     if (!actor.can_edit_email) throw forbidden('שינוי המייל חסום. לשינוי פנו להנהלה');
     if (await first(env, `SELECT id FROM users WHERE email = ? AND id != ?`, d.email, actor.id)) throw invalid({ email: 'המייל כבר רשום במערכת' });
     await run(env, `UPDATE users SET email = ?, updated_at = ? WHERE id = ?`, d.email, nowIso(), actor.id);
+    await linkEmailConversation(env, await first(env, `SELECT * FROM users WHERE id = ?`, actor.id));
   }
   if (d.is_hidden !== undefined) {
     if (!actor.is_super) throw forbidden('אין לך הרשאה לפעולה זו');
