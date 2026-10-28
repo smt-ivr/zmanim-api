@@ -41,7 +41,7 @@ export function Profile({ user, onChanged }) {
 
   return html`<div class="page narrow">
     <header class="page-head"><div><h1>הפרופיל שלי</h1>
-      <p class="muted">${user.role === 'admin' ? 'מנהל מערכת' : 'מנהל בית כנסת'} · כניסה אחרונה ${formatDate(user.last_login_at)}</p></div></header>
+      <p class="muted">${user.role === 'admin' ? 'מנהל מערכת' : 'גבאי בית כנסת'} · כניסה אחרונה ${formatDate(user.last_login_at)}</p></div></header>
 
     <section class="card form">
       <h3>פרטים אישיים</h3>

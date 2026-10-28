@@ -252,7 +252,7 @@ const SCREENS = {
       const items = [['1', 'ניהול המניינים']];
       if (can(c, 'minyanim')) items.push(['2', 'הוספת מניין'], ['3', 'ניהול מיקומים']);
       if (c.actor.role === 'admin' && can(c, 'synagogues')) items.push(['4', 'הגדרות בית הכנסת']);
-      if (c.actor.role === 'admin' && can(c, 'managers')) items.push(['5', 'מנהלי בית הכנסת']);
+      if (c.actor.role === 'admin' && can(c, 'managers')) items.push(['5', 'גבאי בית הכנסת']);
       if ((await seasonsFor(c)).length > 1) items.push(['7', 'מעבר לעונה אחרת']);
       if (c.actor.role !== 'admin') items.push(['9', 'דרישת סיסמה בשיחה']);
       return menu(c, season ? `${s.name}, זמני ${season.name}` : s.name, items, { star: !c.state.data.single });
@@ -585,7 +585,7 @@ const SCREENS = {
     async prompt(c) {
       const s = await synagogue(c);
       const open = parseFields(s.editable_fields).length > 0;
-      const status = `${s.is_active ? 'מוצג לציבור' : 'מוסתר מהציבור'}, מכסת מניינים ${s.max_minyanim || 'ללא הגבלה'}, מכסת מיקומים ${s.max_locations || 'ללא הגבלה'}, עריכת פרטים על ידי המנהל ${open ? 'פתוחה' : 'חסומה'}`;
+      const status = `${s.is_active ? 'מוצג לציבור' : 'מוסתר מהציבור'}, מכסת מניינים ${s.max_minyanim || 'ללא הגבלה'}, מכסת מיקומים ${s.max_locations || 'ללא הגבלה'}, עריכת פרטים על ידי הגבאי ${open ? 'פתוחה' : 'חסומה'}`;
       return menu(c, status, [
         ['1', s.is_active ? 'הסתרה מהציבור' : 'הצגה לציבור'], ['2', 'שינוי מכסת מניינים'], ['3', 'שינוי מכסת מיקומים'],
         ['4', open ? 'חסימת עריכת כל הפרטים' : 'פתיחת כל הפרטים לעריכה'], ['5', 'מחיקת בית הכנסת'],
@@ -645,8 +645,8 @@ const SCREENS = {
     async prompt(c) {
       const list = await all(c.env, `SELECT u.id, u.name, u.phone FROM synagogue_managers sm JOIN users u ON u.id = sm.user_id WHERE sm.synagogue_id = ? ORDER BY u.id`, c.state.data.sid);
       c.state.data.mgrs = list.map((u) => u.id);
-      const intro = list.length ? [text('המנהלים:'), ...list.flatMap((u, i) => [text(`${i + 1}, ${u.name}`), u.phone && speakPhone(u.phone)])] : [text('אין מנהלים לבית כנסת זה')];
-      const m = menu(c, null, [['1', 'הוספת מנהל לפי מספר טלפון'], ['2', 'הסרת מנהל']]);
+      const intro = list.length ? [text('הגבאים:'), ...list.flatMap((u, i) => [text(`${i + 1}, ${u.name}`), u.phone && speakPhone(u.phone)])] : [text('אין גבאים לבית כנסת זה')];
+      const m = menu(c, null, [['1', 'הוספת גבאי לפי מספר טלפון'], ['2', 'הסרת גבאי']]);
       return { ...m, messages: [...intro.filter(Boolean), ...m.messages] };
     },
     handle(c, input) {
@@ -657,29 +657,29 @@ const SCREENS = {
   },
   mgrAdd: {
     back: 'synManagers',
-    prompt: () => number(['הקישו את מספר הטלפון של המנהל וסולמית'], { min: 9, max: 10 }),
+    prompt: () => number(['הקישו את מספר הטלפון של הגבאי וסולמית'], { min: 9, max: 10 }),
     async handle(c, input) {
       const phone = normalizePhone(input);
       if (!phone) { c.say.push(text('מספר לא תקין')); return go(c, 'mgrAdd'); }
       let u = await first(c.env, `SELECT * FROM users WHERE phone = ?`, phone);
       if (u?.role === 'admin') { c.say.push(text('זהו מנהל מערכת, יש לו כבר גישה לכל בתי הכנסת')); return go(c, 'synManagers'); }
       if (!u) {
-        const res = await run(c.env, `INSERT INTO users (name, phone, role) VALUES (?, ?, 'manager')`, `מנהל ${phone}`, phone);
+        const res = await run(c.env, `INSERT INTO users (name, phone, role) VALUES (?, ?, 'manager')`, `גבאי ${phone}`, phone);
         u = { id: res.meta.last_row_id };
       }
       await run(c.env, `INSERT OR IGNORE INTO synagogue_managers (synagogue_id, user_id) VALUES (?, ?)`, c.state.data.sid, u.id);
-      c.say.push(text('המנהל נוסף. הוא יכול להתקשר עכשיו מהטלפון שלו ולנהל את בית הכנסת'));
+      c.say.push(text('הגבאי נוסף. הוא יכול להתקשר עכשיו מהטלפון שלו ולנהל את בית הכנסת'));
       return go(c, 'synManagers');
     },
   },
   mgrRemove: {
     back: 'synManagers',
-    prompt: () => number(['הקישו את מספר המנהל ברשימה וסולמית']),
+    prompt: () => number(['הקישו את מספר הגבאי ברשימה וסולמית']),
     async handle(c, input) {
       const id = c.state.data.mgrs[Number(input) - 1];
       if (!id) return invalid(c);
       await run(c.env, `DELETE FROM synagogue_managers WHERE synagogue_id = ? AND user_id = ?`, c.state.data.sid, id);
-      c.say.push(text('המנהל הוסר מבית הכנסת'));
+      c.say.push(text('הגבאי הוסר מבית הכנסת'));
       return go(c, 'synManagers');
     },
   },

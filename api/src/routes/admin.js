@@ -57,7 +57,7 @@ export async function addManager({ env, params, request }) {
 /** DELETE /admin/synagogues/:id/managers/:uid — the user stays, only this synagogue is removed from them. */
 export async function removeManager({ env, params }) {
   const res = await run(env, `DELETE FROM synagogue_managers WHERE synagogue_id = ? AND user_id = ?`, id(params.id), id(params.uid));
-  if (!res.meta.changes) throw notFound('המשתמש אינו מנהל של בית הכנסת');
+  if (!res.meta.changes) throw notFound('המשתמש אינו גבאי של בית הכנסת');
   return noContent();
 }
 
@@ -89,7 +89,7 @@ async function validateLinks(env, d) {
   await assertIdsExist(env, 'prayers', d.allowed_prayer_ids, 'allowed_prayer_ids');
   if (d.manager_ids?.length) {
     const rows = await all(env, `SELECT id FROM users WHERE role = 'manager' AND id IN (${marks(d.manager_ids.length)})`, ...d.manager_ids);
-    if (rows.length !== d.manager_ids.length) throw invalid({ manager_ids: 'ניתן לשייך רק משתמשים מסוג מנהל בית כנסת' });
+    if (rows.length !== d.manager_ids.length) throw invalid({ manager_ids: 'ניתן לשייך רק משתמשים מסוג גבאי בית כנסת' });
   }
 }
 

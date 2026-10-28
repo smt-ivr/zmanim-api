@@ -16,7 +16,7 @@ export function AdminDashboard({ me, system }) {
   const todo = [
     system.pending_registrations > 0 && ['inbox', `${system.pending_registrations} בקשות הצטרפות ממתינות לאישור`, '#/admin/registrations'],
     me.is_super && system.unread_messages > 0 && ['chat', `${system.unread_messages} הודעות שלא נקראו`, '#/admin/inbox'],
-    data.unmanaged > 0 && ['user', `${data.unmanaged} בתי כנסת בלי מנהל`, '#/admin/synagogues?filter=unmanaged'],
+    data.unmanaged > 0 && ['user', `${data.unmanaged} בתי כנסת בלי גבאי`, '#/admin/synagogues?filter=unmanaged'],
   ].filter(Boolean);
 
   return html`<div class="page">
@@ -24,7 +24,7 @@ export function AdminDashboard({ me, system }) {
     <div class="stats">
       ${stat('building', 'בתי כנסת', data.synagogues, '#/admin/synagogues')}
       ${stat('clock', 'מניינים', data.minyanim, '#/admin/synagogues')}
-      ${stat('users', 'מנהלי בתי כנסת', data.managers, '#/admin/users')}
+      ${stat('users', 'גבאי בתי כנסת', data.managers, '#/admin/users')}
       ${stat('eye', 'מוצגים לציבור', data.active_synagogues, '#/admin/synagogues')}
     </div>
     ${todo.length > 0 && html`<div class="card todo">

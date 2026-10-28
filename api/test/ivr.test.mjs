@@ -116,10 +116,10 @@ describe('ivr management', () => {
     assert.match(body, /בית הכנסת נוצר, מספרו 1/);
     assert.equal((await q(`SELECT area_id FROM synagogues`).first()).area_id, 1);
     body = await admin.press('5'); // managers
-    assert.match(body, /אין מנהלים/);
+    assert.match(body, /אין גבאים/);
     body = await admin.press('1');
     body = await admin.press('0521112233');
-    assert.match(body, /המנהל נוסף/);
+    assert.match(body, /הגבאי נוסף/);
     const mgr = await q(`SELECT * FROM users WHERE phone = '0521112233'`).first();
     assert.equal(mgr.role, 'manager');
 

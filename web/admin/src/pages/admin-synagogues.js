@@ -55,23 +55,23 @@ export function AdminSynagogues({ onChanged, perms = [] }) {
   const pageItems = shown.slice(page * PAGE, (page + 1) * PAGE);
   return html`<div class="page">
     <header class="page-head">
-      <div><h1>בתי כנסת</h1><p class="muted">${pluralize(data.synagogues.length, 'בית כנסת', 'בתי כנסת')} במערכת${unmanaged ? ` · ${unmanaged} בלי מנהל` : ''}</p></div>
+      <div><h1>בתי כנסת</h1><p class="muted">${pluralize(data.synagogues.length, 'בית כנסת', 'בתי כנסת')} במערכת${unmanaged ? ` · ${unmanaged} בלי גבאי` : ''}</p></div>
       ${perms.includes('synagogues') && html`<${Button} kind="primary" icon="plus" onClick=${() => setEditing('new')}>בית כנסת חדש<//>`}
     </header>
     <div class="toolbar filters">
-      <div class="search"><${Icon} name="search" /><input class="input" placeholder="חיפוש לפי שם, כתובת או מנהל…" value=${q} onInput=${(e) => setQ(e.currentTarget.value)} /></div>
+      <div class="search"><${Icon} name="search" /><input class="input" placeholder="חיפוש לפי שם, כתובת או גבאי…" value=${q} onInput=${(e) => setQ(e.currentTarget.value)} /></div>
       ${data.areas.length > 0 && html`<${Select} value=${area} onChange=${setArea} placeholder="כל האזורים" options=${data.areas.map((a) => ({ value: a.id, label: a.name }))} />`}
-      <${Select} value=${status} onChange=${setStatus} options=${[{ value: 'all', label: 'כל המצבים' }, { value: 'active', label: 'מוצגים לציבור' }, { value: 'hidden', label: 'מוסתרים' }, { value: 'unmanaged', label: 'בלי מנהל' }]} />
+      <${Select} value=${status} onChange=${setStatus} options=${[{ value: 'all', label: 'כל המצבים' }, { value: 'active', label: 'מוצגים לציבור' }, { value: 'hidden', label: 'מוסתרים' }, { value: 'unmanaged', label: 'בלי גבאי' }]} />
     </div>
     ${data.synagogues.length === 0
       ? html`<${Empty} icon="building" title="אין עדיין בתי כנסת">${perms.includes('synagogues') && html`<div class="pad"><${Button} kind="primary" icon="plus" onClick=${() => setEditing('new')}>יצירת בית הכנסת הראשון<//></div>`}<//>`
       : html`<div class="card table-wrap"><table class="table responsive">
-          <thead><tr><th>בית הכנסת</th><th>אזור</th><th>מנהלים</th><th>מניינים</th><th>הגדרות</th><th /></tr></thead>
+          <thead><tr><th>בית הכנסת</th><th>אזור</th><th>גבאים</th><th>מניינים</th><th>הגדרות</th><th /></tr></thead>
           <tbody>${pageItems.map((s) => html`<tr key=${s.id} class=${s.is_active ? '' : 'inactive'}>
             <td data-label="בית הכנסת"><a class="strong" href=${`#/s/${s.id}`}>${s.name}</a>${!s.is_active && html` <${Badge} tone="warn">מוסתר<//>`}
               <div class="muted small">${s.address}</div></td>
             <td data-label="אזור">${s.area_name || html`<span class="muted">—</span>`}</td>
-            <td data-label="מנהלים">${s.managers.length ? html`<span class="ellipsis-2">${s.managers.map((m) => m.name).join(', ')}</span>` : html`<${Badge} tone="warn">ללא מנהל<//>`}</td>
+            <td data-label="גבאים">${s.managers.length ? html`<span class="ellipsis-2">${s.managers.map((m) => m.name).join(', ')}</span>` : html`<${Badge} tone="warn">ללא גבאי<//>`}</td>
             <td data-label="מניינים"><span class="num">${s.minyanim_count}</span>${s.settings.max_minyanim ? html`<span class="muted"> / ${s.settings.max_minyanim}</span>` : ''}</td>
             <td data-label="הגדרות" class="small">
               ${s.settings.editable_fields.length > 0 && html`<${Badge} tone="info">עריכת ${s.settings.editable_fields.length} פרטים<//> `}
@@ -124,20 +124,20 @@ function SynagogueModal({ synagogue, data, onClose, onSaved }) {
           <${Field} label="כתובת" error=${errors.address}><${Input} value=${v.address} onInput=${set('address')} /><//>
           <${Field} label="הערות" error=${errors.notes}><${TextArea} value=${v.notes} onInput=${set('notes')} /><//>
           <${Toggle} checked=${v.is_active} onChange=${set('is_active')} label="פעיל לציבור" hint="כבוי = בית הכנסת והמניינים שלו לא מוצגים בממשק הציבורי" />
-          ${isNew && html`<p class="muted small">אחרי השמירה בית הכנסת ייפתח, ושם מוסיפים מנהלים (לשונית "מנהלים") ומניינים.</p>`}
+          ${isNew && html`<p class="muted small">אחרי השמירה בית הכנסת ייפתח, ושם מוסיפים גבאים (לשונית "גבאים") ומניינים.</p>`}
         </div>
         <div>
-          <h4>מה מותר למנהל בית הכנסת</h4>
-          <${Field} group label="פרטים שהמנהל יכול לערוך" hint="כל השאר נעול. ברירת מחדל: הכל נעול">
+          <h4>מה מותר לגבאי בית הכנסת</h4>
+          <${Field} group label="פרטים שהגבאי יכול לערוך" hint="כל השאר נעול. ברירת מחדל: הכל נעול">
             <${CheckList} options=${[['name', 'שם'], ['area_id', 'אזור'], ['address', 'כתובת'], ['phone', 'טלפון'], ['notes', 'הערות']].map(([value, label]) => ({ value, label }))}
               value=${v.editable_fields} onChange=${set('editable_fields')} /><//>
           <div class="grid-2">
             <${Field} label="מקסימום מניינים" hint="0 = ללא הגבלה" error=${errors.max_minyanim}><${Input} type="number" min="0" max="10000" dir="ltr" value=${v.max_minyanim} onInput=${set('max_minyanim')} /><//>
             <${Field} label="מקסימום מיקומים" hint="0 = ללא הגבלה" error=${errors.max_locations}><${Input} type="number" min="0" max="1000" dir="ltr" value=${v.max_locations} onInput=${set('max_locations')} /><//>
           </div>
-          <${Toggle} checked=${v.allow_other_seasons} onChange=${set('allow_other_seasons')} label="עדכון עונות אחרות" hint="כבוי: המנהל מעדכן רק את זמני העונה הנוכחית" />
+          <${Toggle} checked=${v.allow_other_seasons} onChange=${set('allow_other_seasons')} label="עדכון עונות אחרות" hint="כבוי: הגבאי מעדכן רק את זמני העונה הנוכחית" />
           <${Toggle} checked=${v.allow_interval} onChange=${set('allow_interval')} label="מניינים בסבב (שטיבלאך)" hint="מניין כל כמה דקות בטווח שעות" />
-          <${Toggle} checked=${v.restrict_prayers} onChange=${set('restrict_prayers')} label="הגבלת סוגי תפילה" hint="רק התפילות שנבחרו יהיו זמינות למנהל" />
+          <${Toggle} checked=${v.restrict_prayers} onChange=${set('restrict_prayers')} label="הגבלת סוגי תפילה" hint="רק התפילות שנבחרו יהיו זמינות לגבאי" />
           ${v.restrict_prayers && html`<${Field} group label="תפילות מותרות" error=${errors.allowed_prayer_ids}>
             <${CheckList} options=${data.prayers.map((p) => ({ value: p.id, label: p.name }))} value=${v.allowed_prayer_ids} onChange=${set('allowed_prayer_ids')} /><//>`}
         </div>

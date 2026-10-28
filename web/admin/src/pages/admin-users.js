@@ -6,7 +6,7 @@ import {
 } from '../ui.js';
 import { UserHistory } from './history.js';
 
-const ROLE = { admin: 'מנהל מערכת', manager: 'מנהל בית כנסת' };
+const ROLE = { admin: 'מנהל מערכת', manager: 'גבאי בית כנסת' };
 const PAGE = 50;
 
 export function AdminUsers({ me, system }) {
@@ -53,11 +53,11 @@ export function AdminUsers({ me, system }) {
 
   return html`<div class="page">
     <header class="page-head">
-      <div><h1>משתמשים</h1><p class="muted">${pluralize(count('manager'), 'מנהל בית כנסת', 'מנהלי בתי כנסת')} · ${pluralize(count('admin'), 'מנהל מערכת', 'מנהלי מערכת')}</p></div>
+      <div><h1>משתמשים</h1><p class="muted">${pluralize(count('manager'), 'גבאי בית כנסת', 'גבאי בתי כנסת')} · ${pluralize(count('admin'), 'מנהל מערכת', 'מנהלי מערכת')}</p></div>
       ${(me.perms.includes('managers') || me.perms.includes('admins')) && html`<${Button} kind="primary" icon="plus" onClick=${() => setEditing('new')}>משתמש חדש<//>`}
     </header>
     <div class="tabs">
-      ${[['all', 'כולם'], ['manager', 'מנהלי בתי כנסת'], ['admin', 'מנהלי מערכת']].map(([k, l]) =>
+      ${[['all', 'כולם'], ['manager', 'גבאי בתי כנסת'], ['admin', 'מנהלי מערכת']].map(([k, l]) =>
         html`<button class=${role === k ? 'tab active' : 'tab'} onClick=${() => setRole(k)}>${l}<span class="count">${count(k)}</span></button>`)}
     </div>
     <div class="toolbar filters">
@@ -135,11 +135,11 @@ function UserModal({ user, me, mailReady, onClose, onSaved }) {
         </div><//>
       ${!self && html`<${Field} group label="תפקיד">
         <div class="segmented full">
-          <button type="button" class=${v.role === 'manager' ? 'on' : ''} onClick=${() => set('role')('manager')}>מנהל בית כנסת</button>
+          <button type="button" class=${v.role === 'manager' ? 'on' : ''} onClick=${() => set('role')('manager')}>גבאי בית כנסת</button>
           <button type="button" class=${v.role === 'admin' ? 'on' : ''} onClick=${() => set('role')('admin')}>מנהל מערכת</button>
         </div><//>`}
       ${v.role === 'manager'
-        ? html`<${Field} group label="בתי הכנסת שהוא מנהל" error=${errors.synagogue_ids}>
+        ? html`<${Field} group label="בתי הכנסת שהוא גבאי בהם" error=${errors.synagogue_ids}>
             <${SynagogueMultiPicker} value=${v.synagogues} onChange=${set('synagogues')} /><//>`
         : user?.is_super
           ? html`<div class="alert alert-info">למשתמש זה יש את כל ההרשאות.</div>`
@@ -175,7 +175,7 @@ const PERMS = {
   synagogues: 'הוספה ועריכה של בתי כנסת והגדרותיהם',
   synagogues_delete: 'מחיקת בתי כנסת',
   minyanim: 'עדכון זמנים, מיקומים ופרטים בכל בית כנסת',
-  managers: 'ניהול מנהלי בתי כנסת (משתמשים)',
+  managers: 'ניהול גבאי בתי כנסת (משתמשים)',
   admins: 'ניהול מנהלי מערכת אחרים',
   catalog: 'הגדרות ורשימות (תפילות, זמני ייחוס, עונות, אזורים)',
   phone: 'הגדרות שלוחות הטלפון',

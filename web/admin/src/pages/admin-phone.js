@@ -46,7 +46,7 @@ export function PhonePanel() {
       <div class="list">
         ${data.phones.length === 0 && html`<div class="muted pad">אין משתמשים עם טלפון</div>`}
         ${data.phones.map((u) => html`<div class="list-row"><b class="grow">${u.name}</b><span dir="ltr">${u.phone}</span>
-          <${Badge} tone=${u.role === 'admin' ? 'info' : 'neutral'}>${u.role === 'admin' ? 'מנהל מערכת' : 'מנהל בית כנסת'}<//></div>`)}
+          <${Badge} tone=${u.role === 'admin' ? 'info' : 'neutral'}>${u.role === 'admin' ? 'מנהל מערכת' : 'גבאי בית כנסת'}<//></div>`)}
       </div>
     </div>
   </section>`;

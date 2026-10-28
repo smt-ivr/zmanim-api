@@ -44,7 +44,7 @@ export function Workspace({ id, user, system, onChanged }) {
   const tabs = [
     ['minyanim', 'מניינים', usage.minyanim],
     ['locations', 'מיקומים', usage.locations],
-    ...(isAdmin ? [['managers', 'מנהלים', managers.length]] : []),
+    ...(isAdmin ? [['managers', 'גבאים', managers.length]] : []),
     ['info', 'פרטים'],
     ['history', 'היסטוריה'],
   ];
@@ -258,11 +258,11 @@ function ManagersTab({ data, user, reload }) {
     try { await api.del(`/admin/synagogues/${s.id}/managers/${m.id}`); toast('הוסר'); reload(); } catch (e) { toastError(e); }
   }
   return html`<section class="narrow-section">
-    ${may && html`<div class="toolbar"><span class="grow muted small">מנהלי בית הכנסת מעדכנים את הזמנים באתר ובטלפון.</span>
-      <${Button} icon="userPlus" onClick=${() => setAdding(true)}>הוספת מנהל קיים<//>
+    ${may && html`<div class="toolbar"><span class="grow muted small">גבאי בית הכנסת מעדכנים את הזמנים באתר ובטלפון.</span>
+      <${Button} icon="userPlus" onClick=${() => setAdding(true)}>הוספת גבאי קיים<//>
       <${Button} kind="primary" icon="plus" onClick=${() => setNewUser(true)}>משתמש חדש<//></div>`}
     ${managers.length === 0
-      ? html`<${Empty} icon="users" title="אין מנהלים לבית הכנסת">${may ? 'הוסיפו מנהל כדי שיוכל לעדכן את הזמנים.' : ''}<//>`
+      ? html`<${Empty} icon="users" title="אין גבאים לבית הכנסת">${may ? 'הוסיפו גבאי כדי שיוכל לעדכן את הזמנים.' : ''}<//>`
       : html`<div class="card list">${managers.map((m) => html`<div class="list-row" key=${m.id}>
           <${Avatar} name=${m.name} size=${34} />
           <div class="grow"><b>${m.name}</b>${!m.is_active ? html` <${Badge} tone="warn">מושבת<//>` : ''}
@@ -280,11 +280,11 @@ function AddManagerModal({ synagogue, exclude, onClose, onDone }) {
   const [q, setQ] = useState('');
   const shown = (users.data || []).filter((u) => u.role === 'manager' && !exclude.includes(u.id) && (!q || norm(`${u.name} ${u.email} ${u.phone}`).includes(norm(q)))).slice(0, 40);
   const add = async (u) => {
-    try { await api.post(`/admin/synagogues/${synagogue.id}/managers`, { user_id: u.id }); toast(`${u.name} נוסף כמנהל`); onClose(); onDone(); } catch (e) { toastError(e); }
+    try { await api.post(`/admin/synagogues/${synagogue.id}/managers`, { user_id: u.id }); toast(`${u.name} נוסף כגבאי`); onClose(); onDone(); } catch (e) { toastError(e); }
   };
-  return html`<${Modal} title=${`הוספת מנהל ל${synagogue.name}`} onClose=${onClose}>
+  return html`<${Modal} title=${`הוספת גבאי ל${synagogue.name}`} onClose=${onClose}>
     <div class="search wide"><${Icon} name="search" /><input class="input" placeholder="חיפוש לפי שם, מייל או טלפון…" value=${q} onInput=${(e) => setQ(e.currentTarget.value)} autofocus /></div>
-    <div class="syn-results">${users.loading ? html`<${Spinner} />` : shown.length === 0 ? html`<div class="muted pad center">לא נמצאו מנהלים</div>`
+    <div class="syn-results">${users.loading ? html`<${Spinner} />` : shown.length === 0 ? html`<div class="muted pad center">לא נמצאו גבאים</div>`
       : shown.map((u) => html`<button type="button" class="syn-item" onClick=${() => add(u)}><${Avatar} name=${u.name} size=${28} />
           <span class="grow"><b>${u.name}</b><small dir="ltr">${u.email} · ${u.phone}</small></span>
           <small class="muted">${pluralize(u.synagogues.length, 'בית כנסת', 'בתי כנסת')}</small></button>`)}</div>

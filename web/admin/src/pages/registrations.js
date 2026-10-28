@@ -161,7 +161,7 @@ function ApproveModal({ r, areas, onClose, onDone }) {
       <${Field} label="כתובת" error=${errors.address}><${Input} value=${v.address} onInput=${set('address')} /><//>
       <div class="alert alert-info">${r.existing_user
         ? `ל-${r.email} כבר יש משתמש. בית הכנסת יתווסף אליו, ויישלח לו מייל עם כניסה ישירה.`
-        : `ייפתח משתמש מנהל בית כנסת ל${r.contact_name} (${r.email}). הוא יקבל מייל עם כניסה ישירה, ויתבקש לבחור סיסמה בכניסה הראשונה.`}</div>`}
+        : `ייפתח משתמש גבאי בית כנסת ל${r.contact_name} (${r.email}). הוא יקבל מייל עם כניסה ישירה, ויתבקש לבחור סיסמה בכניסה הראשונה.`}</div>`}
   <//>`;
 }
 
