@@ -1055,6 +1055,64 @@ describe('e-mail (Resend mocked)', () => {
     assert.equal(store.size, 0);
   });
 
+  test('one message to many gabbaim: by area / synagogue / all; each in their chat, by e-mail in a batch, files stored once', async () => {
+    const admin = await setupAdmin();
+    await env.DB.prepare(`UPDATE users SET is_super = 1`).run();
+    await enableMail();
+    const store = new Map();
+    env.FILES = {
+      put: async (k, v) => store.set(k, new Uint8Array(await new Response(v).arrayBuffer())),
+      get: async (k) => (store.has(k) ? { body: new Response(store.get(k)).body, arrayBuffer: async () => store.get(k).buffer } : null),
+      delete: async (keys) => [].concat(keys).forEach((k) => store.delete(k)),
+    };
+    await env.DB.prepare(`INSERT INTO areas (name) VALUES ('רמות')`).run();
+    const a = await newSynagogue(admin, { name: 'אהל משה', area_id: 1 });
+    const b = await newSynagogue(admin, { name: 'זכרון משה', area_id: 2 });
+    const g1 = await createManager(admin, 'g1@x.com', [a.id]);
+    const g2 = await createManager(admin, 'g2@x.com', [b.id]);
+    await createManager(admin, 'g3@x.com', [a.id, b.id]);
+    const who = async (kind, ids = []) => (await call('GET', `/admin/broadcasts/recipients?kind=${kind}&ids=${ids.join(',')}`, { token: admin })).body.count;
+    assert.equal(await who('all'), 3);
+    assert.equal(await who('areas', [2]), 2);
+    assert.equal(await who('synagogues', [a.id]), 2);
+    assert.equal(await who('users', [g1.id]), 1);
+
+    const { default: worker } = await import('../src/index.js');
+    const form = new FormData();
+    form.append('body', 'שימו לב: מעבר לשעון חורף');
+    form.append('send_email', 'true');
+    form.append('kind', 'areas');
+    form.append('ids', JSON.stringify([2]));
+    form.append('files', new File(['luach'], 'luach.pdf', { type: 'application/pdf' }));
+    const before = sent.length;
+    const r = await worker.fetch(new Request('https://x.test/api/admin/broadcasts', { method: 'POST', headers: { Authorization: `Bearer ${admin}` }, body: form }), env);
+    assert.equal(r.status, 201);
+    const res = await r.json();
+    assert.deepEqual([res.recipients, res.emailed, res.target], [2, 2, 'גבאי רמות']);
+    assert.equal(sent.length, before + 1, 'one batch request');
+    const batch = sent.at(-1).body;
+    assert.deepEqual(batch.map((m) => m.to[0]).sort(), ['g2@x.com', 'g3@x.com']);
+    assert.match(batch[0].text, /מעבר לשעון חורף[\s\S]*luach\.pdf: https:\/\/x\.test\/api\/f\/[0-9a-f]+/);
+    assert.equal(store.size, 1, 'the file is stored once');
+
+    // each sees it in their own chat, with the file; g1 (another area) does not
+    const t2 = (await call('POST', '/auth/login', { body: { login: 'g2@x.com', password: 'manager-pass' } })).body.token;
+    const mine = (await call('GET', '/me/messages', { token: t2 })).body.messages;
+    assert.equal(mine.at(-1).body, 'שימו לב: מעבר לשעון חורף');
+    assert.equal(mine.at(-1).files[0].name, 'luach.pdf');
+    assert.equal((await call('GET', '/me/messages', { token: g1.token })).body.messages.length, 0);
+    const list = (await call('GET', '/admin/broadcasts', { token: admin })).body;
+    assert.deepEqual([list[0].recipients, list[0].emailed, list[0].opened], [2, 2, 0]);
+
+    // deleting one conversation keeps the shared file for the other
+    const convs = (await call('GET', '/admin/conversations', { token: admin })).body;
+    await call('DELETE', `/admin/conversations/${convs[0].id}`, { token: admin });
+    assert.equal(store.size, 1);
+    await call('DELETE', `/admin/conversations/${convs[1].id}`, { token: admin });
+    assert.equal(store.size, 0);
+    assert.equal((await call('POST', '/admin/broadcasts', { token: admin, body: { body: 'x', kind: 'users', ids: [] } })).status, 422);
+  });
+
   test('incoming e-mail: replies, outside senders, the staff answering from the mailbox', async () => {
     const admin = await setupAdmin();
     await env.DB.prepare(`UPDATE users SET is_super = 1`).run();

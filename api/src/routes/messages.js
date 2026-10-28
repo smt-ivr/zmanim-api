@@ -4,12 +4,12 @@
 import { checkLock, recordFailure } from '../auth.js';
 import { all, first, nowIso, nowSec, run } from '../db.js';
 import { forbidden, invalid, json, noContent, notFound, readJson } from '../http.js';
-import { adminUrl, mailReady, sendMail, siteUrl } from '../mail.js';
+import { adminUrl, mailReady, sendMail, sendMailBatch, siteUrl } from '../mail.js';
 import { getSettings } from '../settings.js';
 import { clean, fields, id, normalizeEmail } from '../validate.js';
 import PostalMime from '../vendor/postal-mime/postal-mime.js';
 import { nameRow } from '../names.js';
-import { checkFiles, filesOf, mailAttachments, removeConversationFiles, saveFiles } from '../files.js';
+import { checkFiles, filesOf, mailAttachments, newToken, removeConversationFiles, saveFiles, storeShared } from '../files.js';
 
 const ONLINE = 15 * 60; // signed in and active within this time = online (no e-mail needed)
 const NOTIFY_EVERY = 20 * 60; // at most one "new message" e-mail per conversation in this time
@@ -212,7 +212,7 @@ async function loadConversation(env, rawId) {
 /** GET /admin/conversations/:id (marks it read) */
 export async function getConversation({ env, actor, params }) {
   const c = await loadConversation(env, params.id);
-  const messages = await all(env, `SELECT m.id, m.sender, m.body, m.via, m.emailed, m.opened_at, m.open_count, m.created_at, u.name AS staff_name, u.id AS st_id, u.role AS st_role, u.is_super AS st_super
+  const messages = await all(env, `SELECT m.id, m.sender, m.body, m.via, m.emailed, m.opened_at, m.open_count, m.created_at, m.broadcast_id, u.name AS staff_name, u.id AS st_id, u.role AS st_role, u.is_super AS st_super
     FROM messages m LEFT JOIN users u ON u.id = m.staff_user_id WHERE m.conversation_id = ? ORDER BY m.created_at, m.id`, c.id);
   if (c.staff_unread) await run(env, `UPDATE conversations SET staff_unread = 0 WHERE id = ?`, c.id);
   const { notified_at, ...conversation } = c;
@@ -370,4 +370,150 @@ async function receive(message, env) {
   await addMessage(env, conv, { sender: 'user', body, via: 'email', files });
   await notifyStaff(env, url, conv, body, files);
   return { status: 'accepted', detail: `נוסף לשיחה #${conv.id}`, subject: subjectRaw };
+}
+
+// ------------------------------------------------------------------ one message to many
+// Each recipient gets the message in their own chat (and, if chosen, by e-mail in their thread).
+// Built from a few batched statements, so hundreds of recipients stay within the Worker's limits.
+const MAX_RECIPIENTS = 1000;
+const chunks = (list, n = 80) => Array.from({ length: Math.ceil(list.length / n) }, (_, i) => list.slice(i * n, i * n + n));
+
+/** Who a target means. target: { kind: 'all' | 'areas' | 'synagogues' | 'users', ids: [] } */
+async function recipientsOf(env, actor, target) {
+  const ids = [...new Set((target.ids || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))].slice(0, MAX_RECIPIENTS);
+  const base = `SELECT DISTINCT u.id, u.name, u.email FROM users u`;
+  const active = `u.is_active = 1 AND u.id != ${Number(actor.id)}`;
+  const managersOf = (joinWhere, params) => [`${base} JOIN synagogue_managers sm ON sm.user_id = u.id JOIN synagogues s ON s.id = sm.synagogue_id
+    WHERE ${active} AND u.role = 'manager' AND ${joinWhere}`, params];
+  let rows = [];
+  if (target.kind === 'all') rows = await all(env, `${base} WHERE ${active} AND u.role = 'manager' ORDER BY u.name`);
+  else if (!ids.length) rows = [];
+  else {
+    for (const part of chunks(ids)) {
+      const marks = part.map(() => '?').join(',');
+      const [sql, params] = target.kind === 'areas' ? managersOf(`s.area_id IN (${marks})`, part)
+        : target.kind === 'synagogues' ? managersOf(`s.id IN (${marks})`, part)
+        : [`${base} WHERE ${active} AND u.id IN (${marks}) ${actor.is_super ? '' : 'AND u.is_super = 0'}`, part];
+      rows.push(...(await all(env, sql, ...params)));
+    }
+    rows = [...new Map(rows.map((r) => [r.id, r])).values()].sort((a, b) => a.name.localeCompare(b.name, 'he'));
+  }
+  return rows.slice(0, MAX_RECIPIENTS);
+}
+
+async function targetLabel(env, target, count) {
+  if (target.kind === 'all') return 'כל הגבאים';
+  const names = async (table) => (await all(env, `SELECT name FROM ${table} WHERE id IN (${target.ids.slice(0, 5).map(() => '?').join(',')})`, ...target.ids.slice(0, 5))).map((r) => r.name);
+  const more = (list) => `${list.join(', ')}${target.ids.length > list.length ? ` ועוד ${target.ids.length - list.length}` : ''}`;
+  if (target.kind === 'areas') return `גבאי ${more(await names('areas'))}`;
+  if (target.kind === 'synagogues') return `גבאי ${more(await names('synagogues'))}`;
+  return `${count} משתמשים שנבחרו`;
+}
+
+function parseTarget(kind, ids) {
+  if (!['all', 'areas', 'synagogues', 'users'].includes(kind)) throw invalid({ target: 'יש לבחור למי לשלוח' });
+  let list = ids;
+  if (typeof ids === 'string') { try { list = JSON.parse(ids || '[]'); } catch { list = []; } }
+  return { kind, ids: Array.isArray(list) ? list.map(Number).filter((n) => Number.isInteger(n) && n > 0) : [] };
+}
+
+/** GET /admin/broadcasts/recipients?kind=&ids=1,2 — who would get it (count and names). */
+export async function broadcastRecipients({ env, actor, url }) {
+  const target = parseTarget(url.searchParams.get('kind'), (url.searchParams.get('ids') || '').split(',').filter(Boolean));
+  const rows = await recipientsOf(env, actor, target);
+  return json({ count: rows.length, with_email: rows.filter((r) => r.email).length, names: rows.slice(0, 40).map((r) => r.name), mail_ready: await mailReady(env) });
+}
+
+/** GET /admin/broadcasts — the last ones sent, with how many opened the e-mail. */
+export async function listBroadcasts({ env }) {
+  return json(await all(env, `SELECT b.*, (SELECT COUNT(*) FROM messages m WHERE m.broadcast_id = b.id AND m.opened_at IS NOT NULL) AS opened
+    FROM broadcasts b ORDER BY b.id DESC LIMIT 30`));
+}
+
+/** POST /admin/broadcasts { body, send_email, kind, ids } or the same as a form with files. */
+export async function sendBroadcast({ env, actor, request, url }) {
+  let d;
+  if ((request.headers.get('Content-Type') || '').includes('multipart/form-data')) {
+    let form;
+    try { form = await request.formData(); } catch { throw invalid({ files: 'ההעלאה נכשלה, נסו שוב' }); }
+    const files = form.getAll('files').filter((f) => f && typeof f !== 'string').map((f) => ({ name: f.name, type: f.type, size: f.size, data: f }));
+    d = { body: clean(String(form.get('body') || '')).slice(0, MAX_BODY), send_email: form.get('send_email') === 'true', target: parseTarget(form.get('kind'), form.get('ids')), files };
+  } else {
+    const raw = await readJson(request);
+    d = { body: clean(String(raw.body || '')).slice(0, MAX_BODY), send_email: raw.send_email === true, target: parseTarget(raw.kind, raw.ids), files: [] };
+  }
+  if (!d.body && !d.files.length) throw invalid({ body: 'יש לכתוב הודעה או לצרף קובץ' });
+  checkFiles(env, d.files);
+  const people = await recipientsOf(env, actor, d.target);
+  if (!people.length) throw invalid({ target: 'אין נמענים לבחירה הזו' });
+  if (d.send_email && !(await mailReady(env))) throw invalid({ send_email: 'שליחת מיילים אינה מוגדרת' });
+
+  const shared = await storeShared(env, d.files);
+  const label = await targetLabel(env, d.target, people.length);
+  const b = await run(env, `INSERT INTO broadcasts (staff_user_id, body, target, recipients, files) VALUES (?, ?, ?, ?, ?)`,
+    actor.id, d.body, label, people.length, shared.length);
+  const bid = b.meta.last_row_id;
+
+  // every recipient needs a conversation; then one message each, its files, and the counters
+  const userIds = people.map((p) => p.id);
+  for (const part of chunks(userIds)) {
+    await run(env, `INSERT INTO conversations (user_id, email, name) SELECT id, email, name FROM users u
+      WHERE id IN (${part.map(() => '?').join(',')}) AND NOT EXISTS (SELECT 1 FROM conversations c WHERE c.user_id = u.id)`, ...part);
+  }
+  const convs = [];
+  for (const part of chunks(userIds)) convs.push(...(await all(env, `SELECT * FROM conversations WHERE user_id IN (${part.map(() => '?').join(',')})`, ...part)));
+  const byMail = d.send_email ? convs.filter((c) => c.email) : [];
+  const tokens = new Map(byMail.map((c) => [c.id, newToken()]));
+  const now = nowIso();
+  const statements = [];
+  for (const c of convs) {
+    statements.push(env.DB.prepare(`INSERT INTO messages (conversation_id, sender, staff_user_id, body, via, emailed, email_token, broadcast_id, created_at)
+      VALUES (?, 'staff', ?, ?, 'web', ?, ?, ?, ?)`).bind(c.id, actor.id, d.body, tokens.has(c.id) ? 1 : 0, tokens.get(c.id) || null, bid, now));
+    for (const f of shared) {
+      statements.push(env.DB.prepare(`INSERT INTO message_files (message_id, conversation_id, key, name, type, size, token)
+        VALUES ((SELECT MAX(id) FROM messages WHERE conversation_id = ? AND broadcast_id = ?), ?, ?, ?, ?, ?, ?)`)
+        .bind(c.id, bid, c.id, f.key, f.name, f.type, f.size, newToken()));
+    }
+  }
+  for (const part of chunks(convs.map((c) => c.id))) {
+    statements.push(env.DB.prepare(`UPDATE conversations SET last_message_at = ?, user_unread = user_unread + 1, status = 'open'
+      WHERE id IN (${part.map(() => '?').join(',')})`).bind(now, ...part));
+  }
+  for (let i = 0; i < statements.length; i += 200) await env.DB.batch(statements.slice(i, i + 200));
+
+  let emailed = 0;
+  if (byMail.length) emailed = await emailBroadcast(env, url, bid, d.body, byMail, tokens);
+  await run(env, `UPDATE broadcasts SET emailed = ? WHERE id = ?`, emailed, bid);
+  return json({ id: bid, recipients: people.length, emailed, target: label }, 201);
+}
+
+/** Each recipient gets the message as the next mail in their own thread; files go as links. Returns how many were sent. */
+async function emailBroadcast(env, url, bid, body, convs, tokens) {
+  const s = await getSettings(env);
+  const domain = (/@([^>\s]+)/.exec(s.mail_from) || [])[1] || 'localhost';
+  const fileRows = await all(env, `SELECT m.conversation_id, f.name, f.token FROM message_files f JOIN messages m ON m.id = f.message_id WHERE m.broadcast_id = ?`, bid);
+  const site = siteUrl(env, url);
+  const mails = convs.map((c) => {
+    const refs = refsOf(c);
+    const files = fileRows.filter((f) => f.conversation_id === c.id).map((f) => `📎 ${f.name}: ${site}api/f/${f.token}`);
+    const subject = c.subject || `הודעה מ${s.system_name}`;
+    c.messageId = `<zm-${c.id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}@${domain}>`;
+    return {
+      to: c.email, subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`, plain: true,
+      paragraphs: [...(body ? body.split(/\n{2,}/) : []), ...(files.length ? [files.join('\n')] : [])],
+      signature: { name: s.system_name, url: site }, pixel: `${site}api/o/${tokens.get(c.id)}`,
+      replyTo: s.inbound_email || undefined,
+      headers: { 'Message-ID': c.messageId, ...(refs.length ? { 'In-Reply-To': refs.at(-1), References: refs.join(' ') } : {}) },
+    };
+  });
+  const { failed } = await sendMailBatch(env, mails);
+  const failedIds = failed.map((i) => convs[i].id);
+  const statements = convs.filter((c) => !failedIds.includes(c.id)).map((c) =>
+    env.DB.prepare(`UPDATE conversations SET email_refs = ?, subject = CASE WHEN subject = '' THEN ? ELSE subject END WHERE id = ?`)
+      .bind([...new Set([...refsOf(c), c.messageId])].slice(-20).join(' '), `הודעה מ${s.system_name}`, c.id));
+  for (const part of chunks(failedIds)) {
+    statements.push(env.DB.prepare(`UPDATE messages SET emailed = 0, email_token = NULL WHERE broadcast_id = ? AND conversation_id IN (${part.map(() => '?').join(',')})`).bind(bid, ...part));
+  }
+  for (let i = 0; i < statements.length; i += 200) await env.DB.batch(statements.slice(i, i + 200));
+  return convs.length - failedIds.length;
 }

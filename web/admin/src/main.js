@@ -13,6 +13,7 @@ import { ControlPage } from './pages/control.js';
 import { Inbox, MyMessages } from './pages/messages.js';
 import { SynagoguePicker, Workspace } from './pages/workspace.js';
 import { Avatar, Button, Credit, Icon, Modal, Spinner, SynagogueSearch, toast } from './ui.js';
+import { PhoneActivity } from './pages/phone-activity.js';
 
 // ------------------------------------------------------------------ routing (#/path)
 const parseHash = () => (location.hash.replace(/^#/, '') || '/').split('?')[0];
@@ -126,6 +127,7 @@ function App() {
   else if (can('registrations') && path === '/admin/registrations') page = html`<${AdminRegistrations} onChanged=${refreshMe} isSuper=${user.is_super} />`;
   else if (isAdmin && path === '/admin/synagogues') page = html`<${AdminSynagogues} onChanged=${refreshMe} perms=${user.perms} />`;
   else if (isAdmin && path === '/admin/users') page = html`<${AdminUsers} me=${user} system=${system} />`;
+  else if (can('phone') && path === '/admin/phone') page = html`<${PhoneActivity} me=${user} />`;
   else if (isAdmin && path === '/admin/catalog') page = html`<${AdminCatalog} perms=${user.perms} />`;
   else if (isAdmin) page = html`<${AdminDashboard} me=${user} system=${system} />`;
   else page = html`<${SynagoguePicker} synagogues=${synagogues} />`;
@@ -147,6 +149,7 @@ function App() {
           ${link('/admin/users', 'users', 'משתמשים', path === '/admin/users')}
           ${user.is_super && link('/admin/inbox', 'chat', 'הודעות', path === '/admin/inbox', system.unread_messages)}
           ${can('registrations') && link('/admin/registrations', 'inbox', 'בקשות הצטרפות', path === '/admin/registrations', system.pending_registrations)}
+          ${can('phone') && link('/admin/phone', 'phone', 'פעילות בטלפון', path === '/admin/phone')}
           ${link('/admin/catalog', 'list', 'רשימות והגדרות', path === '/admin/catalog')}
           ${user.is_super && html`
             ${link('/admin/control', 'settings', 'הגדרות מערכת', path === '/admin/control')}

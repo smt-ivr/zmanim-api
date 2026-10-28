@@ -2,7 +2,7 @@
 // The administration: an inbox of conversations with users and with people who wrote by e-mail (#/admin/inbox).
 import { api, fileUrl } from '../api.js';
 import { VIA, cx, html, navigate, norm, timeAgo, useEffect, useMemo, useRef, useState } from '../lib.js';
-import { Avatar, Badge, Button, Empty, ErrorBox, Field, FormModal, Icon, Input, Modal, Spinner, Toggle, confirm, toast, toastError, useLoad } from '../ui.js';
+import { Avatar, Badge, Button, CheckList, Empty, ErrorBox, Field, FormModal, Icon, Input, Modal, Spinner, SynagogueMultiPicker, Toggle, confirm, toast, toastError, useDebounced, useLoad } from '../ui.js';
 
 const POLL = 20000; // new messages appear while the screen is open
 
@@ -49,7 +49,7 @@ function Thread({ messages, mine, empty }) {
         ${m.staff_name && !mine(m) ? html`<small class="bubble-who">${m.staff_name}</small>` : ''}
         <${Files} files=${m.files} />
         ${m.body && html`<div class="bubble-body">${m.body}</div>`}
-        <small class="bubble-meta">${clock(m.created_at)}${m.via === 'email' ? ' · במייל' : ''}${m.emailed ? ' · נשלח במייל' : ''}
+        <small class="bubble-meta">${clock(m.created_at)}${m.broadcast_id ? ' · הודעה קבוצתית' : ''}${m.via === 'email' ? ' · במייל' : ''}${m.emailed ? ' · נשלח במייל' : ''}
           ${m.emailed && m.sender === 'staff' ? (m.opened_at
             ? html` · <span class="opened" title=${m.open_count > 1 ? `נפתח ${m.open_count} פעמים` : ''}>✓✓ נפתח ${dayLabel(m.opened_at) === 'היום' ? 'היום' : dayLabel(m.opened_at)} ${clock(m.opened_at)}</span>`
             : ' · עוד לא נפתח') : ''}</small>
@@ -78,7 +78,7 @@ function Composer({ onSend, disabled, placeholder = 'כתבו הודעה…', ex
     e?.preventDefault();
     if (!ready || busy) return;
     setBusy(true);
-    try { await onSend(body.trim(), files); setBody(''); setFiles([]); } catch (err) { toastError(err); }
+    try { await onSend(body.trim(), files); setBody(''); setFiles([]); } catch (err) { if (!err.silent) toastError(err); }
     setBusy(false);
   }
   return html`<form class=${cx('composer', busy && 'busy')} onSubmit=${send}
@@ -138,6 +138,7 @@ export function Inbox({ onRead }) {
   const [filter, setFilter] = useState('all');
   const [starting, setStarting] = useState(false);
   const [mailLog, setMailLog] = useState(false);
+  const [broadcast, setBroadcast] = useState(false);
   useEffect(() => { const t = setInterval(list.reload, POLL); return () => clearInterval(t); }, [list.reload]);
 
   const shown = useMemo(() => (list.data || []).filter((c) =>
@@ -152,6 +153,7 @@ export function Inbox({ onRead }) {
     <header class="page-head"><div><h1>הודעות</h1>
       <p class="muted">${unread ? `${unread} שיחות עם הודעות שלא נקראו` : 'אין הודעות שלא נקראו'}. כשאינך מחובר, הודעה חדשה נשלחת אליך במייל.</p></div>
       <div class="row gap-sm"><${Button} kind="ghost" icon="mail" onClick=${() => setMailLog(true)}>מיילים שהתקבלו<//>
+        <${Button} icon="users" onClick=${() => setBroadcast(true)}>הודעה לכמה גבאים<//>
         <${Button} icon="plus" onClick=${() => setStarting(true)}>שיחה חדשה<//></div></header>
     <div class=${cx('inbox', openId && 'has-open')}>
       <aside class="inbox-list card">
@@ -180,6 +182,7 @@ export function Inbox({ onRead }) {
       </section>
     </div>
     ${mailLog && html`<${Modal} title="מיילים שהתקבלו בכתובת המערכת" onClose=${() => setMailLog(false)}><${MailLog} /><//>`}
+    ${broadcast && html`<${BroadcastModal} onClose=${() => setBroadcast(false)} onSent=${() => list.reload()} />`}
     ${starting && html`<${StartModal} onClose=${() => setStarting(false)} onStarted=${(c) => { list.reload(); open(c.id); }} />`}
   </div>`;
 }
@@ -264,4 +267,60 @@ function MailLog() {
       <div class="small">${l.subject || html`<span class="muted">ללא נושא</span>`}</div>
       <div class="muted small">${l.detail} · ${timeAgo(l.created_at)}</div></div>
   </div>`)}</div>`;
+}
+
+// ------------------------------------------------------------------ one message to many gabbaim
+const TARGETS = [['all', 'כל הגבאים'], ['areas', 'לפי אזור'], ['synagogues', 'לפי בית כנסת'], ['users', 'בחירת משתמשים']];
+
+function BroadcastModal({ onClose, onSent }) {
+  const [kind, setKind] = useState('all');
+  const [areaIds, setAreaIds] = useState([]);
+  const [synagogues, setSynagogues] = useState([]);
+  const [userIds, setUserIds] = useState([]);
+  const [byMail, setByMail] = useState(true);
+  const areas = useLoad(() => api.get('/admin/catalog/areas'));
+  const users = useLoad(() => api.get('/admin/users'));
+  const recent = useLoad(() => api.get('/admin/broadcasts'));
+  const ids = kind === 'areas' ? areaIds : kind === 'synagogues' ? synagogues.map((x) => x.id) : kind === 'users' ? userIds : [];
+  const key = useDebounced(`${kind}:${ids.join(',')}`, 250);
+  const who = useLoad(() => api.get(`/admin/broadcasts/recipients?kind=${key.split(':')[0]}&ids=${key.split(':')[1]}`), [key]);
+  const mailOff = who.data && !who.data.mail_ready;
+  useEffect(() => { if (mailOff) setByMail(false); }, [mailOff]);
+
+  async function send(body, files) {
+    if (!who.data?.count) throw new Error('בחרו למי לשלוח');
+    if (!(await confirm({ title: 'שליחת הודעה קבוצתית', body: `ההודעה תישלח ל-${who.data.count} נמענים${byMail ? ', כל אחד גם במייל' : ''}. כל אחד יראה אותה בשיחה שלו איתך.`, confirmLabel: 'שליחה' }))) throw Object.assign(new Error(''), { silent: true });
+    const fields = { body, send_email: byMail, kind, ids: kind === 'all' ? [] : ids };
+    const r = await api.post('/admin/broadcasts', files.length ? asForm({ ...fields, ids: JSON.stringify(fields.ids) }, files) : fields);
+    toast(`נשלח ל-${r.recipients}${r.emailed ? `, ${r.emailed} גם במייל` : ''}`);
+    onSent(); onClose();
+  }
+
+  return html`<${Modal} wide title="הודעה לכמה גבאים" onClose=${onClose}>
+    <div class="broadcast">
+      <div class="segmented full">${TARGETS.map(([k, l]) => html`<button type="button" class=${cx(kind === k && 'on')} onClick=${() => setKind(k)}>${l}</button>`)}</div>
+      <div class="broadcast-pick">
+        ${kind === 'all' && html`<p class="muted small">כל הגבאים הפעילים במערכת.</p>`}
+        ${kind === 'areas' && (areas.data ? html`<${CheckList} options=${areas.data.map((a) => ({ value: a.id, label: a.name }))} value=${areaIds} onChange=${setAreaIds} searchable />` : html`<${Spinner} />`)}
+        ${kind === 'synagogues' && html`<${SynagogueMultiPicker} value=${synagogues} onChange=${setSynagogues} />`}
+        ${kind === 'users' && (users.data ? html`<${CheckList} searchable value=${userIds} onChange=${setUserIds}
+            options=${users.data.filter((u) => u.is_active).map((u) => ({ value: u.id, label: u.name, sub: u.role === 'admin' ? 'מנהל מערכת' : u.synagogues.map((x) => x.name).slice(0, 2).join(', ') }))} />` : html`<${Spinner} />`)}
+      </div>
+      <div class="broadcast-who">
+        <${Icon} name="users" size=${16} />
+        ${who.data ? html`<span><b>${who.data.count} נמענים</b>${who.data.count > 0 && html`<span class="muted small"> · ${who.data.names.join(', ')}${who.data.count > who.data.names.length ? '…' : ''}</span>`}</span>` : html`<span class="muted">בודק…</span>`}
+      </div>
+      <div class="card broadcast-compose">
+        <${Composer} onSend=${send} placeholder="כתבו את ההודעה…"
+          extra=${html`<${Toggle} checked=${byMail} onChange=${setByMail} disabled=${mailOff}
+            label=${mailOff ? 'שליחת מיילים אינה מוגדרת במערכת' : `לשלוח גם במייל${who.data ? ` (${who.data.with_email} עם כתובת מייל)` : ''}`} />`} />
+      </div>
+      ${recent.data?.length > 0 && html`<div class="broadcast-recent"><h4>נשלחו לאחרונה</h4>
+        ${recent.data.slice(0, 6).map((b) => html`<div class="feed-row" key=${b.id}>
+          <span class="feed-icon"><${Icon} name="users" size=${15} /></span>
+          <div class="grow"><div class="ellipsis">${b.body || '📎 קבצים'}</div>
+            <div class="muted small">${b.target} · ${b.recipients} נמענים${b.emailed ? ` · ${b.emailed} במייל, ${b.opened} פתחו` : ''} · ${timeAgo(b.created_at)}</div></div>
+        </div>`)}</div>`}
+    </div>
+  <//>`;
 }

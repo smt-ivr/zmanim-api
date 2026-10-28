@@ -10,6 +10,7 @@ import { currentSeason, getSettings, visibleDays } from '../settings.js';
 import { normalizePhone } from '../validate.js';
 import { callStore, chosenIndex, end, go, goodbye, invalid, listChoice, menu, number, numberedList, readParams, reply, runCall } from './engine.js';
 import { speakMinyan as speakFull, speakPhone, text } from './yemot.js';
+import { callLog } from './callLog.js';
 
 const PASSWORD_LIMIT = { max: 5, window: 30 * 60, lock: 30 * 60 };
 
@@ -25,23 +26,31 @@ export async function handleIvr({ env, request, url }) {
 }
 
 async function handle(env, params) {
-  if (params.hangup === 'yes') return runCall(env, params, { ...callStore(env, 'ivr_calls'), screens: SCREENS }, {});
+  const phone = normalizePhone(params.ApiPhone);
+  if (params.hangup === 'yes') return runCall(env, params, { ...callStore(env, 'ivr_calls'), screens: SCREENS, log: callLog(env, { line: 'manage' }) }, {});
   const key = await first(env, `SELECT value FROM settings WHERE key = 'ivr_key'`);
   if (!key || params.key !== key.value) return goodbye([text('הגישה לשלוחה זו חסומה')]);
   const settings = await getSettings(env);
   if (!settings.manage_phone_enabled) return goodbye([text('שלוחת הניהול סגורה כרגע')]);
 
-  const phone = normalizePhone(params.ApiPhone);
   const user = phone ? await first(env, `SELECT * FROM users WHERE phone = ? AND is_active = 1`, phone) : null;
-  if (!user) return goodbye([text('מספר הטלפון שממנו התקשרתם אינו מורשה לנהל את המערכת')]);
+  if (!user) {
+    // recorded too: someone tried the management line from a number that is not allowed
+    const log = callLog(env, { line: 'manage', phone: phone || String(params.ApiPhone || '') });
+    const callId = params.ApiCallId || `phone-${params.ApiPhone}`;
+    const body = goodbye([text('מספר הטלפון שממנו התקשרתם אינו מורשה לנהל את המערכת')]);
+    await log.start(callId, { outcome: 'blocked' }).then(() => log.step(callId, { body })).catch((e) => console.error('[ivr] log', e));
+    return body;
+  }
 
   const store = callStore(env, 'ivr_calls', { user_id: user.id });
-  const flow = { ...store, screens: SCREENS, start, recover: goSynagogueOrHome };
+  const flow = { ...store, screens: SCREENS, start, recover: goSynagogueOrHome, log: callLog(env, { line: 'manage', phone, userId: user.id }) };
   return runCall(env, params, flow, { user, actor: await actorFor(env, user), settings, store });
 }
 
 async function start(c) {
   await c.store.prune();
+  await c.log.prune();
   if (c.user.phone_requires_password) return go(c, 'password');
   return welcome(c);
 }

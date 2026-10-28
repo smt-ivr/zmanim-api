@@ -30,7 +30,8 @@ export async function stats({ env, actor }) {
             (SELECT COUNT(*) FROM synagogues WHERE is_active = 1) AS active_synagogues,
             (SELECT COUNT(*) FROM minyanim) AS minyanim,
             (SELECT COUNT(*) FROM users WHERE role = 'manager') AS managers,
-            (SELECT COUNT(*) FROM synagogues s WHERE NOT EXISTS (SELECT 1 FROM synagogue_managers sm WHERE sm.synagogue_id = s.id)) AS unmanaged`
+            (SELECT COUNT(*) FROM synagogues s WHERE NOT EXISTS (SELECT 1 FROM synagogue_managers sm WHERE sm.synagogue_id = s.id)) AS unmanaged,
+            (SELECT COUNT(*) FROM phone_calls WHERE started_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-1 day')) AS phone_calls`
   );
   const recent = await all(
     env,

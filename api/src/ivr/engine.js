@@ -33,38 +33,54 @@ export async function readParams(request, url) {
 
 /**
  * Runs one request of a call.
- *   flow = { screens, start(c), recover(c), load(callId), save(callId, state), clear(callId) }
+ *   flow = { screens, start(c), recover(c), load(callId), save(callId, state), clear(callId), log? (callLog.js) }
  *   c    = { env, params, say: [], state, screens, ...context }
  */
 export async function runCall(env, params, flow, context) {
   const callId = params.ApiCallId || `phone-${params.ApiPhone}`;
   if (params.hangup === 'yes') {
     await flow.clear(callId);
+    await flow.log?.end(callId).catch((e) => console.error('[ivr] log', e));
     return '';
   }
+  const body = await step(env, params, flow, context, callId);
+  if (flow.log && body.input !== undefined) {
+    await flow.log.step(callId, { screen: body.screen, input: body.input, body: body.text }).catch((e) => console.error('[ivr] log', e));
+    if (body.ended) await flow.log.end(callId).catch(() => {});
+  }
+  return body.text;
+}
+
+/** One request; returns the answer and, for the call log, what was pressed (null at the start) and on which screen. */
+async function step(env, params, flow, context, callId) {
   let state = await flow.load(callId);
-  const c = { env, params, say: [], state, screens: flow.screens, recover: flow.recover, ...context };
+  const c = { env, params, say: [], state, screens: flow.screens, recover: flow.recover, callId, log: flow.log, ...context };
 
   let ask;
+  let input = null;
+  let screen = null;
   if (!state) {
     c.state = state = { step: 0, screen: null, data: {}, empties: 0 };
+    await flow.log?.start(callId).catch((e) => console.error('[ivr] log', e));
     ask = await flow.start(c);
   } else {
-    const input = state.step ? params[`s${state.step}`] : undefined;
-    if (input === undefined) return state.prompt; // repeated request: ask the same question again
-    ask = await answer(c, String(input).trim());
+    input = state.step ? params[`s${state.step}`] : undefined;
+    if (input === undefined) return { text: state.prompt }; // repeated request: ask the same question again
+    input = String(input).trim();
+    screen = state.screen;
+    ask = await answer(c, input);
   }
 
   if (ask.end) {
     await flow.clear(callId);
-    return goodbye(c.say);
+    return { text: goodbye(c.say), input, screen, ended: true };
   }
   state.step += 1;
   const val = `s${state.step}`;
   const read = ask.voice ? readVoice(ask.messages, val) : readDigits(ask.messages, val, ask.opts);
   state.prompt = read; // a repeat does not replay one-time announcements
   await flow.save(callId, state);
-  return [c.say.length && idListMessage(c.say), read].filter(Boolean).join('&');
+  return { text: [c.say.length && idListMessage(c.say), read].filter(Boolean).join('&'), input, screen };
 }
 
 async function answer(c, input) {

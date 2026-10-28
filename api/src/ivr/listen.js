@@ -9,6 +9,8 @@ import { currentSeason, getSettings, isRoshChodesh, visibleDays } from '../setti
 import { callStore, chosenIndex, go, goodbye, invalid, listChoice, menu, number, readParams, reply, runCall } from './engine.js';
 import { speakClock, text } from './yemot.js';
 import { CALCS, israelDate, placeOf, zmanTime } from '../zmanim.js';
+import { callLog } from './callLog.js';
+import { normalizePhone } from '../validate.js';
 
 const PAGE = 8;
 
@@ -18,7 +20,7 @@ export async function handleListen({ env, request, url }) {
     const settings = await getSettings(env);
     if (params.hangup !== 'yes' && !settings.listen_enabled) return reply(goodbye([text('קו השמיעה אינו פעיל כרגע')]));
     const store = callStore(env, 'ivr_listen_calls');
-    const flow = { ...store, screens: SCREENS, start, recover: (c) => go(c, 'main') };
+    const flow = { ...store, screens: SCREENS, start, recover: (c) => go(c, 'main'), log: callLog(env, { line: 'listen', phone: normalizePhone(params.ApiPhone) || String(params.ApiPhone || '') }) };
     return reply(await runCall(env, params, flow, { settings, store }));
   } catch (err) {
     console.error('[ivr-listen]', err?.stack || err);
@@ -45,6 +47,7 @@ const hhmm = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String
 
 async function start(c) {
   await c.store.prune();
+  await c.log.prune();
   c.say.push(text(`שלום וברוכים הבאים ל${c.settings.system_name}`));
   const areas = await all(c.env, `SELECT id FROM areas`);
   return areas.length > 1 ? go(c, 'area') : go(c, 'main', { area: null });
@@ -113,6 +116,7 @@ async function list(c, prayerId, from) {
   }
   const start = from ?? now.minutes;
   const rest = sentences(await todaysMinyanim(c, now, prayerId), now, start, placeOf(c.settings));
+  await c.log?.search(c.callId, { area: c.state.data.area, prayer: prayerId, from, found: rest.length }).catch((e) => console.error('[ivr] log', e));
   if (!rest.length) {
     c.say.push(text(from === null ? 'אין מניינים נוספים היום' : from === 0 ? 'אין מניינים היום' : `אין מניינים מהשעה ${speakClock(hhmm(start))}`));
     return go(c, 'main');

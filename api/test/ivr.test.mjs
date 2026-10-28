@@ -312,6 +312,38 @@ describe('ivr listening line', () => {
   };
   afterEach(() => { delete env.FIXED_NOW; });
 
+  test('every call is recorded: steps, what was heard, searches; blocked numbers on the management line too', async () => {
+    env.FIXED_NOW = at(findDay(false), '05:00');
+    const call = listen('0521234567');
+    await call.start();
+    await call.press('2'); // רמות
+    await call.press('1'); // שחרית
+    await call.press('0630');
+    await call.hangup();
+    await yemotCall('0509999999').start(); // not allowed on the management line
+    const login = await worker.fetch(new Request('https://x.test/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login: 'super@x.com', password: '4321' }) }), env).then((r) => r.json());
+    const get = (path) => worker.fetch(new Request(`https://x.test/api${path}`, { headers: { Authorization: `Bearer ${login.token}` } }), env).then((r) => r.json());
+    const a = await get('/admin/phone-activity?days=30');
+    assert.equal(a.stats.calls, 2);
+    assert.equal(a.stats.blocked, 1);
+    assert.equal(a.stats.searches, 1);
+    assert.equal(a.stats.heard, 1);
+    assert.deepEqual(a.prayers.map((p) => [p.name, p.n]), [['שחרית', 1]]);
+    assert.deepEqual(a.areas.map((p) => [p.name, p.n]), [['רמות', 1]]);
+    const listenCall = a.calls.find((c) => c.line === 'listen');
+    assert.equal(listenCall.phone, '0521234567');
+    assert.ok(listenCall.ended_at, 'hang-up recorded');
+    const one = await get(`/admin/phone-activity/${listenCall.id}`);
+    assert.deepEqual(one.events.map((e) => e.in), [null, '2', '1', '0630']);
+    assert.match(one.events[0].say, /^שלום וברוכים הבאים/);
+    assert.match(one.events[3].say, /שחרית בשעה 6 30 באהל משה/);
+    assert.equal(one.events[3].screen, 'time');
+    const blocked = a.calls.find((c) => c.line === 'manage');
+    assert.equal(blocked.outcome, 'blocked');
+    assert.equal((await get('/admin/phone-activity?line=listen&days=30')).calls.length, 1);
+  });
+
   test('area, prayer, from a time: short sentences, today only', async () => {
     env.FIXED_NOW = at(findDay(false), '05:00');
     await q(`INSERT INTO locations (synagogue_id, name) VALUES (1, 'עזרת נשים')`).run();

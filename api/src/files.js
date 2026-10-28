@@ -20,7 +20,7 @@ const EXT = {
 
 export const filesReady = (env) => Boolean(env.FILES?.put);
 
-const token = () => [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, '0')).join('');
+export const newToken = () => [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, '0')).join('');
 
 function cleanName(name) {
   const n = String(name || 'file').replace(/[\u0000-\u001f\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim() || 'file';
@@ -56,8 +56,21 @@ export async function saveFiles(env, conversationId, messageId, files) {
     const key = `${PREFIX}${conversationId}/${Date.now()}-${crypto.randomUUID()}`;
     await env.FILES.put(key, f.data?.stream ? f.data.stream() : f.data, { httpMetadata: { contentType: type } });
     await run(env, `INSERT INTO message_files (message_id, conversation_id, key, name, type, size, token) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      messageId, conversationId, key, name, type, f.size, token());
+      messageId, conversationId, key, name, type, f.size, newToken());
   }
+}
+
+/** Stores files once for many messages (a broadcast). Returns [{ key, name, type, size }] to link to each message. */
+export async function storeShared(env, files) {
+  const out = [];
+  for (const f of files) {
+    const name = cleanName(f.name);
+    const type = typeOf(f.type, name);
+    const key = `${PREFIX}broadcast/${Date.now()}-${crypto.randomUUID()}`;
+    await env.FILES.put(key, f.data?.stream ? f.data.stream() : f.data, { httpMetadata: { contentType: type } });
+    out.push({ key, name, type, size: f.size });
+  }
+  return out;
 }
 
 /** { messageId: [{ id, name, type, size, url }] } for the messages of a conversation. */
@@ -73,7 +86,10 @@ export const shown = (r) => ({ id: r.id, name: r.name, type: r.type, size: r.siz
 /** Removes the stored files of conversations (before the rows go). */
 export async function removeConversationFiles(env, conversationIds) {
   if (!filesReady(env) || !conversationIds.length) return;
-  const rows = await all(env, `SELECT key FROM message_files WHERE conversation_id IN (${conversationIds.map(() => '?').join(',')})`, ...conversationIds);
+  const marks = conversationIds.map(() => '?').join(',');
+  // a file sent to many (a broadcast) is stored once: keep it while other conversations still have it
+  const rows = await all(env, `SELECT DISTINCT key FROM message_files f WHERE conversation_id IN (${marks})
+    AND NOT EXISTS (SELECT 1 FROM message_files g WHERE g.key = f.key AND g.conversation_id NOT IN (${marks}))`, ...conversationIds, ...conversationIds);
   for (let i = 0; i < rows.length; i += 900) await env.FILES.delete(rows.slice(i, i + 900).map((r) => r.key)).catch((e) => console.error('[files] delete', e));
 }
 

@@ -238,7 +238,7 @@ export function toast(text, tone = 'success', action) {
   drawToasts();
   setTimeout(() => dismiss(id), action ? 7000 : 3000);
 }
-export const toastError = (err) => toast(err?.message || 'שגיאה', 'error');
+export const toastError = (err) => toast(Object.values(err?.fields || {})[0] || err?.message || 'שגיאה', 'error');
 
 const confirmRoot = document.createElement('div');
 document.body.appendChild(confirmRoot);

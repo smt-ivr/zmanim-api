@@ -97,8 +97,36 @@ ${pixel ? `<img src="${esc(pixel)}" width="1" height="1" alt="" style="display:b
  *         button?: { label, url, hint? }, note?, site? (public site address for the footer), replyTo?, headers? }
  */
 export async function sendMail(env, mail) {
+  const s = await mailSettings(env);
+  await postResend(s, 'emails', mailPayload(s, mail));
+}
+
+/**
+ * Sends many e-mails, up to 100 per request (Resend batch; no attachments there).
+ * Returns the indexes of the mails that were not sent (a refused request fails its whole chunk).
+ */
+export async function sendMailBatch(env, mails) {
+  const s = await mailSettings(env);
+  const failed = [];
+  for (let i = 0; i < mails.length; i += 100) {
+    const chunk = mails.slice(i, i + 100);
+    try {
+      await postResend(s, 'emails/batch', chunk.map((m) => { const { attachments, ...rest } = mailPayload(s, m); return rest; }));
+    } catch (err) {
+      console.error('[mail] batch', err?.message || err);
+      chunk.forEach((_, j) => failed.push(i + j));
+    }
+  }
+  return { failed };
+}
+
+async function mailSettings(env) {
   const s = await getSettings(env);
   if (!s.mail_enabled || !s.resend_api_key || !s.mail_from) throw new HttpError(409, 'MAIL_OFF', 'שליחת מיילים אינה מוגדרת. הגדירו אותה בהגדרות השליטה');
+  return s;
+}
+
+function mailPayload(s, mail) {
   const to = normalizeEmail(mail.to);
   if (!to) throw new HttpError(422, 'BAD_EMAIL', `כתובת המייל של הנמען אינה תקינה: ${clean(mail.to)}`);
   const title = mail.title || mail.subject;
@@ -109,15 +137,19 @@ export async function sendMail(env, mail) {
     ...(mail.quotes || []).map((q) => `${q.label}\n${q.text}`),
     mail.button ? `${mail.button.label}: ${mail.button.url}` : '', mail.note || '',
   ].filter(Boolean).join('\n\n');
-  const res = await fetch('https://api.resend.com/emails', {
+  return {
+    from: s.mail_from, to: [to], subject: mail.subject, html, text,
+    ...(mail.replyTo ? { reply_to: mail.replyTo } : {}),
+    ...(mail.headers ? { headers: mail.headers } : {}),
+    ...(mail.attachments?.length ? { attachments: mail.attachments } : {}),
+  };
+}
+
+async function postResend(s, path, body) {
+  const res = await fetch(`https://api.resend.com/${path}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${s.resend_api_key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      from: s.mail_from, to: [to], subject: mail.subject, html, text,
-      ...(mail.replyTo ? { reply_to: mail.replyTo } : {}),
-      ...(mail.headers ? { headers: mail.headers } : {}),
-      ...(mail.attachments?.length ? { attachments: mail.attachments } : {}),
-    }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const raw = (await res.text()).slice(0, 300);

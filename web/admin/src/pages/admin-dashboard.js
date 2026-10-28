@@ -26,6 +26,7 @@ export function AdminDashboard({ me, system }) {
       ${stat('clock', 'מניינים', data.minyanim, '#/admin/synagogues')}
       ${stat('users', 'גבאי בתי כנסת', data.managers, '#/admin/users')}
       ${stat('eye', 'מוצגים לציבור', data.active_synagogues, '#/admin/synagogues')}
+      ${me.perms.includes('phone') && stat('phone', 'שיחות בטלפון ב-24 שעות', data.phone_calls, '#/admin/phone')}
     </div>
     ${todo.length > 0 && html`<div class="card todo">
       <h3>דורש טיפול</h3>

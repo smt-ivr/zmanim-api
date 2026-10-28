@@ -14,6 +14,7 @@ import * as security from './routes/security.js';
 import * as messages from './routes/messages.js';
 import { handleEmail } from './routes/messages.js';
 import { serveFile } from './files.js';
+import * as phoneActivity from './routes/phoneActivity.js';
 
 const PUBLIC = { auth: 'none' };
 const ADMIN = { auth: 'admin' };
@@ -74,6 +75,9 @@ export const router = new Router()
   .get('/admin/stats', admin.stats, ADMIN)
   .get('/admin/ivr', admin.getIvr, perm('phone'))
   .post('/admin/ivr/rotate', admin.rotateIvrKey, perm('phone'))
+  .get('/admin/phone-activity', phoneActivity.activity, perm('phone'))
+  .get('/admin/phone-activity/:id', phoneActivity.call, perm('phone'))
+  .delete('/admin/phone-activity/:id', phoneActivity.remove, SUPER)
   .get('/admin/synagogues', admin.listSynagogues, ADMIN)
   .post('/admin/synagogues', admin.createSynagogue, perm('synagogues'))
   .get('/admin/synagogues/:id', admin.getSynagogue, ADMIN)
@@ -112,6 +116,9 @@ export const router = new Router()
   .post('/admin/users/:id/unlock', security.unlockUser, perm('managers'))
   .get('/admin/email-log', messages.emailLog, SUPER)
   .get('/admin/conversations', messages.listConversations, SUPER)
+  .get('/admin/broadcasts', messages.listBroadcasts, SUPER)
+  .get('/admin/broadcasts/recipients', messages.broadcastRecipients, SUPER)
+  .post('/admin/broadcasts', messages.sendBroadcast, SUPER)
   .post('/admin/conversations', messages.startConversation, SUPER)
   .get('/admin/conversations/:id', messages.getConversation, SUPER)
   .post('/admin/conversations/:id/messages', messages.answer, SUPER)
