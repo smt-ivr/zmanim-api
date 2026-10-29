@@ -119,7 +119,7 @@ function RecRow({ item, onChanged, canRecord }) {
           onClick=${() => (playing ? (current?.audio.pause(), current?.done()) : play(`/admin/recordings/${enc(item.key)}/audio`, setPlaying))} />`}
         ${canRecord && html`<${Button} small icon="mic" kind=${item.recorded ? 'ghost' : 'primary'} onClick=${() => setRecording(true)}>${item.recorded ? 'מחדש' : 'הקלטה'}<//>
           <input type="file" accept="audio/*,.wav,.mp3,.m4a,.webm,.ogg" hidden ref=${file} onChange=${pick} />
-          <${Button} small kind="ghost" icon="upload" title="העלאת קובץ שמע" loading=${busy} onClick=${() => file.current.click()} />`}
+          <${Button} small icon="upload" title="העלאת קובץ שמע (wav, mp3, m4a ועוד)" loading=${busy} onClick=${() => file.current.click()}>העלאת קובץ<//>`}
         ${item.recorded && html`<${Button} small kind="ghost" icon="trash" title="מחיקה" onClick=${remove} />`}
       </div>
     </div>
@@ -157,7 +157,7 @@ export function RecordingsPage() {
     ${tab === 'phrases' ? html`
       <div class="toolbar"><div class="segmented">${[['all', 'הכל'], ['missing', 'חסרים'], ['done', 'הוקלטו']].map(([k, l]) =>
         html`<button class=${cx(show === k && 'on')} onClick=${() => setShow(k)}>${l}</button>`)}</div>
-        <span class="muted small grow">קראו בדיוק את מה שכתוב. מספרים נקראים כמילים (8 = "שמונה").</span></div>
+        <span class="muted small grow">מקליטים כאן במיקרופון, או מעלים קובץ שמע מוכן (wav, mp3, m4a ועוד). קראו בדיוק את מה שכתוב; מספרים נקראים כמילים (8 = "שמונה").</span></div>
       ${groups.length === 0 ? html`<${Empty} icon="mic" title="אין כאן כלום" />` : groups.map((g) => html`<section class="card rec-group" key=${g}>
         <h3>${g}</h3>
         ${shown.filter((i) => i.group === g).map((i) => html`<${RecRow} key=${i.key} item=${i} onChanged=${changed} canRecord=${ready} />`)}
