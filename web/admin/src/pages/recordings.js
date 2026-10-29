@@ -134,7 +134,7 @@ function SynagogueRecordings({ canRecord, onChanged }) {
       <div class="segmented">${[['missing', 'חסרים'], ['recorded', 'הוקלטו'], ['all', 'הכל']].map(([k, l]) =>
         html`<button class=${cx(filter === k && 'on')} onClick=${() => setFilter(k)}>${l}</button>`)}</div>
     </div>
-    <p class="muted small">בקובץ אומרים רק את השם, למשל "אהל משה". המילים "בבית כנסת" נאמרות לפניו (גם אותן אפשר להקליט בלשונית המשפטים).</p>
+    <p class="muted small">בקובץ אומרים רק את השם, למשל "מאור חיים". האות "ב" נאמרת לפניו ("במאור חיים"), וגם אותה אפשר להקליט בלשונית המשפטים.</p>
     ${loading && !data ? html`<${Spinner} />` : error && !data ? html`<${ErrorBox} error=${error} onRetry=${reload} />`
       : data.items.length === 0 ? html`<${Empty} icon="building" title=${filter === 'missing' ? 'כל בתי הכנסת הוקלטו' : 'לא נמצאו בתי כנסת'} />`
       : html`<section class="card rec-group">

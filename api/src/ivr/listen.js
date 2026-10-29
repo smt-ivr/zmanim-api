@@ -1,7 +1,7 @@
 // Public listening line: anyone can call and hear today's minyan times.
 // Area (or 0 = all) -> prayer (or 0 = everything soon) -> from what time (0 = from now, 00 = the whole day).
 // Minyanim set relative to sunrise / sunset are spoken as set, but placed (and filtered) by today's computed time.
-// One short sentence per time: "שחרית בשעה 8 וחצי בבית כנסת אהל משה ובבית כנסת זכרון משה".
+// One short sentence per time: "שחרית בשעה 8 וחצי במאור חיים ספרדי ובפאר הנצח אשכנזי".
 // Every fixed sentence and name can be a recording in the administration's voice (voice.js).
 // No identification; uses the same engine as the management line.
 import { all } from '../db.js';

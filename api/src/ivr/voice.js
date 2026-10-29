@@ -30,10 +30,8 @@ export const PHRASES = [
   ['no_input', () => 'לא התקבלה הקשה', 'הודעות', 'אחרי 3 פעמים בלי הקשה'],
   ['error', () => 'אירעה תקלה, נסו שוב מאוחר יותר', 'הודעות', 'בתקלה'],
   ['at', () => 'בשעה', 'מילים בתוך משפט', 'שחרית "בשעה" שמונה'],
-  ['in_syn', () => 'בבית כנסת', 'מילים בתוך משפט', 'לפני שם בית הכנסת הראשון'],
-  ['and_syn', () => 'ובבית כנסת', 'מילים בתוך משפט', 'לפני כל בית כנסת נוסף באותה שעה'],
-  ['in', () => 'ב', 'מילים בתוך משפט', 'לפני שם שכבר כולל "בית כנסת" / "ישיבת"'],
-  ['and_in', () => 'וב', 'מילים בתוך משפט', 'כנ"ל, לבית כנסת נוסף'],
+  ['in', () => 'ב', 'מילים בתוך משפט', 'לפני שם בית הכנסת: "ב"מאור חיים'],
+  ['and_in', () => 'וב', 'מילים בתוך משפט', 'לפני בית כנסת נוסף באותה שעה: "וב"פאר הנצח'],
   ...Array.from({ length: 10 }, (_, d) => [`press_${d}`, () => `הקישו ${d}`, 'תפריטים', `אחרי שם תפילה / אזור מוקלט`]),
 ];
 
@@ -42,17 +40,26 @@ const PAST = { 15: 'ורבע', 30: 'וחצי' };
 
 /** Everything that can be recorded (except synagogues): [{ key, text, group, where }]. */
 export async function catalog(env, settings) {
-  const [prayers, areas] = await Promise.all([
+  const [prayers, areas, locations] = await Promise.all([
     all(env, `SELECT id, name FROM prayers ORDER BY sort, id`),
     all(env, `SELECT id, name FROM areas ORDER BY sort, name`),
+    all(env, `SELECT TRIM(name) AS name, COUNT(DISTINCT synagogue_id) AS n FROM locations GROUP BY TRIM(name) ORDER BY n DESC, name`),
   ]);
   return [
     ...PHRASES.map(([key, t, group, where]) => ({ key: `sys:${key}`, text: t(settings), group, where })),
     ...prayers.map((p) => ({ key: `prayer:${p.id}`, text: p.name, group: 'שמות תפילות', where: 'בתפריט ובכל מניין' })),
     ...areas.map((a) => ({ key: `area:${a.id}`, text: a.name, group: 'שמות אזורים', where: 'בתפריט האזורים' })),
+    ...locations.filter((l) => l.name).map((l) => ({ key: locationKey(l.name), text: l.name, group: 'שמות מיקומים', where: `אחרי שם בית הכנסת (${l.n === 1 ? 'בבית כנסת אחד' : `ב־${l.n} בתי כנסת`})` })),
     ...Array.from({ length: 23 }, (_, i) => ({ key: `hour:${i + 1}`, text: String(i + 1), group: 'שעות', where: `"בשעה ${i + 1}"` })),
     ...Object.entries(PAST).map(([m, w]) => ({ key: `min:${m}`, text: w, group: 'שעות', where: `"בשעה 8 ${w}"` })),
   ];
+}
+
+/** A location is recorded once by its name ("ספרדי" in every synagogue): key "loc:<hash of the name>". */
+export function locationKey(name) {
+  let h = 0x811c9dc5;
+  for (const ch of String(name).trim()) { h ^= ch.codePointAt(0); h = Math.imul(h, 0x01000193) >>> 0; }
+  return `loc:${h.toString(16)}`;
 }
 
 /** File name in the Yemot folder for a key: letters and digits only ("sys:welcome" -> "welcome", "prayer:3" -> "prayer3"). */
@@ -108,17 +115,13 @@ export function clockWords(minutes) {
   return { tts: `${hour.text} ${rest.text ?? rest}`, parts: [hour, rest] };
 }
 
-// Names that already say what the place is: "בישיבת מיר", not "בבית כנסת ישיבת מיר".
-const KIND = /^(בית ה?כנסת|בית ה?מדרש|ביהכ"נ|ביהמ"ד|ישיבת|ישיבה|כולל|היכל|מניין|מנין|שטיבל|קהילת|קהלת)/;
-
-/** "בבית כנסת אהל משה בעזרת נשים" / "ובבית כנסת זכרון משה" (and=true for the second and on). { tts, parts } */
+/** "במאור חיים ספרדי" / "ובפאר הנצח אשכנזי" (and=true for the second and on): "ב" + the name, then the location as is. { tts, parts } */
 export function placeWords({ synagogueId, synagogueName, location }, and = false) {
-  const own = KIND.test(synagogueName.trim());
-  const lead = own ? (and ? 'וב' : 'ב') : and ? 'ובבית כנסת' : 'בבית כנסת';
-  const leadKey = own ? (and ? 'sys:and_in' : 'sys:in') : and ? 'sys:and_syn' : 'sys:in_syn';
-  const loc = location ? `ב${location}` : '';
+  const lead = and ? 'וב' : 'ב';
+  const loc = location?.trim();
   return {
-    tts: `${own ? lead + synagogueName : `${lead} ${synagogueName}`}${loc ? ` ${loc}` : ''}`,
-    parts: [{ key: leadKey, text: lead, glue: own }, { key: `syn:${synagogueId}`, text: synagogueName }, ...(loc ? [loc] : [])],
+    tts: `${lead}${synagogueName}${loc ? ` ${loc}` : ''}`,
+    parts: [{ key: and ? 'sys:and_in' : 'sys:in', text: lead, glue: true }, { key: `syn:${synagogueId}`, text: synagogueName },
+      ...(loc ? [{ key: locationKey(loc), text: loc }] : [])],
   };
 }
