@@ -14,8 +14,6 @@ import { callLog } from './callLog.js';
 import { clockWords, loadVoice, placeWords } from './voice.js';
 import { normalizePhone } from '../validate.js';
 
-const PAGE = 8;
-
 export async function handleListen({ env, request, url }) {
   let voice = null;
   try {
@@ -121,18 +119,11 @@ function sentences(rows, now, from, place) {
   };
 }
 
-/** Reads one page and keeps the rest for "continue". */
-function speakPage(c) {
-  const rest = c.state.data.rest;
-  rest.splice(0, PAGE).forEach((s) => c.say.push(...c.voice.sentence(s)));
-  return rest.length ? go(c, 'more') : go(c, 'main');
-}
-
 /**
  * from: minutes from which to read; null = from now (the upcoming ones); 0 = the whole day.
  * special: only minyanim set relative to a time of day (נץ, before sunset, ...), the whole day.
  */
-async function list(c, prayerId, from, { special = false } = {}) {
+async function list(c, prayerId, from, { special = false, back = 'main' } = {}) {
   const now = israelNow(c.env);
   if (now.day === 6 && !c.settings.shabbat_enabled) {
     c.say.push(...c.voice.phrase('no_list_today'));
@@ -150,11 +141,10 @@ async function list(c, prayerId, from, { special = false } = {}) {
       const w = clockWords(start);
       c.say.push(...c.voice.sentence({ tts: `אין מניינים מהשעה ${w.tts}`, parts: [{ key: 'sys:none_from', text: 'אין מניינים מהשעה' }, ...w.parts] }));
     }
-    return go(c, 'main');
+    return go(c, back); // nothing found: one step back too
   }
-  if (now.roshChodesh) c.say.push(...c.voice.phrase('rosh_chodesh'));
-  c.state.data.rest = rest;
-  return speakPage(c);
+  // the minyanim are read inside the read (not as a message before it): any key stops and goes one step back
+  return go(c, 'results', { rest, roshChodesh: now.roshChodesh, back });
 }
 
 /** "730" / "0730" -> 450 minutes; "7" / "07" -> a whole hour. Null when not a time. */
@@ -198,7 +188,7 @@ const SCREENS = {
     handle(c, input) {
       const i = chosenIndex(input, c.state.data.prayers, { zero: true });
       if (i === null) return invalid(c);
-      if (i === -1) return list(c, null, null);
+      if (i === -1) return list(c, null, null, { back: 'main' });
       return go(c, 'time', { prayerId: c.state.data.prayers[i] });
     },
   },
@@ -218,21 +208,24 @@ const SCREENS = {
       return { ...number([]), messages, opts: { min: 1, max: 4 } };
     },
     handle(c, input) {
-      if (input === '0') return list(c, c.state.data.prayerId, 0, { special: true });
-      if (input === '00') return list(c, c.state.data.prayerId, null);
-      if (input === '000') return list(c, c.state.data.prayerId, 0);
+      const back = { back: 'time' };
+      if (input === '0') return list(c, c.state.data.prayerId, 0, { special: true, ...back });
+      if (input === '00') return list(c, c.state.data.prayerId, null, back);
+      if (input === '000') return list(c, c.state.data.prayerId, 0, back);
       const from = parseClock(input);
-      return from === null ? invalid(c) : list(c, c.state.data.prayerId, from);
+      return from === null ? invalid(c) : list(c, c.state.data.prayerId, from, back);
     },
   },
 
-  more: {
-    back: 'main',
-    prompt: (c) => ({ messages: [...c.voice.option('more', 1), ...c.voice.option('more_prayer', 2)], opts: { max: 1, min: 1 } }),
-    handle(c, input) {
-      if (input === '1') return speakPage(c);
-      if (input === '2') return go(c, 'main');
-      return invalid(c);
-    },
+  // The minyanim, read as the read's own prompt: whatever key is pressed (or none, when the reading ends)
+  // goes one step back — to the time menu, or to the prayer menu when "all upcoming" was chosen there.
+  results: {
+    back: (c) => go(c, c.state.data.back || 'main'),
+    empty: (c) => go(c, c.state.data.back || 'main'),
+    prompt: (c) => ({
+      messages: [...(c.state.data.roshChodesh ? c.voice.phrase('rosh_chodesh') : []), ...c.state.data.rest.flatMap((x) => c.voice.sentence(x))],
+      opts: { max: 1, min: 1, wait: 5, attempts: 1 },
+    }),
+    handle: (c) => go(c, c.state.data.back || 'main'),
   },
 };

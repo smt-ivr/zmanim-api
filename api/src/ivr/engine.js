@@ -86,6 +86,7 @@ async function step(env, params, flow, context, callId) {
 async function answer(c, input) {
   const screen = c.screens[c.state.screen];
   if (input === 'None' || input === '') {
+    if (screen.empty) return screen.empty(c); // the screen decides (e.g. after the minyanim were read: one step back)
     if (++c.state.empties >= 3) {
       c.say.push(...(c.voice ? c.voice.phrase('no_input') : [text('לא התקבלה הקשה')]));
       return { end: true };
