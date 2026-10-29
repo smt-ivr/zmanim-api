@@ -39,7 +39,7 @@ function RecRow({ item, onChanged, canRecord }) {
       form.append('file', f, f.name);
       const r = await api.post(`/admin/recordings/${enc(item.key)}`, form);
       toast('הועלה לימות המשיח ויושמע בקו מעכשיו');
-      onChanged({ ...item, recorded: true, paused: false, changed: false, updated_at: r.updated_at });
+      onChanged({ ...item, recorded: true, paused: false, error: null, changed: false, updated_at: r.updated_at });
     } catch (err) { toastError(err); }
     setBusy('');
   }
@@ -48,7 +48,7 @@ function RecRow({ item, onChanged, canRecord }) {
     try {
       await api.patch(`/admin/recordings/${enc(item.key)}`, { paused });
       toast(paused ? 'מושהה: יישמע בקול המחשב' : 'ההקלטה מושמעת שוב');
-      onChanged({ ...item, paused });
+      onChanged({ ...item, paused, error: paused ? item.error : null });
     } catch (e) { toastError(e); }
     setBusy('');
   }
@@ -64,6 +64,7 @@ function RecRow({ item, onChanged, canRecord }) {
         <div class="rec-text">${item.text}</div>
         <div class="muted small">${[item.where, item.recorded && item.updated_at && `הועלה ${timeAgo(item.updated_at)}`].filter(Boolean).join(' · ')}
           ${item.paused && html` <${Badge}>מושהה · נשמע בקול המחשב<//>`}
+          ${item.error && html`<div class="rec-error"><${Icon} name="close" size=${13} /> ההשמעה בקו נכשלה: ${item.error}</div>`}
           ${item.changed && html` <${Badge} tone="warn">הנוסח השתנה מאז ההעלאה<//>`}</div>
       </div>
       <div class="rec-actions">
@@ -94,7 +95,7 @@ export function RecordingsPage() {
   return html`<div class="page">
     <header class="page-head"><div><h1>הקלטות לקו הטלפון</h1>
       <p class="muted">מה שתקליטו כאן יושמע בקו השמיעה בקול שלכם, במקום קול המחשב. מה שלא הוקלט ממשיך להיקרא כרגיל.</p></div></header>
-    <${YemotSettings} settings=${data.settings} onSaved=${(s) => setData((d) => ({ ...d, settings: s }))} onSynced=${reload} />
+    <${YemotSettings} settings=${data.settings} webhook=${data.webhook} onSaved=${(s) => setData((d) => ({ ...d, settings: s }))} onSynced=${reload} />
     <div class="stats">
       <div class="card stat"><span class="stat-icon"><${Icon} name="mic" size=${20} /></span><div><div class="stat-value">${done} / ${data.items.length}</div><div class="muted small">משפטים ומילים הוקלטו</div>
         <div class="rec-meter"><span style=${`width:${(done / Math.max(1, data.items.length)) * 100}%`} /></div></div></div>
@@ -102,6 +103,7 @@ export function RecordingsPage() {
         <div class="rec-meter"><span style=${`width:${(data.synagogues.recorded / Math.max(1, data.synagogues.total)) * 100}%`} /></div></div></div>
     </div>
     ${!ready && html`<div class="alert alert-info">כדי להעלות הקלטות, הזינו קודם למעלה את הטוקן של ימות המשיח.</div>`}
+    ${data.errors > 0 && html`<div class="alert alert-error">${data.errors === 1 ? 'הקלטה אחת לא הושמעה בקו' : `${data.errors} הקלטות לא הושמעו בקו`} (ימות המשיח דיווחו על שגיאה). הן הושהו ונשמעות בקול המחשב עד שתעלו אותן מחדש. מסומנות באדום ברשימה.</div>`}
     <div class="tabs">
       <button class=${cx('tab', tab === 'phrases' && 'active')} onClick=${() => setTab('phrases')}>משפטים ומילים<span class="count">${data.items.length}</span></button>
       <button class=${cx('tab', tab === 'syn' && 'active')} onClick=${() => setTab('syn')}>שמות בתי כנסת<span class="count">${data.synagogues.total}</span></button>
@@ -137,15 +139,15 @@ function SynagogueRecordings({ canRecord, onChanged }) {
       : data.items.length === 0 ? html`<${Empty} icon="building" title=${filter === 'missing' ? 'כל בתי הכנסת הוקלטו' : 'לא נמצאו בתי כנסת'} />`
       : html`<section class="card rec-group">
           ${data.items.map((s) => html`<${RecRow} key=${s.id} canRecord=${canRecord}
-            item=${{ key: `syn:${s.id}`, text: s.name, where: s.area_name, recorded: s.recorded, paused: s.paused, changed: s.changed, updated_at: s.updated_at }}
-            onChanged=${(it) => { onChanged(it.recorded === s.recorded ? 0 : it.recorded ? 1 : -1); setData((d) => ({ ...d, items: d.items.map((x) => (x.id === s.id ? { ...x, recorded: it.recorded, paused: it.paused, changed: it.changed, updated_at: it.updated_at } : x)) })); }} />`)}
+            item=${{ key: `syn:${s.id}`, text: s.name, where: s.area_name, recorded: s.recorded, paused: s.paused, error: s.error, changed: s.changed, updated_at: s.updated_at }}
+            onChanged=${(it) => { onChanged(it.recorded === s.recorded ? 0 : it.recorded ? 1 : -1); setData((d) => ({ ...d, items: d.items.map((x) => (x.id === s.id ? { ...x, recorded: it.recorded, paused: it.paused, error: it.error, changed: it.changed, updated_at: it.updated_at } : x)) })); }} />`)}
           <${Pager} page=${page} pageSize=${data.page_size} total=${data.total} onPage=${setPage} />
         </section>`}
   </div>`;
 }
 
 /** The Yemot connection: token, folders, on/off, check, read the folders. */
-function YemotSettings({ settings, onSaved, onSynced }) {
+function YemotSettings({ settings, webhook, onSaved, onSynced }) {
   const [open, setOpen] = useState(!settings.token);
   const [v, setV] = useState({ token: settings.token, folder: settings.folder, syn_folder: settings.syn_folder });
   const [errors, setErrors] = useState({});
@@ -173,6 +175,12 @@ function YemotSettings({ settings, onSaved, onSynced }) {
         <${Button} loading=${busy === 'test'} disabled=${!settings.token} onClick=${() => run('test', async () => { await api.post('/admin/recordings/test'); toast('החיבור לימות המשיח תקין'); })}>בדיקת חיבור<//>
         <${Button} icon="refresh" loading=${busy === 'sync'} disabled=${!settings.token} onClick=${() => run('sync', async () => { const r = await api.post('/admin/recordings/sync'); toast(`נקראו התיקיות: ${r.added} נוספו, ${r.removed} הוסרו`); onSynced(); })}>סנכרון מהתיקיות<//>
         <span class="muted small grow">סנכרון: קבצים שהעליתם לתיקיות בעצמכם (בשם שמופיע ברשימה) יושמעו, וקבצים שנמחקו שם יוסרו.</span>
+      </div>
+      <div class="webhook-box">
+        <b>דיווח על קובץ שלא הושמע</b>
+        <p class="muted small">הוסיפו את השורה הזו להגדרות שלוחת קו השמיעה בימות המשיח. כשקובץ לא יושמע, ימות המשיח ידווחו לכאן, וההקלטה תושהה אוטומטית עד שתעלו אותה מחדש.</p>
+        <div class="row gap-sm"><code dir="ltr" class="grow">${webhook}</code>
+          <${Button} small icon="copy" onClick=${() => navigator.clipboard?.writeText(webhook).then(() => toast('הועתק'), () => toast('לא ניתן להעתיק', 'error'))}>העתקה<//></div>
       </div>
     </div>`}
   </div>`;

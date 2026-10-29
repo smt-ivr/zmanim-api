@@ -1184,6 +1184,28 @@ describe('e-mail (Resend mocked)', () => {
     await call('PATCH', `/admin/recordings/${encodeURIComponent(`syn:${s.id}`)}`, { token: admin, body: { paused: false } });
     assert.equal((await call('GET', `/synagogues/${s.id}/recording`, { token: g.token })).body.recorded, true);
 
+    // Yemot reports that the file failed to play (webhook): paused, with the reason; turning it back on clears it
+    list = (await call('GET', '/admin/recordings', { token: admin })).body;
+    const hook = /^api_send_webhook_error_link=(https:\/\/x\.test\/api\/ivr\/file-error\?key=\w+)$/.exec(list.webhook);
+    assert.ok(hook, list.webhook);
+    const bad = await worker.fetch(new Request('https://x.test/api/ivr/file-error?key=wrong&FilePath=/zmanimrec/synagogues/' + s.id), env);
+    assert.equal(bad.status, 403);
+    const report = await worker.fetch(new Request(`${hook[1]}&ApiCallId=abc&Action=${encodeURIComponent("id list message type 'f'")}&FilePath=/zmanimrec/synagogues/${s.id}&Status=Error&Message=${encodeURIComponent('file audio not found')}`), env);
+    assert.equal(report.status, 200);
+    let one = (await call('GET', '/admin/recordings/synagogues?filter=recorded', { token: admin })).body.items[0];
+    assert.equal(one.paused, true);
+    assert.match(one.error, /file audio not found/);
+    assert.equal((await call('GET', '/admin/recordings', { token: admin })).body.errors, 1);
+    await call('PATCH', `/admin/recordings/${encodeURIComponent(`syn:${s.id}`)}`, { token: admin, body: { paused: false } });
+    one = (await call('GET', '/admin/recordings/synagogues?filter=recorded', { token: admin })).body.items[0];
+    assert.deepEqual([one.paused, one.error], [false, null]);
+    // a file in a folder Yemot cannot play from cannot be turned back on: it has to be uploaded again
+    await env.DB.prepare(`UPDATE recordings SET path = '/zmanim-rec/synagogues/1', paused = 1 WHERE key = ?`).bind(`syn:${s.id}`).run();
+    assert.equal((await call('PATCH', `/admin/recordings/${encodeURIComponent(`syn:${s.id}`)}`, { token: admin, body: { paused: false } })).status, 422);
+    await up(`syn:${s.id}`);
+    one = (await call('GET', '/admin/recordings/synagogues?filter=recorded', { token: admin })).body.items[0];
+    assert.deepEqual([one.paused, one.error], [false, null]);
+
     // delete: gone from Yemot and from the line
     r = await call('DELETE', `/admin/recordings/${encodeURIComponent('sys:choose_area')}`, { token: admin });
     assert.equal(r.status, 200);

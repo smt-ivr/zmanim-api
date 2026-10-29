@@ -678,3 +678,7 @@ kbd { font: 12px/1 var(--font); padding: 3px 6px; border-radius: 5px; border: 1p
 .name-rec p { margin: 0; }
 .rec-state.paused { background: #fef3c7; color: #b45309; }
 :root[data-theme="dark"] .rec-state.paused { background: #422006; color: #fcd34d; }
+.rec-error { color: var(--danger, #b91c1c); font-size: 12.5px; margin-top: 3px; display: flex; gap: 4px; align-items: center; }
+.webhook-box { padding: 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); display: flex; flex-direction: column; gap: 6px; }
+.webhook-box p { margin: 0; }
+.webhook-box code { font-size: 12px; padding: 8px 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; overflow-wrap: anywhere; }

@@ -7,6 +7,8 @@ import { HttpError, forbidden, invalid, json, notFound } from '../http.js';
 import { catalog, fileName } from '../ivr/voice.js';
 import { getSettings, publicView, saveSettings } from '../settings.js';
 import { id } from '../validate.js';
+import { ivrKey } from './admin.js';
+import { readParams } from '../ivr/engine.js';
 
 const API = 'https://www.call2all.co.il/ym/api/';
 const MAX_AUDIO = 10 * 1024 * 1024;
@@ -54,12 +56,15 @@ const settingsView = (s) => ({
   enabled: s.recordings_enabled, folder: s.recordings_folder, syn_folder: s.recordings_syn_folder, token: publicView(s).yemot_token,
 });
 
+/** Playable by Yemot: letters, digits and "/" only ("-" splits the f-<path> message, "_" is not allowed). */
+const playable = (path) => /^(\/[A-Za-z0-9]+)+$/.test(path);
+
 /** GET /admin/recordings — the settings and every sentence / name that can be recorded, with its status. */
-export async function list({ env }) {
+export async function list({ env, url }) {
   const s = await getSettings(env);
   const [items, rows, syn] = await Promise.all([
     catalog(env, s),
-    all(env, `SELECT key, text, size, paused, updated_at FROM recordings WHERE key NOT LIKE 'syn:%'`),
+    all(env, `SELECT key, text, size, paused, error, error_at, updated_at FROM recordings WHERE key NOT LIKE 'syn:%'`),
     first(env, `SELECT (SELECT COUNT(*) FROM synagogues) AS total, (SELECT COUNT(*) FROM recordings WHERE key LIKE 'syn:%') AS recorded`),
   ]);
   const byKey = new Map(rows.map((r) => [r.key, r]));
@@ -67,9 +72,12 @@ export async function list({ env }) {
     settings: settingsView(s),
     items: items.map((i) => {
       const r = byKey.get(i.key);
-      return { ...i, recorded: Boolean(r), paused: r?.paused === 1, updated_at: r?.updated_at ?? null, changed: Boolean(r && r.text && r.text !== i.text) };
+      return { ...i, recorded: Boolean(r), paused: r?.paused === 1, error: r?.error ?? null, error_at: r?.error_at ?? null, updated_at: r?.updated_at ?? null, changed: Boolean(r && r.text && r.text !== i.text) };
     }),
     synagogues: syn,
+    errors: (await first(env, `SELECT COUNT(*) AS n FROM recordings WHERE error IS NOT NULL`)).n,
+    // the line to put in the listening extension's settings, so Yemot reports a file that fails to play
+    webhook: `api_send_webhook_error_link=${url.origin}${(env.BASE_PATH || '').replace(/\/$/, '')}/api/ivr/file-error?key=${await ivrKey(env)}`,
   });
 }
 
@@ -85,7 +93,7 @@ export async function synagogues({ env, url }) {
   const page = Math.max(Number(p.get('page')) || 0, 0);
   const [total, items] = await Promise.all([
     first(env, `SELECT COUNT(*) AS n ${from}`, ...args),
-    all(env, `SELECT s.id, s.name, a.name AS area_name, r.id IS NOT NULL AS recorded, r.paused, r.updated_at, r.text AS recorded_text
+    all(env, `SELECT s.id, s.name, a.name AS area_name, r.id IS NOT NULL AS recorded, r.paused, r.error, r.updated_at, r.text AS recorded_text
       ${from} ORDER BY r.id IS NOT NULL, s.name LIMIT ? OFFSET ?`, ...args, PAGE, page * PAGE),
   ]);
   return json({ total: total.n, page, page_size: PAGE, items: items.map((i) => ({ ...i, recorded: i.recorded === 1, paused: i.paused === 1, changed: Boolean(i.recorded && i.recorded_text && i.recorded_text !== i.name) })) });
@@ -137,7 +145,7 @@ export async function upload({ env, actor, params, request }) {
   const saved = String(data.path || '').replace(/^ivr2?:?\/?/, '/').replace(/\.\w+$/, '') || `/${folderOf(s, key)}/${fileName(key)}`;
   const path = saved.startsWith('/') ? saved : `/${saved}`;
   await run(env, `INSERT INTO recordings (key, path, text, size, uploaded_by) VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT(key) DO UPDATE SET path = excluded.path, text = excluded.text, size = excluded.size, uploaded_by = excluded.uploaded_by, paused = 0, updated_at = ?`,
+    ON CONFLICT(key) DO UPDATE SET path = excluded.path, text = excluded.text, size = excluded.size, uploaded_by = excluded.uploaded_by, paused = 0, error = NULL, error_at = NULL, updated_at = ?`,
     key, path, item.text, file.size, actor.id, nowIso());
   return json({ key, recorded: true, path, updated_at: nowIso() }, 201);
 }
@@ -147,8 +155,12 @@ export async function setPaused({ env, params, request }) {
   const key = decodeURIComponent(params.key);
   const d = await request.json().catch(() => ({}));
   if (typeof d.paused !== 'boolean') throw invalid({ paused: 'חסר ערך' });
-  const res = await run(env, `UPDATE recordings SET paused = ? WHERE key = ?`, d.paused ? 1 : 0, key);
-  if (!res.meta.changes) throw notFound('אין הקלטה');
+  const row = await first(env, `SELECT path FROM recordings WHERE key = ?`, key);
+  if (!row) throw notFound('אין הקלטה');
+  if (!d.paused && !playable(row.path)) throw invalid({ paused: 'הקובץ נמצא בתיקייה שימות המשיח לא משמיעים ממנה. יש להעלות אותו מחדש ("החלפה")' });
+  // playing again: the last failure report no longer applies (Yemot will report again if it still fails)
+  await run(env, `UPDATE recordings SET paused = ?, error = CASE WHEN ? THEN error ELSE NULL END, error_at = CASE WHEN ? THEN error_at ELSE NULL END WHERE key = ?`,
+    d.paused ? 1 : 0, d.paused ? 1 : 0, d.paused ? 1 : 0, key);
   return json({ key, paused: d.paused });
 }
 
@@ -171,6 +183,23 @@ async function stream(env, key) {
   const res = await yemot(s, 'DownloadFile', { path: `ivr2:${row.path}.wav` });
   if (!(res instanceof Response) || !res.ok) throw new HttpError(502, 'YEMOT_ERROR', 'לא ניתן להשמיע את ההקלטה מימות המשיח');
   return new Response(res.body, { headers: { 'Content-Type': 'audio/wav', 'Cache-Control': 'private, max-age=60' } });
+}
+
+/**
+ * GET|POST /ivr/file-error?key= — Yemot's webhook when a file of an answer failed to play
+ * (api_send_webhook_error_link): { FilePath: "/zmanimrec/system/at", Status: "Error", Message: "file audio not found" }.
+ * The recording is paused (the line reads it as text again) and the reason is shown in the admin.
+ */
+export async function fileError({ env, request, url }) {
+  const p = await readParams(request, url);
+  if (!p.key || p.key !== (await first(env, `SELECT value FROM settings WHERE key = 'ivr_key'`))?.value) return new Response('forbidden', { status: 403 });
+  const path = String(p.FilePath || '').trim().replace(/\.\w+$/, '');
+  if (!path) return new Response('ok');
+  const msg = String(p.Message || p.Status || 'ההשמעה נכשלה').slice(0, 200);
+  const res = await run(env, `UPDATE recordings SET paused = 1, error = ?, error_at = ? WHERE path = ? OR path = ?`,
+    `ימות המשיח: ${msg} (${path})`, nowIso(), path, path.startsWith('/') ? path : `/${path}`);
+  if (!res.meta.changes) console.error('[recordings] file error for an unknown path', path, msg);
+  return new Response('ok');
 }
 
 /** GET /admin/recordings/:key/audio */

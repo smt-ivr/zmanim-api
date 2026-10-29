@@ -42,6 +42,8 @@ export const router = new Router()
   // public listening line (anonymous)
   .get('/ivr/listen', handleListen, PUBLIC)
   .post('/ivr/listen', handleListen, PUBLIC)
+  .get('/ivr/file-error', recordings.fileError, PUBLIC) // Yemot: a file failed to play (own key check)
+  .post('/ivr/file-error', recordings.fileError, PUBLIC)
   // session
   .post('/auth/login', auth.postLogin, PUBLIC)
   .get('/auth/options', auth.getOptions, PUBLIC)
