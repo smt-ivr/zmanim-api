@@ -1,5 +1,5 @@
 // The synagogue workspace: what a manager sees after login. Admins open any synagogue the same way.
-import { api } from '../api.js';
+import { api, fetchBlob } from '../api.js';
 import { ALL_DAYS, DAY_FULL, VIA, cx, html, navigate, norm, pluralize, rememberSynagogue, timeAgo, useEffect, useMemo, useState } from '../lib.js';
 import {
   Avatar, Badge, Button, DaysBadge, DaysPicker, Empty, ErrorBox, Field, FormModal, Icon, Input, Meter, Modal, Select, Spinner,
@@ -551,6 +551,32 @@ function LocationsTab({ data, update }) {
 // ------------------------------------------------------------------ details
 const FIELD_LABELS = { name: 'שם', area_id: 'אזור', address: 'כתובת', phone: 'טלפון', notes: 'הערות' };
 
+/** Is the synagogue's name recorded for the phone line (in the administration's voice)? Listen, or ask for it. */
+function NameRecording({ synagogue: s, admin }) {
+  const { data } = useLoad(() => api.get(`/synagogues/${s.id}/recording`), [s.id]);
+  const [playing, setPlaying] = useState(false);
+  if (!data) return null;
+  async function listen() {
+    setPlaying(true);
+    try {
+      const url = URL.createObjectURL(await fetchBlob(`/synagogues/${s.id}/recording?audio=1`));
+      const a = new Audio(url);
+      a.onended = () => { setPlaying(false); URL.revokeObjectURL(url); };
+      await a.play();
+    } catch (e) { setPlaying(false); toastError(e); }
+  }
+  const ask = `שלום, אשמח שיוקלט שם בית הכנסת "${s.name}" לקו הטלפון.`;
+  return html`<div class="name-rec">
+    <h4><${Icon} name="mic" size=${15} /> השם בקו הטלפון</h4>
+    ${data.recorded
+      ? html`<p class="small">שם בית הכנסת מוקלט ונשמע בקו בקול אנושי.</p>
+          <${Button} small icon="play" loading=${playing} onClick=${listen}>השמעה<//>`
+      : admin ? html`<p class="small muted">השם נקרא כרגע בקול המחשב.</p><a class="link small" href="#/admin/recordings">להקלטה בעמוד ההקלטות</a>`
+      : html`<p class="small muted">השם נקרא כרגע בקול המחשב. אפשר לבקש שיוקלט בקול אנושי.</p>
+          <${Button} small icon="mic" onClick=${() => navigate(`/messages?draft=${encodeURIComponent(ask)}`)}>בקשת הקלטה<//>`}
+  </div>`;
+}
+
 function InfoTab({ data, isAdmin, onSaved }) {
   const { synagogue: s, settings, catalog } = data;
   // Admins edit everything; managers only the fields the admin opened for this synagogue.
@@ -595,6 +621,7 @@ function InfoTab({ data, isAdmin, onSaved }) {
         <li><span>תפילות</span><b>${allowed ? catalog.prayers.map((p) => p.name).join(', ') || 'אין' : 'כל התפילות'}</b></li>
       </ul>
       <p class="muted small">ההגדרות נקבעות על ידי ההנהלה.</p>
+      <${NameRecording} synagogue=${s} admin=${isAdmin} />
     </aside>
   </section>`;
 }

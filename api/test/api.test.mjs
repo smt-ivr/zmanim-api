@@ -1113,6 +1113,81 @@ describe('e-mail (Resend mocked)', () => {
     assert.equal((await call('POST', '/admin/broadcasts', { token: admin, body: { body: 'x', kind: 'users', ids: [] } })).status, 422);
   });
 
+  test('recordings: token and folders, upload to Yemot, status for the gabbai, delete, sync', async () => {
+    const admin = await setupAdmin();
+    await env.DB.prepare(`UPDATE users SET is_super = 1`).run();
+    const yemotCalls = [];
+    let dir = { files: [] };
+    globalThis.fetch = async (u, init) => {
+      const url = new URL(String(u));
+      if (url.hostname !== 'www.call2all.co.il') throw new Error('unexpected fetch ' + u);
+      const action = url.pathname.split('/').pop();
+      const form = init?.body instanceof FormData ? Object.fromEntries([...init.body.entries()].map(([k, v]) => [k, typeof v === 'string' ? v : v.name])) : null;
+      yemotCalls.push({ action, params: Object.fromEntries(url.searchParams), form });
+      const ok = (o) => new Response(JSON.stringify({ responseStatus: 'OK', ...o }), { headers: { 'Content-Type': 'application/json' } });
+      if (action === 'UploadFile') return ok({ path: form.path.replace('ivr2:/', 'ivr/') });
+      if (action === 'GetIVR2Dir') return ok(url.searchParams.get('path').endsWith('synagogues') ? { files: [] } : dir);
+      if (action === 'DownloadFile') return new Response(new Uint8Array([82, 73, 70, 70]), { headers: { 'Content-Type': 'audio/wav' } });
+      return ok({});
+    };
+    // no token yet
+    const s = await newSynagogue(admin, { name: 'אהל משה' });
+    const g = await createManager(admin, 'rec@x.com', [s.id]);
+    const { default: worker } = await import('../src/index.js');
+    const up = (key, name = 'recording.webm', type = 'audio/webm') => {
+      const f = new FormData();
+      f.append('file', new File([new Uint8Array(2000)], name, { type }));
+      return worker.fetch(new Request(`https://x.test/api/admin/recordings/${encodeURIComponent(key)}`, { method: 'POST', headers: { Authorization: `Bearer ${admin}` }, body: f }), env)
+        .then(async (r) => ({ status: r.status, body: await r.json() }));
+    };
+    assert.equal((await up('sys:welcome')).status, 409, 'no token');
+    let r = await call('PATCH', '/admin/recordings/settings', { token: admin, body: { token: '0771234567:secret', folder: 'ivr2:/zmanim_rec/system/' } });
+    assert.deepEqual([r.body.token, r.body.folder, r.body.syn_folder], ['••••cret', 'zmanim_rec/system', 'zmanim_rec/synagogues']);
+    assert.equal((await call('PATCH', '/admin/recordings/settings', { token: admin, body: { folder: 'bad folder!' } })).status, 422);
+    assert.equal((await call('POST', '/admin/recordings/test', { token: admin })).status, 200);
+
+    let list = (await call('GET', '/admin/recordings', { token: admin })).body;
+    const welcome = list.items.find((i) => i.key === 'sys:welcome');
+    assert.equal(welcome.text, 'שלום וברוכים הבאים למערכת זמני התפילות');
+    assert.ok(list.items.some((i) => i.key === 'min:30' && i.text === 'וחצי'));
+    assert.ok(list.items.some((i) => i.key === 'prayer:1' && i.text === 'שחרית'));
+    assert.equal(welcome.recorded, false);
+
+    r = await up('sys:welcome');
+    assert.equal(r.status, 201);
+    const sent = yemotCalls.at(-1);
+    assert.deepEqual([sent.form.token, sent.form.path, sent.form.convertAudio], ['0771234567:secret', 'ivr2:/zmanim_rec/system/welcome.wav', '1']);
+    assert.equal(r.body.path, '/zmanim_rec/system/welcome');
+    assert.equal((await up('sys:nothing')).status, 404);
+    assert.equal((await up('sys:at', 'x.txt', 'text/plain')).status, 422);
+    list = (await call('GET', '/admin/recordings', { token: admin })).body;
+    assert.equal(list.items.find((i) => i.key === 'sys:welcome').recorded, true);
+
+    // the synagogue's name: separate folder; the gabbai sees it and can listen
+    assert.equal((await call('GET', `/synagogues/${s.id}/recording`, { token: g.token })).body.recorded, false);
+    r = await up(`syn:${s.id}`);
+    assert.equal(yemotCalls.at(-1).form.path, `ivr2:/zmanim_rec/synagogues/${s.id}.wav`);
+    assert.equal((await call('GET', `/synagogues/${s.id}/recording`, { token: g.token })).body.recorded, true);
+    const audio = await worker.fetch(new Request(`https://x.test/api/synagogues/${s.id}/recording?audio=1`, { headers: { Authorization: `Bearer ${g.token}` } }), env);
+    assert.equal(audio.headers.get('Content-Type'), 'audio/wav');
+    const syns = (await call('GET', '/admin/recordings/synagogues?filter=recorded', { token: admin })).body;
+    assert.deepEqual(syns.items.map((x) => x.name), ['אהל משה']);
+    assert.equal((await call('GET', '/admin/recordings', { token: g.token })).status, 403);
+
+    // delete: gone from Yemot and from the line
+    r = await call('DELETE', `/admin/recordings/${encodeURIComponent('sys:welcome')}`, { token: admin });
+    assert.equal(r.status, 200);
+    assert.deepEqual([yemotCalls.at(-1).action, yemotCalls.at(-1).params.what], ['FileAction', 'ivr2:/zmanim_rec/system/welcome.wav']);
+
+    // sync: a file put in the folder by phone starts playing; one that was removed there stops
+    dir = { files: [{ name: 'at.wav', fileType: 'AUDIO' }] };
+    r = await call('POST', '/admin/recordings/sync', { token: admin });
+    assert.deepEqual([r.body.added, r.body.removed], [1, 1], 'at added; the synagogue file is not in its folder any more');
+    list = (await call('GET', '/admin/recordings', { token: admin })).body;
+    assert.equal(list.items.find((i) => i.key === 'sys:at').recorded, true);
+    globalThis.fetch = realFetch;
+  });
+
   test('incoming e-mail: replies, outside senders, the staff answering from the mailbox', async () => {
     const admin = await setupAdmin();
     await env.DB.prepare(`UPDATE users SET is_super = 1`).run();

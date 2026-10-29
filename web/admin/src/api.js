@@ -59,5 +59,15 @@ export const api = {
   del: (p) => request('DELETE', p),
 };
 
+/** A binary answer (e.g. audio) as a Blob, with the session's authorization. */
+export async function fetchBlob(path) {
+  const res = await fetch(BASE + path, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new ApiError(res.status, data.error);
+  }
+  return res.blob();
+}
+
 /** Full address of a file link the API returned (e.g. "api/f/<token>"). */
 export const fileUrl = (path) => `${API_ROOT}/${path}`;

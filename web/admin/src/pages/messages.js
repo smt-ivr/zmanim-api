@@ -59,8 +59,8 @@ function Thread({ messages, mine, empty }) {
   </div>`;
 }
 
-function Composer({ onSend, disabled, placeholder = 'כתבו הודעה…', extra }) {
-  const [body, setBody] = useState('');
+function Composer({ onSend, disabled, placeholder = 'כתבו הודעה…', extra, initial = '' }) {
+  const [body, setBody] = useState(initial);
   const [files, setFiles] = useState([]);
   const [busy, setBusy] = useState(false);
   const picker = useRef();
@@ -112,6 +112,8 @@ function asForm(fields, files) {
 
 // ------------------------------------------------------------------ the user's side
 export function MyMessages({ onRead }) {
+  // a ready text from another screen (e.g. asking for a recording): #/messages?draft=...
+  const [draft] = useState(() => new URLSearchParams(location.hash.split('?')[1] || '').get('draft') || '');
   const { data, error, loading, reload, setData } = useLoad(() => api.get('/me/messages'));
   useEffect(() => { const t = setInterval(reload, POLL); return () => clearInterval(t); }, [reload]);
   useEffect(() => { if (data) onRead?.(); }, [data?.messages.length]);
@@ -125,7 +127,7 @@ export function MyMessages({ onRead }) {
     <header class="page-head"><div><h1>הודעות להנהלה</h1><p class="muted">שאלה, בקשה או תקלה? כתבו כאן ונחזור אליכם בהקדם. התשובות יופיעו כאן.</p></div></header>
     <div class="card chat-card">
       <${Thread} messages=${data.messages} mine=${(m) => m.sender === 'user'} empty=${html`<${Icon} name="chat" size=${28} /><b>עדיין אין הודעות</b><span>כתבו את ההודעה הראשונה למטה</span>`} />
-      ${data.blocked ? html`<div class="alert alert-info">${data.blocked}</div>` : html`<${Composer} onSend=${send} />`}
+      ${data.blocked ? html`<div class="alert alert-info">${data.blocked}</div>` : html`<${Composer} onSend=${send} initial=${draft} />`}
     </div>
   </div>`;
 }

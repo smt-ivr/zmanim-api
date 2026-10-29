@@ -15,6 +15,7 @@ import * as messages from './routes/messages.js';
 import { handleEmail } from './routes/messages.js';
 import { serveFile } from './files.js';
 import * as phoneActivity from './routes/phoneActivity.js';
+import * as recordings from './routes/recordings.js';
 
 const PUBLIC = { auth: 'none' };
 const ADMIN = { auth: 'admin' };
@@ -71,6 +72,7 @@ export const router = new Router()
   .post('/synagogues/:sid/minyanim/:id/duplicate', ws.duplicateMinyan)
   .post('/synagogues/:sid/seasons/copy', ws.copySeasonRoute)
   .get('/synagogues/:sid/log', ws.log)
+  .get('/synagogues/:sid/recording', recordings.synagogueRecording)
   // admin
   .get('/admin/stats', admin.stats, ADMIN)
   .get('/admin/ivr', admin.getIvr, perm('phone'))
@@ -114,6 +116,14 @@ export const router = new Router()
   .post('/admin/locks', security.lock, SUPER)
   .delete('/admin/locks', security.unlock, SUPER)
   .post('/admin/users/:id/unlock', security.unlockUser, perm('managers'))
+  .get('/admin/recordings', recordings.list, SUPER)
+  .get('/admin/recordings/synagogues', recordings.synagogues, SUPER)
+  .patch('/admin/recordings/settings', recordings.patchSettings, SUPER)
+  .post('/admin/recordings/test', recordings.test, SUPER)
+  .post('/admin/recordings/sync', recordings.sync, SUPER)
+  .post('/admin/recordings/:key', recordings.upload, SUPER)
+  .delete('/admin/recordings/:key', recordings.remove, SUPER)
+  .get('/admin/recordings/:key/audio', recordings.audio, SUPER)
   .get('/admin/email-log', messages.emailLog, SUPER)
   .get('/admin/conversations', messages.listConversations, SUPER)
   .get('/admin/broadcasts', messages.listBroadcasts, SUPER)

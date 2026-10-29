@@ -14,6 +14,7 @@ import { Inbox, MyMessages } from './pages/messages.js';
 import { SynagoguePicker, Workspace } from './pages/workspace.js';
 import { Avatar, Button, Credit, Icon, Modal, Spinner, SynagogueSearch, toast } from './ui.js';
 import { PhoneActivity } from './pages/phone-activity.js';
+import { RecordingsPage } from './pages/recordings.js';
 
 // ------------------------------------------------------------------ routing (#/path)
 const parseHash = () => (location.hash.replace(/^#/, '') || '/').split('?')[0];
@@ -123,6 +124,7 @@ function App() {
   else if ((path === '/messages' || path === '/feedback') && !user.is_super) page = html`<${MyMessages} onRead=${refreshMe} />`;
   else if (user.is_super && (path === '/admin/inbox' || path === '/messages')) page = html`<${Inbox} onRead=${refreshMe} />`;
   else if (user.is_super && path === '/admin/control') page = html`<${ControlPage} onChanged=${refreshMe} />`;
+  else if (user.is_super && path === '/admin/recordings') page = html`<${RecordingsPage} />`;
   else if (user.is_super && path === '/admin/security') page = html`<${SecurityPage} />`;
   else if (can('registrations') && path === '/admin/registrations') page = html`<${AdminRegistrations} onChanged=${refreshMe} isSuper=${user.is_super} />`;
   else if (isAdmin && path === '/admin/synagogues') page = html`<${AdminSynagogues} onChanged=${refreshMe} perms=${user.perms} />`;
@@ -150,6 +152,7 @@ function App() {
           ${user.is_super && link('/admin/inbox', 'chat', 'הודעות', path === '/admin/inbox', system.unread_messages)}
           ${can('registrations') && link('/admin/registrations', 'inbox', 'בקשות הצטרפות', path === '/admin/registrations', system.pending_registrations)}
           ${can('phone') && link('/admin/phone', 'phone', 'פעילות בטלפון', path === '/admin/phone')}
+          ${user.is_super && link('/admin/recordings', 'mic', 'הקלטות', path === '/admin/recordings')}
           ${link('/admin/catalog', 'list', 'רשימות והגדרות', path === '/admin/catalog')}
           ${user.is_super && html`
             ${link('/admin/control', 'settings', 'הגדרות מערכת', path === '/admin/control')}

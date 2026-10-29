@@ -87,7 +87,7 @@ async function answer(c, input) {
   const screen = c.screens[c.state.screen];
   if (input === 'None' || input === '') {
     if (++c.state.empties >= 3) {
-      c.say.push(text('לא התקבלה הקשה'));
+      c.say.push(...(c.voice ? c.voice.phrase('no_input') : [text('לא התקבלה הקשה')]));
       return { end: true };
     }
     return screen.prompt(c);
@@ -137,7 +137,7 @@ export function go(c, name, data) {
 }
 
 export const end = (c, message) => (message && c.say.push(text(message)), { end: true });
-export const invalid = (c) => (c.say.push(text('הקשה לא חוקית')), c.screens[c.state.screen].prompt(c));
+export const invalid = (c) => (c.say.push(...(c.voice ? c.voice.phrase('invalid') : [text('הקשה לא חוקית')])), c.screens[c.state.screen].prompt(c));
 
 /** Single-key menu. items: [[digit, label], ...] -> "ל<label> הקישו <digit>" */
 export function menu(c, intro, items, { star = true } = {}) {
