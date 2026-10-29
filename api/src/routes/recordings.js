@@ -77,7 +77,7 @@ export async function list({ env, url }) {
     synagogues: syn,
     errors: (await first(env, `SELECT COUNT(*) AS n FROM recordings WHERE error IS NOT NULL`)).n,
     // the line to put in the listening extension's settings, so Yemot reports a file that fails to play
-    webhook: `api_send_webhook_error_link=${url.origin}${(env.BASE_PATH || '').replace(/\/$/, '')}/api/ivr/file-error?key=${await ivrKey(env)}`,
+    webhook: `api_send_webhook_error_link=${url.origin}${(env.BASE_PATH || '').replace(/\/$/, '')}/api/ivr/file-error/${await ivrKey(env)}`,
   });
 }
 
@@ -186,13 +186,14 @@ async function stream(env, key) {
 }
 
 /**
- * GET|POST /ivr/file-error?key= — Yemot's webhook when a file of an answer failed to play
+ * GET|POST /ivr/file-error/<key> — Yemot's webhook when a file of an answer failed to play
  * (api_send_webhook_error_link): { FilePath: "/zmanimrec/system/at", Status: "Error", Message: "file audio not found" }.
  * The recording is paused (the line reads it as text again) and the reason is shown in the admin.
  */
-export async function fileError({ env, request, url }) {
+export async function fileError({ env, request, url, params }) {
   const p = await readParams(request, url);
-  if (!p.key || p.key !== (await first(env, `SELECT value FROM settings WHERE key = 'ivr_key'`))?.value) return new Response('forbidden', { status: 403 });
+  const key = params.key;
+  if (!key || key !== (await first(env, `SELECT value FROM settings WHERE key = 'ivr_key'`))?.value) return new Response('forbidden', { status: 403 });
   const path = String(p.FilePath || '').trim().replace(/\.\w+$/, '');
   if (!path) return new Response('ok');
   const msg = String(p.Message || p.Status || 'ההשמעה נכשלה').slice(0, 200);

@@ -1186,11 +1186,11 @@ describe('e-mail (Resend mocked)', () => {
 
     // Yemot reports that the file failed to play (webhook): paused, with the reason; turning it back on clears it
     list = (await call('GET', '/admin/recordings', { token: admin })).body;
-    const hook = /^api_send_webhook_error_link=(https:\/\/x\.test\/api\/ivr\/file-error\?key=[\w-]+)$/.exec(list.webhook);
+    const hook = /^api_send_webhook_error_link=(https:\/\/x\.test\/api\/ivr\/file-error\/[\w-]+)$/.exec(list.webhook);
     assert.ok(hook, list.webhook);
-    const bad = await worker.fetch(new Request('https://x.test/api/ivr/file-error?key=wrong&FilePath=/zmanimrec/synagogues/' + s.id), env);
+    const bad = await worker.fetch(new Request('https://x.test/api/ivr/file-error/wrong?FilePath=/zmanimrec/synagogues/' + s.id), env);
     assert.equal(bad.status, 403);
-    const report = await worker.fetch(new Request(`${hook[1]}&ApiCallId=abc&Action=${encodeURIComponent("id list message type 'f'")}&FilePath=/zmanimrec/synagogues/${s.id}&Status=Error&Message=${encodeURIComponent('file audio not found')}`), env);
+    const report = await worker.fetch(new Request(`${hook[1]}?ApiCallId=abc&Action=${encodeURIComponent("id list message type 'f'")}&FilePath=/zmanimrec/synagogues/${s.id}&Status=Error&Message=${encodeURIComponent('file audio not found')}`), env);
     assert.equal(report.status, 200);
     let one = (await call('GET', '/admin/recordings/synagogues?filter=recorded', { token: admin })).body.items[0];
     assert.equal(one.paused, true);
