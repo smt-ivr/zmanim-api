@@ -371,6 +371,14 @@ describe('ivr listening line', () => {
     body = await call.press('00');
     assert.match(body, /f-\/zmanim_rec\/system\/prayer1\.f-\/zmanim_rec\/system\/at\.f-\/zmanim_rec\/system\/hour6\.f-\/zmanim_rec\/system\/min30\.t-בבית כנסת\.f-\/zmanim_rec\/synagogues\/1\.t-ובבית כנסת זכרון משה ובישיבת מיר\.f-\/zmanim_rec\/system\/prayer1\.f-\/zmanim_rec\/system\/at\.t-7 בבית כנסת זכרון משה&/);
     assert.match(body, /read=t-בחירת תפילה\.t-לכל המניינים הקרובים הקישו 0\.f-\/zmanim_rec\/system\/prayer1\.t-הקישו 1\.t-למנחה הקישו 2/, 'menu: recorded name, then "press 1"');
+    // one recording paused: that word is read as text again, the others still play
+    await q(`UPDATE recordings SET paused = 1 WHERE key = 'hour:6'`).run();
+    call = listen();
+    await call.start();
+    await call.press('0');
+    await call.press('1');
+    body = await call.press('00');
+    assert.match(body, /f-\/zmanim_rec\/system\/at\.t-6\.f-\/zmanim_rec\/system\/min30/);
     // switched off in the settings: text only again
     await q(`INSERT INTO settings (key, value) VALUES ('recordings_enabled', '0')`).run();
     assert.match(await listen().start(), /^id_list_message=t-שלום וברוכים הבאים/);

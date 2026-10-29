@@ -1141,9 +1141,10 @@ describe('e-mail (Resend mocked)', () => {
         .then(async (r) => ({ status: r.status, body: await r.json() }));
     };
     assert.equal((await up('sys:welcome')).status, 409, 'no token');
-    let r = await call('PATCH', '/admin/recordings/settings', { token: admin, body: { token: '0771234567:secret', folder: 'ivr2:/zmanim_rec/system/' } });
-    assert.deepEqual([r.body.token, r.body.folder, r.body.syn_folder], ['••••cret', 'zmanim_rec/system', 'zmanim_rec/synagogues']);
+    let r = await call('PATCH', '/admin/recordings/settings', { token: admin, body: { token: '0771234567:secret', folder: 'ivr2:/zmanim-rec/system/' } });
+    assert.deepEqual([r.body.token, r.body.folder, r.body.syn_folder], ['••••cret', 'zmanim-rec/system', 'zmanim-rec/synagogues']);
     assert.equal((await call('PATCH', '/admin/recordings/settings', { token: admin, body: { folder: 'bad folder!' } })).status, 422);
+    assert.equal((await call('PATCH', '/admin/recordings/settings', { token: admin, body: { folder: 'zmanim_rec/system' } })).status, 422, 'no "_" in Yemot folder names');
     assert.equal((await call('POST', '/admin/recordings/test', { token: admin })).status, 200);
 
     let list = (await call('GET', '/admin/recordings', { token: admin })).body;
@@ -1156,8 +1157,8 @@ describe('e-mail (Resend mocked)', () => {
     r = await up('sys:welcome');
     assert.equal(r.status, 201);
     const sent = yemotCalls.at(-1);
-    assert.deepEqual([sent.form.token, sent.form.path, sent.form.convertAudio], ['0771234567:secret', 'ivr2:/zmanim_rec/system/welcome.wav', '1']);
-    assert.equal(r.body.path, '/zmanim_rec/system/welcome');
+    assert.deepEqual([sent.form.token, sent.form.path, sent.form.convertAudio], ['0771234567:secret', 'ivr2:/zmanim-rec/system/welcome.wav', '1']);
+    assert.equal(r.body.path, '/zmanim-rec/system/welcome');
     assert.equal((await up('sys:nothing')).status, 404);
     assert.equal((await up('sys:at', 'x.txt', 'text/plain')).status, 422);
     list = (await call('GET', '/admin/recordings', { token: admin })).body;
@@ -1166,7 +1167,7 @@ describe('e-mail (Resend mocked)', () => {
     // the synagogue's name: separate folder; the gabbai sees it and can listen
     assert.equal((await call('GET', `/synagogues/${s.id}/recording`, { token: g.token })).body.recorded, false);
     r = await up(`syn:${s.id}`);
-    assert.equal(yemotCalls.at(-1).form.path, `ivr2:/zmanim_rec/synagogues/${s.id}.wav`);
+    assert.equal(yemotCalls.at(-1).form.path, `ivr2:/zmanim-rec/synagogues/${s.id}.wav`);
     assert.equal((await call('GET', `/synagogues/${s.id}/recording`, { token: g.token })).body.recorded, true);
     const audio = await worker.fetch(new Request(`https://x.test/api/synagogues/${s.id}/recording?audio=1`, { headers: { Authorization: `Bearer ${g.token}` } }), env);
     assert.equal(audio.headers.get('Content-Type'), 'audio/wav');
@@ -1174,10 +1175,18 @@ describe('e-mail (Resend mocked)', () => {
     assert.deepEqual(syns.items.map((x) => x.name), ['אהל משה']);
     assert.equal((await call('GET', '/admin/recordings', { token: g.token })).status, 403);
 
+    // paused: the file stays, the gabbai sees it as not recorded (the line reads the name), and back
+    r = await call('PATCH', `/admin/recordings/${encodeURIComponent(`syn:${s.id}`)}`, { token: admin, body: { paused: true } });
+    assert.equal(r.body.paused, true);
+    assert.equal((await call('GET', `/synagogues/${s.id}/recording`, { token: g.token })).body.recorded, false);
+    assert.equal((await call('GET', '/admin/recordings/synagogues?filter=recorded', { token: admin })).body.items[0].paused, true);
+    await call('PATCH', `/admin/recordings/${encodeURIComponent(`syn:${s.id}`)}`, { token: admin, body: { paused: false } });
+    assert.equal((await call('GET', `/synagogues/${s.id}/recording`, { token: g.token })).body.recorded, true);
+
     // delete: gone from Yemot and from the line
     r = await call('DELETE', `/admin/recordings/${encodeURIComponent('sys:welcome')}`, { token: admin });
     assert.equal(r.status, 200);
-    assert.deepEqual([yemotCalls.at(-1).action, yemotCalls.at(-1).params.what], ['FileAction', 'ivr2:/zmanim_rec/system/welcome.wav']);
+    assert.deepEqual([yemotCalls.at(-1).action, yemotCalls.at(-1).params.what], ['FileAction', 'ivr2:/zmanim-rec/system/welcome.wav']);
 
     // sync: a file put in the folder by phone starts playing; one that was removed there stops
     dir = { files: [{ name: 'at.wav', fileType: 'AUDIO' }] };

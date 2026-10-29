@@ -69,7 +69,7 @@ export const fileName = (key) => {
  * A sentence: { tts, parts } — when none of its parts is recorded, the natural text `tts` is read as one piece.
  */
 export async function loadVoice(env, settings) {
-  const rows = settings.recordings_enabled ? await all(env, `SELECT key, path FROM recordings`) : [];
+  const rows = settings.recordings_enabled ? await all(env, `SELECT key, path FROM recordings WHERE paused = 0`) : [];
   const files = new Map(rows.map((r) => [r.key, r.path]));
   const has = (p) => typeof p === 'object' && p !== null && files.has(p.key);
   const render = (parts) => {

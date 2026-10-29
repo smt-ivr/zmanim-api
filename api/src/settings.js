@@ -27,8 +27,8 @@ export const SETTINGS = {
   registration_blocklist: { type: 'text', default: '', max: 5000 }, // one per line: e-mail, @domain, phone or IP
   recordings_enabled: { type: 'bool', default: true },   // play uploaded recordings instead of text-to-speech
   yemot_token: { type: 'secret', default: '', max: 300 },  // Yemot API token for uploading recordings
-  recordings_folder: { type: 'text', default: 'zmanim_rec/system', max: 100 },     // Yemot folder of the sentences
-  recordings_syn_folder: { type: 'text', default: 'zmanim_rec/synagogues', max: 100 }, // Yemot folder of synagogue names
+  recordings_folder: { type: 'text', default: 'zmanim-rec/system', max: 100 },     // Yemot folder of the sentences
+  recordings_syn_folder: { type: 'text', default: 'zmanim-rec/synagogues', max: 100 }, // Yemot folder of synagogue names
   zmanim_lat: { type: 'text', default: '31.778', max: 12 }, // where sunrise/sunset are computed (default Jerusalem)
   zmanim_lng: { type: 'text', default: '35.235', max: 12 },
 };

@@ -1,6 +1,7 @@
 // Recordings in your own voice for the phone line: every sentence and name the listening line says.
-// Record here (or upload a file); it goes straight to Yemot and from then on plays instead of the
-// computer voice. Whatever is not recorded keeps being read by text-to-speech.
+// Upload a sound file; it goes straight to Yemot and from then on plays instead of the computer voice.
+// A recording can be paused (read by text-to-speech again) without deleting it. Whatever has no
+// recording keeps being read by text-to-speech.
 import { api, fetchBlob } from '../api.js';
 import { cx, html, timeAgo, useEffect, useRef, useState } from '../lib.js';
 import { Badge, Button, Empty, ErrorBox, Field, Icon, Input, Pager, Spinner, Toggle, confirm, toast, toastError, useDebounced, useLoad } from '../ui.js';
@@ -23,107 +24,58 @@ async function play(path, setPlaying) {
   } catch (e) { setPlaying(false); toastError(e); }
 }
 
-/** Record with the microphone: start, stop, listen, then upload or record again. */
-function Recorder({ onUpload, onCancel }) {
-  const [state, setState] = useState('starting'); // starting | recording | review | denied
-  const [seconds, setSeconds] = useState(0);
-  const [clip, setClip] = useState(null); // { blob, url, name }
-  const [busy, setBusy] = useState(false);
-  const rec = useRef(null);
-  async function start() {
-    setClip(null); setSeconds(0);
-    let stream;
-    try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }); }
-    catch { setState('denied'); return; }
-    const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'].find((t) => window.MediaRecorder?.isTypeSupported?.(t)) || '';
-    const r = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
-    const chunks = [];
-    r.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-    r.onstop = () => {
-      stream.getTracks().forEach((t) => t.stop());
-      const type = r.mimeType || mime || 'audio/webm';
-      const blob = new Blob(chunks, { type });
-      if (blob.size < 800) { toast('ההקלטה קצרה מדי', 'error'); setState('idle'); return; }
-      const ext = type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm';
-      setClip({ blob, url: URL.createObjectURL(blob), name: `recording.${ext}` });
-      setState('review');
-    };
-    rec.current = r;
-    r.start(250);
-    setState('recording');
-  }
-  useEffect(() => { start(); return () => { if (rec.current?.state === 'recording') rec.current.stop(); }; }, []);
-  useEffect(() => {
-    if (state !== 'recording') return undefined;
-    const t = setInterval(() => setSeconds((s) => s + 1), 1000);
-    return () => clearInterval(t);
-  }, [state]);
-  async function upload() {
-    setBusy(true);
-    try { await onUpload(clip.blob, clip.name); } catch (e) { toastError(e); }
-    setBusy(false);
-  }
-  if (state === 'denied') return html`<div class="recorder"><div class="alert alert-info grow">אין גישה למיקרופון. אשרו גישה בדפדפן (ליד כתובת האתר) ונסו שוב.</div>
-    <${Button} small onClick=${start}>לנסות שוב<//><${Button} small kind="ghost" onClick=${onCancel}>ביטול<//></div>`;
-  if (state === 'recording' || state === 'starting') return html`<div class="recorder live">
-    <span class="rec-dot" /><b>מקליט</b><span class="rec-time">${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}</span>
-    <span class="grow muted small">אמרו את המשפט בקול ברור, ולחצו "סיום"</span>
-    <${Button} small kind="primary" icon="stop" onClick=${() => rec.current?.stop()}>סיום<//>
-    <${Button} small kind="ghost" onClick=${() => { rec.current.onstop = null; rec.current.stop(); rec.current.stream?.getTracks?.().forEach((t) => t.stop()); onCancel(); }}>ביטול<//>
-  </div>`;
-  if (state === 'review') return html`<div class="recorder">
-    <audio controls src=${clip.url} class="grow" />
-    <${Button} small kind="primary" icon="upload" loading=${busy} onClick=${upload}>שמירה בימות המשיח<//>
-    <${Button} small icon="mic" onClick=${start} disabled=${busy}>מחדש<//>
-    <${Button} small kind="ghost" onClick=${onCancel} disabled=${busy}>ביטול<//>
-  </div>`;
-  return html`<div class="recorder"><${Button} small icon="mic" onClick=${start}>הקלטה<//><${Button} small kind="ghost" onClick=${onCancel}>ביטול<//></div>`;
-}
-
-/** One sentence / name: what to say, its status, and record / upload / listen / delete. */
+/** One sentence / name: what to say, its status, and upload / listen / pause / delete. */
 function RecRow({ item, onChanged, canRecord }) {
-  const [recording, setRecording] = useState(false);
   const [playing, setPlaying] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState('');
   const file = useRef();
-  async function upload(blob, name) {
-    const f = new FormData();
-    f.append('file', blob, name);
-    const r = await api.post(`/admin/recordings/${enc(item.key)}`, f);
-    toast('נשמר בימות המשיח ויושמע בקו מעכשיו');
-    setRecording(false);
-    onChanged({ ...item, recorded: true, changed: false, updated_at: r.updated_at });
-  }
   async function pick(e) {
     const f = e.currentTarget.files[0];
     e.currentTarget.value = '';
     if (!f) return;
-    setBusy(true);
-    try { await upload(f, f.name); } catch (err) { toastError(err); }
-    setBusy(false);
+    setBusy('upload');
+    try {
+      const form = new FormData();
+      form.append('file', f, f.name);
+      const r = await api.post(`/admin/recordings/${enc(item.key)}`, form);
+      toast('הועלה לימות המשיח ויושמע בקו מעכשיו');
+      onChanged({ ...item, recorded: true, paused: false, changed: false, updated_at: r.updated_at });
+    } catch (err) { toastError(err); }
+    setBusy('');
+  }
+  async function pause(paused) {
+    setBusy('pause');
+    try {
+      await api.patch(`/admin/recordings/${enc(item.key)}`, { paused });
+      toast(paused ? 'מושהה: יישמע בקול המחשב' : 'ההקלטה מושמעת שוב');
+      onChanged({ ...item, paused });
+    } catch (e) { toastError(e); }
+    setBusy('');
   }
   async function remove() {
-    if (!(await confirm({ title: 'מחיקת ההקלטה', body: `"${item.text}" יוקרא שוב בקול המחשב.`, confirmLabel: 'מחיקה', danger: true }))) return;
-    try { await api.del(`/admin/recordings/${enc(item.key)}`); toast('ההקלטה נמחקה'); onChanged({ ...item, recorded: false, changed: false }); } catch (e) { toastError(e); }
+    if (!(await confirm({ title: 'מחיקת ההקלטה', body: `הקובץ יימחק מימות המשיח, ו"${item.text}" יוקרא שוב בקול המחשב.`, confirmLabel: 'מחיקה', danger: true }))) return;
+    try { await api.del(`/admin/recordings/${enc(item.key)}`); toast('ההקלטה נמחקה'); onChanged({ ...item, recorded: false, paused: false, changed: false }); } catch (e) { toastError(e); }
   }
-  return html`<div class=${cx('rec-row', item.recorded && 'done')}>
+  const state = !item.recorded ? 'off' : item.paused ? 'paused' : 'on';
+  return html`<div class=${cx('rec-row', state === 'on' && 'done')}>
     <div class="rec-main">
-      <span class=${cx('rec-state', item.recorded ? 'on' : 'off')}><${Icon} name=${item.recorded ? 'check' : 'mic'} size=${15} /></span>
+      <span class=${cx('rec-state', state)}><${Icon} name=${state === 'on' ? 'check' : state === 'paused' ? 'stop' : 'upload'} size=${15} /></span>
       <div class="grow">
         <div class="rec-text">${item.text}</div>
-        <div class="muted small">${[item.where, item.recorded && item.updated_at && `הוקלט ${timeAgo(item.updated_at)}`].filter(Boolean).join(' · ')}
-          ${item.changed && html` <${Badge} tone="warn">הנוסח השתנה מאז ההקלטה<//>`}</div>
+        <div class="muted small">${[item.where, item.recorded && item.updated_at && `הועלה ${timeAgo(item.updated_at)}`].filter(Boolean).join(' · ')}
+          ${item.paused && html` <${Badge}>מושהה · נשמע בקול המחשב<//>`}
+          ${item.changed && html` <${Badge} tone="warn">הנוסח השתנה מאז ההעלאה<//>`}</div>
       </div>
       <div class="rec-actions">
         ${item.recorded && html`<${Button} small kind="ghost" icon=${playing ? 'stop' : 'play'} title="השמעה"
           onClick=${() => (playing ? (current?.audio.pause(), current?.done()) : play(`/admin/recordings/${enc(item.key)}/audio`, setPlaying))} />`}
-        ${canRecord && html`<${Button} small icon="mic" kind=${item.recorded ? 'ghost' : 'primary'} onClick=${() => setRecording(true)}>${item.recorded ? 'מחדש' : 'הקלטה'}<//>
-          <input type="file" accept="audio/*,.wav,.mp3,.m4a,.webm,.ogg" hidden ref=${file} onChange=${pick} />
-          <${Button} small icon="upload" title="העלאת קובץ שמע (wav, mp3, m4a ועוד)" loading=${busy} onClick=${() => file.current.click()}>העלאת קובץ<//>`}
+        ${item.recorded && html`<${Button} small kind="ghost" loading=${busy === 'pause'} onClick=${() => pause(!item.paused)}>${item.paused ? 'הפעלה' : 'השהיה'}<//>`}
+        ${canRecord && html`<input type="file" accept="audio/*,.wav,.mp3,.m4a,.webm,.ogg,.amr" hidden ref=${file} onChange=${pick} />
+          <${Button} small icon="upload" kind=${item.recorded ? 'ghost' : 'primary'} title="קובץ שמע: wav, mp3, m4a ועוד" loading=${busy === 'upload'}
+            onClick=${() => file.current.click()}>${item.recorded ? 'החלפה' : 'העלאת קובץ'}<//>`}
         ${item.recorded && html`<${Button} small kind="ghost" icon="trash" title="מחיקה" onClick=${remove} />`}
       </div>
     </div>
-    ${recording && html`<${Recorder} onUpload=${upload} onCancel=${() => setRecording(false)} />`}
   </div>`;
 }
 
@@ -149,7 +101,7 @@ export function RecordingsPage() {
       <div class="card stat"><span class="stat-icon"><${Icon} name="building" size=${20} /></span><div><div class="stat-value">${data.synagogues.recorded} / ${data.synagogues.total}</div><div class="muted small">שמות בתי כנסת הוקלטו</div>
         <div class="rec-meter"><span style=${`width:${(data.synagogues.recorded / Math.max(1, data.synagogues.total)) * 100}%`} /></div></div></div>
     </div>
-    ${!ready && html`<div class="alert alert-info">כדי להקליט, הזינו קודם למעלה את הטוקן של ימות המשיח.</div>`}
+    ${!ready && html`<div class="alert alert-info">כדי להעלות הקלטות, הזינו קודם למעלה את הטוקן של ימות המשיח.</div>`}
     <div class="tabs">
       <button class=${cx('tab', tab === 'phrases' && 'active')} onClick=${() => setTab('phrases')}>משפטים ומילים<span class="count">${data.items.length}</span></button>
       <button class=${cx('tab', tab === 'syn' && 'active')} onClick=${() => setTab('syn')}>שמות בתי כנסת<span class="count">${data.synagogues.total}</span></button>
@@ -157,7 +109,7 @@ export function RecordingsPage() {
     ${tab === 'phrases' ? html`
       <div class="toolbar"><div class="segmented">${[['all', 'הכל'], ['missing', 'חסרים'], ['done', 'הוקלטו']].map(([k, l]) =>
         html`<button class=${cx(show === k && 'on')} onClick=${() => setShow(k)}>${l}</button>`)}</div>
-        <span class="muted small grow">מקליטים כאן במיקרופון, או מעלים קובץ שמע מוכן (wav, mp3, m4a ועוד). קראו בדיוק את מה שכתוב; מספרים נקראים כמילים (8 = "שמונה").</span></div>
+        <span class="muted small grow">מעלים קובץ שמע לכל שורה (wav, mp3, m4a ועוד). מקליטים בדיוק את מה שכתוב; מספרים נאמרים כמילים (8 = "שמונה"). "השהיה" משאירה את הקובץ אבל משמיעה את השורה בקול המחשב.</span></div>
       ${groups.length === 0 ? html`<${Empty} icon="mic" title="אין כאן כלום" />` : groups.map((g) => html`<section class="card rec-group" key=${g}>
         <h3>${g}</h3>
         ${shown.filter((i) => i.group === g).map((i) => html`<${RecRow} key=${i.key} item=${i} onChanged=${changed} canRecord=${ready} />`)}
@@ -180,13 +132,13 @@ function SynagogueRecordings({ canRecord, onChanged }) {
       <div class="segmented">${[['missing', 'חסרים'], ['recorded', 'הוקלטו'], ['all', 'הכל']].map(([k, l]) =>
         html`<button class=${cx(filter === k && 'on')} onClick=${() => setFilter(k)}>${l}</button>`)}</div>
     </div>
-    <p class="muted small">מקליטים רק את השם, למשל "אהל משה". המילים "בבית כנסת" נאמרות לפניו (גם אותן אפשר להקליט בלשונית המשפטים).</p>
+    <p class="muted small">בקובץ אומרים רק את השם, למשל "אהל משה". המילים "בבית כנסת" נאמרות לפניו (גם אותן אפשר להקליט בלשונית המשפטים).</p>
     ${loading && !data ? html`<${Spinner} />` : error && !data ? html`<${ErrorBox} error=${error} onRetry=${reload} />`
       : data.items.length === 0 ? html`<${Empty} icon="building" title=${filter === 'missing' ? 'כל בתי הכנסת הוקלטו' : 'לא נמצאו בתי כנסת'} />`
       : html`<section class="card rec-group">
           ${data.items.map((s) => html`<${RecRow} key=${s.id} canRecord=${canRecord}
-            item=${{ key: `syn:${s.id}`, text: s.name, where: s.area_name, recorded: s.recorded, changed: s.changed, updated_at: s.updated_at }}
-            onChanged=${(it) => { onChanged(it.recorded === s.recorded ? 0 : it.recorded ? 1 : -1); setData((d) => ({ ...d, items: d.items.map((x) => (x.id === s.id ? { ...x, recorded: it.recorded, changed: false, updated_at: it.updated_at } : x)) })); }} />`)}
+            item=${{ key: `syn:${s.id}`, text: s.name, where: s.area_name, recorded: s.recorded, paused: s.paused, changed: s.changed, updated_at: s.updated_at }}
+            onChanged=${(it) => { onChanged(it.recorded === s.recorded ? 0 : it.recorded ? 1 : -1); setData((d) => ({ ...d, items: d.items.map((x) => (x.id === s.id ? { ...x, recorded: it.recorded, paused: it.paused, changed: it.changed, updated_at: it.updated_at } : x)) })); }} />`)}
           <${Pager} page=${page} pageSize=${data.page_size} total=${data.total} onPage=${setPage} />
         </section>`}
   </div>`;
@@ -213,7 +165,7 @@ function YemotSettings({ settings, onSaved, onSynced }) {
         <${Field} label="טוקן API של ימות המשיח" hint="מספר המערכת:סיסמה, או טוקן שהופק באזור האישי" error=${errors.token}>
           <${Input} dir="ltr" value=${v.token} onInput=${(x) => setV({ ...v, token: x })} placeholder="0771234567:password" /><//>
         <div />
-        <${Field} label="תיקייה למשפטים" hint="נוצרת בימות המשיח בהעלאה הראשונה" error=${errors.folder}><${Input} dir="ltr" value=${v.folder} onInput=${(x) => setV({ ...v, folder: x })} /><//>
+        <${Field} label="תיקייה למשפטים" hint="אותיות באנגלית, ספרות ומקף (-), בלי קו תחתון" error=${errors.folder}><${Input} dir="ltr" value=${v.folder} onInput=${(x) => setV({ ...v, folder: x })} /><//>
         <${Field} label="תיקייה לשמות בתי כנסת" error=${errors.syn_folder}><${Input} dir="ltr" value=${v.syn_folder} onInput=${(x) => setV({ ...v, syn_folder: x })} /><//>
       </div>
       <div class="row gap-sm wrap">

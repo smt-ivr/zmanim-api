@@ -676,3 +676,5 @@ kbd { font: 12px/1 var(--font); padding: 3px 6px; border-radius: 5px; border: 1p
 .name-rec { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .name-rec h4 { margin: 0; display: flex; align-items: center; gap: 6px; font-size: 14px; }
 .name-rec p { margin: 0; }
+.rec-state.paused { background: #fef3c7; color: #b45309; }
+:root[data-theme="dark"] .rec-state.paused { background: #422006; color: #fcd34d; }

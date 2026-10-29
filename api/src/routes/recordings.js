@@ -12,7 +12,7 @@ const API = 'https://www.call2all.co.il/ym/api/';
 const MAX_AUDIO = 10 * 1024 * 1024;
 const PAGE = 50;
 
-const folderOk = (f) => /^[A-Za-z0-9_]+(\/[A-Za-z0-9_]+)*$/.test(f);
+const folderOk = (f) => /^[A-Za-z0-9-]+(\/[A-Za-z0-9-]+)*$/.test(f); // Yemot folder names: no "_"
 const cleanFolder = (f) => String(f || '').trim().replace(/^ivr2:/, '').replace(/^\/+|\/+$/g, '');
 const folderOf = (s, key) => (key.startsWith('syn:') ? s.recordings_syn_folder : s.recordings_folder);
 const yemotPath = (s, key) => `ivr2:/${folderOf(s, key)}/${fileName(key)}.wav`;
@@ -58,7 +58,7 @@ export async function list({ env }) {
   const s = await getSettings(env);
   const [items, rows, syn] = await Promise.all([
     catalog(env, s),
-    all(env, `SELECT key, text, size, updated_at FROM recordings WHERE key NOT LIKE 'syn:%'`),
+    all(env, `SELECT key, text, size, paused, updated_at FROM recordings WHERE key NOT LIKE 'syn:%'`),
     first(env, `SELECT (SELECT COUNT(*) FROM synagogues) AS total, (SELECT COUNT(*) FROM recordings WHERE key LIKE 'syn:%') AS recorded`),
   ]);
   const byKey = new Map(rows.map((r) => [r.key, r]));
@@ -66,7 +66,7 @@ export async function list({ env }) {
     settings: settingsView(s),
     items: items.map((i) => {
       const r = byKey.get(i.key);
-      return { ...i, recorded: Boolean(r), updated_at: r?.updated_at ?? null, changed: Boolean(r && r.text && r.text !== i.text) };
+      return { ...i, recorded: Boolean(r), paused: r?.paused === 1, updated_at: r?.updated_at ?? null, changed: Boolean(r && r.text && r.text !== i.text) };
     }),
     synagogues: syn,
   });
@@ -84,10 +84,10 @@ export async function synagogues({ env, url }) {
   const page = Math.max(Number(p.get('page')) || 0, 0);
   const [total, items] = await Promise.all([
     first(env, `SELECT COUNT(*) AS n ${from}`, ...args),
-    all(env, `SELECT s.id, s.name, a.name AS area_name, r.id IS NOT NULL AS recorded, r.updated_at, r.text AS recorded_text
+    all(env, `SELECT s.id, s.name, a.name AS area_name, r.id IS NOT NULL AS recorded, r.paused, r.updated_at, r.text AS recorded_text
       ${from} ORDER BY r.id IS NOT NULL, s.name LIMIT ? OFFSET ?`, ...args, PAGE, page * PAGE),
   ]);
-  return json({ total: total.n, page, page_size: PAGE, items: items.map((i) => ({ ...i, recorded: i.recorded === 1, changed: Boolean(i.recorded && i.recorded_text && i.recorded_text !== i.name) })) });
+  return json({ total: total.n, page, page_size: PAGE, items: items.map((i) => ({ ...i, recorded: i.recorded === 1, paused: i.paused === 1, changed: Boolean(i.recorded && i.recorded_text && i.recorded_text !== i.name) })) });
 }
 
 /** PATCH /admin/recordings/settings { token?, enabled?, folder?, syn_folder? } */
@@ -99,7 +99,7 @@ export async function patchSettings({ env, request }) {
   for (const [k, col] of [['folder', 'recordings_folder'], ['syn_folder', 'recordings_syn_folder']]) {
     if (d[k] === undefined) continue;
     const f = cleanFolder(d[k]);
-    if (!folderOk(f)) throw invalid({ [k]: 'שם תיקייה: אותיות באנגלית, ספרות, _ ו־/ בלבד. לדוגמה zmanim_rec/system' });
+    if (!folderOk(f)) throw invalid({ [k]: 'שם תיקייה: אותיות באנגלית, ספרות ומקף (-) בלבד, בלי קו תחתון. לדוגמה zmanim-rec/system' });
     out[col] = f;
   }
   await saveSettings(env, out);
@@ -132,13 +132,23 @@ export async function upload({ env, actor, params, request }) {
   const res = await fetch(`${API}UploadFile`, { method: 'POST', body }).catch(() => null);
   const data = res ? await res.json().catch(() => ({})) : {};
   if (data.responseStatus !== 'OK') throw new HttpError(502, 'YEMOT_ERROR', `ההעלאה לימות המשיח נכשלה${data.message ? `: ${data.message}` : ''}`);
-  // where Yemot actually saved it ("ivr/zmanim_rec/system/welcome.wav"), for playing: "/zmanim_rec/system/welcome"
+  // where Yemot actually saved it ("ivr/zmanim-rec/system/welcome.wav"), for playing: "/zmanim-rec/system/welcome"
   const saved = String(data.path || '').replace(/^ivr2?:?\/?/, '/').replace(/\.\w+$/, '') || `/${folderOf(s, key)}/${fileName(key)}`;
   const path = saved.startsWith('/') ? saved : `/${saved}`;
   await run(env, `INSERT INTO recordings (key, path, text, size, uploaded_by) VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT(key) DO UPDATE SET path = excluded.path, text = excluded.text, size = excluded.size, uploaded_by = excluded.uploaded_by, updated_at = ?`,
+    ON CONFLICT(key) DO UPDATE SET path = excluded.path, text = excluded.text, size = excluded.size, uploaded_by = excluded.uploaded_by, paused = 0, updated_at = ?`,
     key, path, item.text, file.size, actor.id, nowIso());
   return json({ key, recorded: true, path, updated_at: nowIso() }, 201);
+}
+
+/** PATCH /admin/recordings/:key { paused } — keep the file, but read the sentence by text-to-speech (or play it again). */
+export async function setPaused({ env, params, request }) {
+  const key = decodeURIComponent(params.key);
+  const d = await request.json().catch(() => ({}));
+  if (typeof d.paused !== 'boolean') throw invalid({ paused: 'חסר ערך' });
+  const res = await run(env, `UPDATE recordings SET paused = ? WHERE key = ?`, d.paused ? 1 : 0, key);
+  if (!res.meta.changes) throw notFound('אין הקלטה');
+  return json({ key, paused: d.paused });
 }
 
 /** DELETE /admin/recordings/:key — removes the file from Yemot; the sentence goes back to text-to-speech. */
@@ -170,8 +180,8 @@ export async function synagogueRecording({ env, actor, params, url }) {
   const sid = id(params.sid);
   if (actor.role !== 'admin' && !actor.synagogue_ids.includes(sid)) throw forbidden('אין לך גישה לבית כנסת זה');
   if (url.searchParams.get('audio')) return stream(env, `syn:${sid}`);
-  const row = await first(env, `SELECT updated_at FROM recordings WHERE key = ?`, `syn:${sid}`);
-  return json({ recorded: Boolean(row), updated_at: row?.updated_at ?? null });
+  const row = await first(env, `SELECT updated_at, paused FROM recordings WHERE key = ?`, `syn:${sid}`);
+  return json({ recorded: Boolean(row) && !row.paused, updated_at: row?.updated_at ?? null });
 }
 
 /**
