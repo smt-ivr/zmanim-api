@@ -34,6 +34,8 @@ export const PHRASES = [
   ['no_input', () => 'לא התקבלה הקשה', 'הודעות', 'אחרי 3 פעמים בלי הקשה'],
   ['error', () => 'אירעה תקלה, נסו שוב מאוחר יותר', 'הודעות', 'בתקלה'],
   ['at', () => 'בשעה', 'מילים בתוך משפט', 'שחרית "בשעה" שמונה'],
+  ['min_before', () => 'דקות לפני', 'זמני היום', '15 "דקות לפני" שקיעה'],
+  ['min_after', () => 'דקות אחרי', 'זמני היום', '45 "דקות אחרי" נץ'],
   ['in', () => 'ב', 'מילים בתוך משפט', 'לפני שם בית הכנסת: "ב"מאור חיים'],
   ['and_in', () => 'וב', 'מילים בתוך משפט', 'לפני בית כנסת נוסף באותה שעה: "וב"פאר הנצח'],
   ...Array.from({ length: 10 }, (_, d) => [`press_${d}`, () => `הקישו ${d}`, 'תפריטים', `אחרי כל אפשרות בתפריט ("לשחרית" הקישו ${d})`]),
@@ -44,15 +46,20 @@ const PAST = { 15: 'ורבע', 30: 'וחצי' };
 
 /** Everything that can be recorded (except synagogues): [{ key, text, group, where }]. */
 export async function catalog(env, settings) {
-  const [prayers, areas, locations] = await Promise.all([
+  const [prayers, areas, locations, anchors] = await Promise.all([
     all(env, `SELECT id, name FROM prayers ORDER BY sort, id`),
     all(env, `SELECT id, name FROM areas ORDER BY sort, name`),
     all(env, `SELECT TRIM(name) AS name, COUNT(DISTINCT synagogue_id) AS n FROM locations GROUP BY TRIM(name) ORDER BY n DESC, name`),
+    all(env, `SELECT id, name FROM anchors ORDER BY sort, id`),
   ]);
   return [
     ...PHRASES.map(([key, t, group, where]) => ({ key: `sys:${key}`, text: t(settings), group, where })),
     ...prayers.map((p) => ({ key: `prayer:${p.id}`, text: p.name, group: 'שמות תפילות', where: 'בתפריט ובכל מניין' })),
     ...areas.map((a) => ({ key: `area:${a.id}`, text: a.name, group: 'שמות אזורים', where: 'בתפריט האזורים' })),
+    ...anchors.flatMap((a) => [
+      { key: `at:${a.id}`, text: `ב${a.name}`, group: 'זמני היום', where: `מניין בדיוק ב${a.name}: "שחרית ב${a.name}"` },
+      { key: `anchor:${a.id}`, text: a.name, group: 'זמני היום', where: `"15 דקות לפני ${a.name}"` },
+    ]),
     ...locations.filter((l) => l.name).map((l) => ({ key: locationKey(l.name), text: l.name, group: 'שמות מיקומים', where: `אחרי שם בית הכנסת (${l.n === 1 ? 'בבית כנסת אחד' : `ב־${l.n} בתי כנסת`})` })),
     ...Array.from({ length: 23 }, (_, i) => ({ key: `hour:${i + 1}`, text: String(i + 1), group: 'שעות', where: `"בשעה ${i + 1}"` })),
     ...Object.entries(PAST).map(([m, w]) => ({ key: `min:${m}`, text: w, group: 'שעות', where: `"בשעה 8 ${w}"` })),

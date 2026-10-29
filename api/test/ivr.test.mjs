@@ -481,6 +481,11 @@ describe('ivr listening line', () => {
     assert.match(body, /t-אפשר להקיש גם דקות, אבל לא חובה\.t-למניינים בנץ הקישו 0\.t-למניינים הקרובים/);
     body = await call.press('0');
     assert.match(body, /^id_list_message=t-שחרית בהנץ החמה באהל משה&/);
+    // "בנץ" can be recorded (the times of day are in the list)
+    await q(`INSERT INTO recordings (key, path) VALUES (?, '/zmanimrec/system/at1')`).bind(`at:${sunrise}`).run();
+    body = await call.press('1');
+    body = await call.press('0');
+    assert.match(body, /^id_list_message=t-שחרית\.f-\/zmanimrec\/system\/at1\.t-באהל משה&/);
     // "הקישו 0" is its own recording, used after every option
     await q(`INSERT INTO recordings (key, path) VALUES ('sys:press_0', '/zmanimrec/system/press0')`).run();
     body = await call.press('1');

@@ -79,9 +79,13 @@ async function todaysMinyanim(c, now, prayerId) {
  */
 function sentences(rows, now, from, place) {
   const zman = (kind) => (CALCS[kind] ? zmanTime(now.date, kind, place) : null);
+  // "בנץ" / "15 דקות לפני שקיעה" — each word can be a recording (voice.js)
   const relativeWords = (r) => {
     const n = Math.abs(r.offset_minutes);
-    return n ? `${n} דקות ${r.offset_minutes < 0 ? 'לפני' : 'אחרי'} ${r.anchor_name}` : `ב${r.anchor_name}`;
+    if (!n) return { tts: `ב${r.anchor_name}`, parts: [{ key: `at:${r.anchor_id}`, text: `ב${r.anchor_name}` }] };
+    const dir = r.offset_minutes < 0 ? 'לפני' : 'אחרי';
+    return { tts: `${n} דקות ${dir} ${r.anchor_name}`,
+      parts: [String(n), { key: `sys:min_${r.offset_minutes < 0 ? 'before' : 'after'}`, text: `דקות ${dir}` }, { key: `anchor:${r.anchor_id}`, text: r.anchor_name }] };
   };
   const entries = [];
   for (const r of rows) {
@@ -101,7 +105,7 @@ function sentences(rows, now, from, place) {
   // same prayer, same moment, said the same way -> one sentence
   const groups = [];
   for (const e of entries) {
-    const key = `${e.r.prayer_id}|${e.t}|${e.words || ''}`;
+    const key = `${e.r.prayer_id}|${e.t}|${e.words?.tts || ''}`;
     const g = groups.find((x) => x.key === key && x === groups.at(-1)) || groups.find((x) => x.key === key && x.t === e.t);
     if (g) g.items.push(e); else groups.push({ key, t: e.t, words: e.words, items: [e] });
   }
@@ -110,7 +114,7 @@ function sentences(rows, now, from, place) {
     sentences: groups.map((g) => {
       const r = g.items[0].r;
       const prayer = { key: `prayer:${r.prayer_id}`, text: r.prayer_name };
-      const when = g.words ? { tts: g.words, parts: [g.words] } : (() => { const w = clockWords(g.t); return { tts: `בשעה ${w.tts}`, parts: [{ key: 'sys:at', text: 'בשעה' }, ...w.parts] }; })();
+      const when = g.words ? g.words : (() => { const w = clockWords(g.t); return { tts: `בשעה ${w.tts}`, parts: [{ key: 'sys:at', text: 'בשעה' }, ...w.parts] }; })();
       const places = g.items.map((e, i) => placeWords({ synagogueId: e.r.synagogue_id, synagogueName: e.r.synagogue_name, location: e.r.location_name }, i > 0));
       return { tts: [r.prayer_name, when.tts, ...places.map((p) => p.tts)].join(' '), parts: [prayer, ...when.parts, ...places.flatMap((p) => p.parts)] };
     }),

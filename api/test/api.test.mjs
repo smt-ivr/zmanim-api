@@ -1153,6 +1153,7 @@ describe('e-mail (Resend mocked)', () => {
     assert.equal(welcome.text, 'בחירת אזור');
     assert.ok(list.items.some((i) => i.key === 'min:30' && i.text === 'וחצי'));
     assert.ok(list.items.some((i) => i.key === 'prayer:1' && i.text === 'שחרית'));
+    assert.ok(list.items.some((i) => i.group === 'זמני היום' && /^at:\d+$/.test(i.key) && i.text.startsWith('ב')), 'בנץ / בשקיעה');
     await env.DB.prepare(`INSERT INTO locations (synagogue_id, name) VALUES (?, 'ספרדי')`).bind(s.id).run();
     list = (await call('GET', '/admin/recordings', { token: admin })).body;
     assert.ok(list.items.some((i) => i.group === 'שמות מיקומים' && i.text === 'ספרדי' && /^loc:[0-9a-f]+$/.test(i.key)), 'locations by name');
