@@ -406,7 +406,7 @@ describe('ivr listening line', () => {
     assert.match(body, /לשחרית הקישו 1/);
     assert.match(body, /לכל המניינים הקרובים הקישו 0/);
     body = await call.press('1'); // שחרית
-    assert.match(body, /read=t-נא בחרו את השעה הרצויה\.t-וסולמית לסיום\.t-אפשר להקיש גם דקות, אבל לא חובה/);
+    assert.match(body, /read=t-שחרית\.t-נא בחרו את השעה הרצויה\.t-וסולמית לסיום\.t-אפשר להקיש גם דקות, אבל לא חובה/); // the chosen prayer first
     assert.doesNotMatch(body, /בחירת יום|ליום/); // no day question
     assert.match(body, /למניינים הקרובים הקישו 0 0 וסולמית\.t-לכל המניינים של היום הקישו 0 0 0 וסולמית=/); // the whole day: last
     body = await call.press('0630');
@@ -481,6 +481,13 @@ describe('ivr listening line', () => {
     assert.match(body, /t-אפשר להקיש גם דקות, אבל לא חובה\.t-למניינים בנץ הקישו 0\.t-למניינים הקרובים/);
     body = await call.press('0');
     assert.match(body, /^id_list_message=t-שחרית בהנץ החמה באהל משה&/);
+    // "הקישו 0" is its own recording, used after every option
+    await q(`INSERT INTO recordings (key, path) VALUES ('sys:press_0', '/zmanimrec/system/press0')`).run();
+    body = await call.press('1');
+    assert.match(body, /t-למניינים בנץ\.f-\/zmanimrec\/system\/press0\.t-למניינים הקרובים/);
+    await call.press('*');
+    body = await call.press('*');
+    assert.match(body, /t-לכל האזורים\.f-\/zmanimrec\/system\/press0\.t-לגבעת שאול/);
   });
 
   test('long lists are read in pages', async () => {

@@ -4,7 +4,7 @@
 // One short sentence per time: "שחרית בשעה 8 וחצי במאור חיים ספרדי ובפאר הנצח אשכנזי".
 // Every fixed sentence and name can be a recording in the administration's voice (voice.js).
 // No identification; uses the same engine as the management line.
-import { all } from '../db.js';
+import { all, first } from '../db.js';
 import { MINYAN_ORDER, MINYAN_SELECT } from '../minyan.js';
 import { currentSeason, getSettings, isRoshChodesh, visibleDays } from '../settings.js';
 import { callStore, chosenIndex, go, goodbye, invalid, number, readParams, reply, runCall } from './engine.js';
@@ -164,7 +164,7 @@ function parseClock(input) {
 function nameMenu(c, introKey, zeroKey, rows, kind, { star }) {
   const v = c.voice;
   const many = rows.length > 9;
-  const messages = [...v.phrase(introKey), ...v.phrase(zeroKey), ...(many ? v.phrase('number_hash') : []),
+  const messages = [...v.phrase(introKey), ...v.option(zeroKey, 0), ...(many ? v.phrase('number_hash') : []),
     ...rows.flatMap((r, i) => v.item(`${kind}:${r.id}`, r.name, i + 1)), ...(star ? v.phrase('back') : [])];
   return { messages, opts: { max: String(rows.length).length, min: 1 } };
 }
@@ -205,8 +205,13 @@ const SCREENS = {
     async prompt(c) {
       const special = await all(c.env, `SELECT DISTINCT a.calc FROM minyanim m LEFT JOIN anchors a ON a.id = m.anchor_id
         WHERE m.prayer_id = ? AND m.time_kind = 'relative' AND m.is_active = 1`, c.state.data.prayerId);
-      const zero = !special.length ? [] : special.every((r) => r.calc === 'sunrise') ? ['special_netz'] : ['special_other'];
-      return { ...number([]), messages: ['time_choose', 'time_hash', 'time_2', ...zero, 'time_soon', 'time_all'].flatMap((k) => c.voice.phrase(k)), opts: { min: 1, max: 4 } };
+      const zero = !special.length ? [] : c.voice.option(special.every((r) => r.calc === 'sunrise') ? 'special_netz' : 'special_other', 0);
+      // the chosen prayer first: "שחרית. נא בחרו את השעה הרצויה ..."
+      const prayer = await first(c.env, `SELECT id, name FROM prayers WHERE id = ?`, c.state.data.prayerId);
+      const v = c.voice;
+      const messages = [...(prayer ? v.sentence({ tts: prayer.name, parts: [{ key: `prayer:${prayer.id}`, text: prayer.name }] }) : []),
+        ...v.phrase('time_choose'), ...v.phrase('time_hash'), ...v.phrase('time_2'), ...zero, ...v.phrase('time_soon'), ...v.phrase('time_all')];
+      return { ...number([]), messages, opts: { min: 1, max: 4 } };
     },
     handle(c, input) {
       if (input === '0') return list(c, c.state.data.prayerId, 0, { special: true });
@@ -219,7 +224,7 @@ const SCREENS = {
 
   more: {
     back: 'main',
-    prompt: (c) => ({ messages: [...c.voice.phrase('more'), ...c.voice.phrase('more_prayer')], opts: { max: 1, min: 1 } }),
+    prompt: (c) => ({ messages: [...c.voice.option('more', 1), ...c.voice.option('more_prayer', 2)], opts: { max: 1, min: 1 } }),
     handle(c, input) {
       if (input === '1') return speakPage(c);
       if (input === '2') return go(c, 'main');
