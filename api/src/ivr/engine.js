@@ -14,8 +14,11 @@ import { idListMessage, readDigits, readVoice, text } from './yemot.js';
 
 export const reply = (body) => new Response(body, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
 
-/** Final message; the trailing '&' hands the call back to Yemot without go_to_folder. */
-export const goodbye = (messages) => `${idListMessage(messages.length ? messages : [text('להתראות')])}&`;
+/**
+ * Final message; the trailing '&' hands the call back to Yemot without go_to_folder.
+ * Nothing to say (e.g. * on the first menu): an empty answer, and Yemot continues by itself (no "goodbye").
+ */
+export const goodbye = (messages) => (messages.length ? `${idListMessage(messages)}&` : '');
 
 export async function readParams(request, url) {
   const merged = new URLSearchParams(url.search);

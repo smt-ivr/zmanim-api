@@ -466,6 +466,12 @@ describe('ivr listening line', () => {
     assert.match(body, /בשעה 9 45/);
   });
 
+  test('leaving from the first menu says nothing (no "goodbye")', async () => {
+    const call = listen();
+    await call.start();
+    assert.equal(await call.press('*'), '');
+  });
+
   test('the line can be closed', async () => {
     await q(`INSERT INTO settings (key, value) VALUES ('listen_enabled', '0') ON CONFLICT(key) DO UPDATE SET value = '0'`).run();
     assert.equal(await listen('0502222222').start(), 'id_list_message=t-קו השמיעה אינו פעיל כרגע&');
