@@ -8,7 +8,6 @@ import { text } from './yemot.js';
 // ------------------------------------------------------------------ what can be recorded
 /** Fixed sentences of the listening line. `where`: shown in the admin next to the sentence. */
 export const PHRASES = [
-  ['welcome', (s) => `שלום וברוכים הבאים ל${s.system_name}`, 'פתיחה', 'בתחילת כל שיחה'],
   ['line_off', () => 'קו השמיעה אינו פעיל כרגע', 'פתיחה', 'כשהקו כבוי בהגדרות'],
   ['choose_area', () => 'בחירת אזור', 'תפריטים', 'לפני רשימת האזורים'],
   ['all_areas', () => 'לכל האזורים הקישו 0', 'תפריטים', 'בתפריט האזורים'],

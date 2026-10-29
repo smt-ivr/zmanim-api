@@ -336,7 +336,7 @@ describe('ivr listening line', () => {
     assert.ok(listenCall.ended_at, 'hang-up recorded');
     const one = await get(`/admin/phone-activity/${listenCall.id}`);
     assert.deepEqual(one.events.map((e) => e.in), [null, '2', '1', '0630']);
-    assert.match(one.events[0].say, /^שלום וברוכים הבאים/);
+    assert.match(one.events[0].say, /^בחירת אזור/); // straight to the menu, no welcome
     assert.match(one.events[3].say, /שחרית בשעה 6 וחצי בבית כנסת אהל משה/);
     assert.equal(one.events[3].screen, 'time');
     const blocked = a.calls.find((c) => c.line === 'manage');
@@ -357,7 +357,7 @@ describe('ivr listening line', () => {
 
     // recorded: the welcome, the prayer name, "בשעה", the hour and "וחצי", one synagogue — the rest stays text
     const rec = (key, path) => q(`INSERT INTO recordings (key, path) VALUES (?, ?)`, key, path).run();
-    await rec('sys:welcome', '/zmanim_rec/system/welcome');
+    await rec('sys:choose_area', '/zmanimrec/system/choosearea');
     await rec('prayer:1', '/zmanim_rec/system/prayer1');
     await rec('sys:at', '/zmanim_rec/system/at');
     await rec('hour:6', '/zmanim_rec/system/hour6');
@@ -365,7 +365,7 @@ describe('ivr listening line', () => {
     await rec('syn:1', '/zmanim_rec/synagogues/1');
     call = listen();
     body = await call.start();
-    assert.match(body, /^id_list_message=f-\/zmanim_rec\/system\/welcome&read=/);
+    assert.match(body, /^read=f-\/zmanimrec\/system\/choosearea\.t-לכל האזורים/);
     await call.press('0');
     body = await call.press('1');
     body = await call.press('00');
@@ -381,7 +381,7 @@ describe('ivr listening line', () => {
     assert.match(body, /f-\/zmanim_rec\/system\/at\.t-6\.f-\/zmanim_rec\/system\/min30/);
     // switched off in the settings: text only again
     await q(`INSERT INTO settings (key, value) VALUES ('recordings_enabled', '0')`).run();
-    assert.match(await listen().start(), /^id_list_message=t-שלום וברוכים הבאים/);
+    assert.match(await listen().start(), /^read=t-בחירת אזור/);
   });
 
   test('area, prayer, from a time: short sentences, today only', async () => {
@@ -390,7 +390,7 @@ describe('ivr listening line', () => {
     await q(`UPDATE minyanim SET location_id = 1 WHERE id = 1`).run();
     const call = listen();
     let body = await call.start();
-    assert.match(body, /^id_list_message=t-שלום וברוכים הבאים למערכת זמני התפילות&read=t-בחירת אזור\.t-לכל האזורים הקישו 0\.t-לגבעת שאול הקישו 1\.t-לרמות הקישו 2/);
+    assert.match(body, /^read=t-בחירת אזור\.t-לכל האזורים הקישו 0\.t-לגבעת שאול הקישו 1\.t-לרמות הקישו 2/);
     body = await call.press('2'); // רמות
     assert.match(body, /לשחרית הקישו 1/);
     assert.match(body, /לכל המניינים הקרובים הקישו 0/);
@@ -466,12 +466,10 @@ describe('ivr listening line', () => {
     assert.match(body, /בשעה 9 45/);
   });
 
-  test('* on the first menu says nothing and reads the menu again (no "goodbye", no empty answer)', async () => {
+  test('* on the first menu ends with "&" alone (no "goodbye")', async () => {
     const call = listen();
     await call.start();
-    const body = await call.press('*');
-    assert.match(body, /^read=t-בחירת אזור/);
-    assert.doesNotMatch(body, /להתראות/);
+    assert.equal(await call.press('*'), '&');
   });
 
   test('the line can be closed', async () => {

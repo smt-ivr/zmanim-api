@@ -14,8 +14,8 @@ import { idListMessage, readDigits, readVoice, text } from './yemot.js';
 
 export const reply = (body) => new Response(body, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
 
-/** Final message; the trailing '&' hands the call back to Yemot without go_to_folder. Never empty (see runCall). */
-export const goodbye = (messages) => `${idListMessage(messages)}&`;
+/** Final message; the trailing '&' hands the call back to Yemot without go_to_folder. Nothing to say: "&" alone. */
+export const goodbye = (messages) => (messages.length ? `${idListMessage(messages)}&` : '&');
 
 export async function readParams(request, url) {
   const merged = new URLSearchParams(url.search);
@@ -71,9 +71,6 @@ async function step(env, params, flow, context, callId) {
     ask = await answer(c, input);
   }
 
-  // Ending with nothing to say (e.g. * on the first menu): Yemot needs an answer, and an empty one is an
-  // error there; so the menu is read again and the caller simply hangs up when done.
-  if (ask.end && !c.say.length && state.screen) ask = await c.screens[state.screen].prompt(c);
   if (ask.end) {
     await flow.clear(callId);
     return { text: goodbye(c.say), input, screen, ended: true };

@@ -51,7 +51,6 @@ const toMinutes = (hhmm) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3)
 async function start(c) {
   await c.store.prune();
   await c.log.prune();
-  c.say.push(...c.voice.phrase('welcome'));
   const areas = await all(c.env, `SELECT id FROM areas`);
   return areas.length > 1 ? go(c, 'area') : go(c, 'main', { area: null });
 }
