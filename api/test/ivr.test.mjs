@@ -466,10 +466,12 @@ describe('ivr listening line', () => {
     assert.match(body, /בשעה 9 45/);
   });
 
-  test('leaving from the first menu says nothing (no "goodbye")', async () => {
+  test('* on the first menu says nothing and reads the menu again (no "goodbye", no empty answer)', async () => {
     const call = listen();
     await call.start();
-    assert.equal(await call.press('*'), '');
+    const body = await call.press('*');
+    assert.match(body, /^read=t-בחירת אזור/);
+    assert.doesNotMatch(body, /להתראות/);
   });
 
   test('the line can be closed', async () => {

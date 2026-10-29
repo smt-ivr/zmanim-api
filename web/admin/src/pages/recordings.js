@@ -165,7 +165,7 @@ function YemotSettings({ settings, onSaved, onSynced }) {
         <${Field} label="טוקן API של ימות המשיח" hint="מספר המערכת:סיסמה, או טוקן שהופק באזור האישי" error=${errors.token}>
           <${Input} dir="ltr" value=${v.token} onInput=${(x) => setV({ ...v, token: x })} placeholder="0771234567:password" /><//>
         <div />
-        <${Field} label="תיקייה למשפטים" hint="אותיות באנגלית, ספרות ומקף (-), בלי קו תחתון" error=${errors.folder}><${Input} dir="ltr" value=${v.folder} onInput=${(x) => setV({ ...v, folder: x })} /><//>
+        <${Field} label="תיקייה למשפטים" hint="אותיות באנגלית וספרות בלבד, בלי - ובלי _" error=${errors.folder}><${Input} dir="ltr" value=${v.folder} onInput=${(x) => setV({ ...v, folder: x })} /><//>
         <${Field} label="תיקייה לשמות בתי כנסת" error=${errors.syn_folder}><${Input} dir="ltr" value=${v.syn_folder} onInput=${(x) => setV({ ...v, syn_folder: x })} /><//>
       </div>
       <div class="row gap-sm wrap">

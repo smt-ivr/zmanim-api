@@ -12,7 +12,8 @@ const API = 'https://www.call2all.co.il/ym/api/';
 const MAX_AUDIO = 10 * 1024 * 1024;
 const PAGE = 50;
 
-const folderOk = (f) => /^[A-Za-z0-9-]+(\/[A-Za-z0-9-]+)*$/.test(f); // Yemot folder names: no "_"
+// Letters and digits only: Yemot does not allow "_" in folder names, and "-" splits the f-<path> message.
+const folderOk = (f) => /^[A-Za-z0-9]+(\/[A-Za-z0-9]+)*$/.test(f);
 const cleanFolder = (f) => String(f || '').trim().replace(/^ivr2:/, '').replace(/^\/+|\/+$/g, '');
 const folderOf = (s, key) => (key.startsWith('syn:') ? s.recordings_syn_folder : s.recordings_folder);
 const yemotPath = (s, key) => `ivr2:/${folderOf(s, key)}/${fileName(key)}.wav`;
@@ -99,7 +100,7 @@ export async function patchSettings({ env, request }) {
   for (const [k, col] of [['folder', 'recordings_folder'], ['syn_folder', 'recordings_syn_folder']]) {
     if (d[k] === undefined) continue;
     const f = cleanFolder(d[k]);
-    if (!folderOk(f)) throw invalid({ [k]: 'שם תיקייה: אותיות באנגלית, ספרות ומקף (-) בלבד, בלי קו תחתון. לדוגמה zmanim-rec/system' });
+    if (!folderOk(f)) throw invalid({ [k]: 'שם תיקייה: אותיות באנגלית וספרות בלבד (בלי - ובלי _), ו־/ בין תיקיות. לדוגמה zmanimrec/system' });
     out[col] = f;
   }
   await saveSettings(env, out);
@@ -132,7 +133,7 @@ export async function upload({ env, actor, params, request }) {
   const res = await fetch(`${API}UploadFile`, { method: 'POST', body }).catch(() => null);
   const data = res ? await res.json().catch(() => ({})) : {};
   if (data.responseStatus !== 'OK') throw new HttpError(502, 'YEMOT_ERROR', `ההעלאה לימות המשיח נכשלה${data.message ? `: ${data.message}` : ''}`);
-  // where Yemot actually saved it ("ivr/zmanim-rec/system/welcome.wav"), for playing: "/zmanim-rec/system/welcome"
+  // where Yemot actually saved it ("ivr/zmanimrec/system/welcome.wav"), for playing: "/zmanimrec/system/welcome"
   const saved = String(data.path || '').replace(/^ivr2?:?\/?/, '/').replace(/\.\w+$/, '') || `/${folderOf(s, key)}/${fileName(key)}`;
   const path = saved.startsWith('/') ? saved : `/${saved}`;
   await run(env, `INSERT INTO recordings (key, path, text, size, uploaded_by) VALUES (?, ?, ?, ?, ?)
