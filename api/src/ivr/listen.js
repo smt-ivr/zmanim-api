@@ -124,17 +124,23 @@ function speakPage(c) {
   return rest.length ? go(c, 'more') : go(c, 'main');
 }
 
-async function list(c, prayerId, from) {
+/**
+ * from: minutes from which to read; null = from now (the upcoming ones); 0 = the whole day.
+ * special: only minyanim set relative to a time of day (נץ, before sunset, ...), the whole day.
+ */
+async function list(c, prayerId, from, { special = false } = {}) {
   const now = israelNow(c.env);
   if (now.day === 6 && !c.settings.shabbat_enabled) {
     c.say.push(...c.voice.phrase('no_list_today'));
     return go(c, 'main');
   }
   const start = from ?? now.minutes;
-  const { sentences: rest, count } = sentences(await todaysMinyanim(c, now, prayerId), now, start, placeOf(c.settings));
+  const rows = (await todaysMinyanim(c, now, prayerId)).filter((r) => !special || r.time_kind === 'relative');
+  const { sentences: rest, count } = sentences(rows, now, special ? 0 : start, placeOf(c.settings));
   await c.log?.search(c.callId, { area: c.state.data.area, prayer: prayerId, from, found: count }).catch((e) => console.error('[ivr] log', e));
   if (!rest.length) {
-    if (from === null) c.say.push(...c.voice.phrase('none_more'));
+    if (special) c.say.push(...c.voice.phrase('none_special'));
+    else if (from === null) c.say.push(...c.voice.phrase('none_more'));
     else if (from === 0) c.say.push(...c.voice.phrase('none_today'));
     else {
       const w = clockWords(start);
@@ -195,10 +201,17 @@ const SCREENS = {
 
   time: {
     back: 'main',
-    prompt: (c) => ({ ...number([]), messages: ['time_1', 'time_2', 'time_3', 'time_4'].flatMap((k) => c.voice.phrase(k)), opts: { min: 1, max: 4 } }),
+    // "נא בחרו את השעה הרצויה וסולמית לסיום ... 0: special times (נץ / not at a fixed time), 00: upcoming, 000: the whole day"
+    async prompt(c) {
+      const special = await all(c.env, `SELECT DISTINCT a.calc FROM minyanim m LEFT JOIN anchors a ON a.id = m.anchor_id
+        WHERE m.prayer_id = ? AND m.time_kind = 'relative' AND m.is_active = 1`, c.state.data.prayerId);
+      const zero = !special.length ? [] : special.every((r) => r.calc === 'sunrise') ? ['special_netz'] : ['special_other'];
+      return { ...number([]), messages: ['time_choose', 'time_hash', 'time_2', ...zero, 'time_soon', 'time_all'].flatMap((k) => c.voice.phrase(k)), opts: { min: 1, max: 4 } };
+    },
     handle(c, input) {
-      if (input === '0') return list(c, c.state.data.prayerId, null);
-      if (input === '00') return list(c, c.state.data.prayerId, 0);
+      if (input === '0') return list(c, c.state.data.prayerId, 0, { special: true });
+      if (input === '00') return list(c, c.state.data.prayerId, null);
+      if (input === '000') return list(c, c.state.data.prayerId, 0);
       const from = parseClock(input);
       return from === null ? invalid(c) : list(c, c.state.data.prayerId, from);
     },

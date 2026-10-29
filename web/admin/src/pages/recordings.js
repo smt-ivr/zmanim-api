@@ -3,7 +3,7 @@
 // A recording can be paused (read by text-to-speech again) without deleting it. Whatever has no
 // recording keeps being read by text-to-speech.
 import { api, fetchBlob } from '../api.js';
-import { cx, html, timeAgo, useEffect, useRef, useState } from '../lib.js';
+import { cx, html, norm, timeAgo, useEffect, useRef, useState } from '../lib.js';
 import { Badge, Button, Empty, ErrorBox, Field, Icon, Input, Pager, Spinner, Toggle, confirm, toast, toastError, useDebounced, useLoad } from '../ui.js';
 
 const enc = encodeURIComponent;
@@ -84,12 +84,14 @@ export function RecordingsPage() {
   const { data, error, loading, reload, setData } = useLoad(() => api.get('/admin/recordings'));
   const [tab, setTab] = useState('phrases');
   const [show, setShow] = useState('all');
+  const [q, setQ] = useState('');
   if (loading && !data) return html`<div class="page"><${Spinner} /></div>`;
   if (error && !data) return html`<div class="page"><${ErrorBox} error=${error} onRetry=${reload} /></div>`;
   const ready = Boolean(data.settings.token);
   const done = data.items.filter((i) => i.recorded).length;
   const changed = (it) => setData((d) => ({ ...d, items: d.items.map((x) => (x.key === it.key ? it : x)) }));
-  const shown = data.items.filter((i) => show === 'all' || (show === 'missing' ? !i.recorded : i.recorded));
+  const shown = data.items.filter((i) => (show === 'all' || (show === 'missing' ? !i.recorded : i.recorded))
+    && (!q || norm(`${i.text} ${i.group} ${i.where}`).includes(norm(q))));
   const groups = [...new Set(shown.map((i) => i.group))];
 
   return html`<div class="page">
@@ -109,8 +111,11 @@ export function RecordingsPage() {
       <button class=${cx('tab', tab === 'syn' && 'active')} onClick=${() => setTab('syn')}>שמות בתי כנסת<span class="count">${data.synagogues.total}</span></button>
     </div>
     ${tab === 'phrases' ? html`
-      <div class="toolbar"><div class="segmented">${[['all', 'הכל'], ['missing', 'חסרים'], ['done', 'הוקלטו']].map(([k, l]) =>
-        html`<button class=${cx(show === k && 'on')} onClick=${() => setShow(k)}>${l}</button>`)}</div>
+      <div class="toolbar filters">
+        <div class="search"><${Icon} name="search" /><input class="input" placeholder="חיפוש משפט או מילה…" value=${q} onInput=${(e) => setQ(e.currentTarget.value)} /></div>
+        <div class="segmented">${[['all', 'הכל'], ['missing', 'חסרים'], ['done', 'הוקלטו']].map(([k, l]) =>
+        html`<button class=${cx(show === k && 'on')} onClick=${() => setShow(k)}>${l}</button>`)}</div></div>
+      <div class="toolbar">
         <span class="muted small grow">מעלים קובץ שמע לכל שורה (wav, mp3, m4a ועוד). מקליטים בדיוק את מה שכתוב; מספרים נאמרים כמילים (8 = "שמונה"). "השהיה" משאירה את הקובץ אבל משמיעה את השורה בקול המחשב.</span></div>
       ${groups.length === 0 ? html`<${Empty} icon="mic" title="אין כאן כלום" />` : groups.map((g) => html`<section class="card rec-group" key=${g}>
         <h3>${g}</h3>

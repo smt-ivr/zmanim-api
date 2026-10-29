@@ -354,7 +354,7 @@ describe('ivr listening line', () => {
     await call.start();
     await call.press('0'); // all areas
     let body = await call.press('1'); // שחרית
-    body = await call.press('00');
+    body = await call.press('000');
     assert.match(body, /t-שחרית בשעה 6 וחצי באהל משה ובזכרון משה ספרדי ובישיבת מיר\.t-שחרית בשעה 7 בזכרון משה/); // the location as is, no ב
 
     // recorded: the welcome, the prayer name, "בשעה", the hour and "וחצי", one synagogue — the rest stays text
@@ -370,7 +370,7 @@ describe('ivr listening line', () => {
     assert.match(body, /^read=f-\/zmanimrec\/system\/choosearea\.t-לכל האזורים/);
     await call.press('0');
     body = await call.press('1');
-    body = await call.press('00');
+    body = await call.press('000');
     assert.match(body, /f-\/zmanim_rec\/system\/prayer1\.f-\/zmanim_rec\/system\/at\.f-\/zmanim_rec\/system\/hour6\.f-\/zmanim_rec\/system\/min30\.t-ב\.f-\/zmanim_rec\/synagogues\/1\.t-ובזכרון משה ספרדי ובישיבת מיר\.f-\/zmanim_rec\/system\/prayer1\.f-\/zmanim_rec\/system\/at\.t-7 בזכרון משה&/);
     assert.match(body, /read=t-בחירת תפילה\.t-לכל המניינים הקרובים הקישו 0\.f-\/zmanim_rec\/system\/prayer1\.t-הקישו 1\.t-למנחה הקישו 2/, 'menu: recorded name, then "press 1"');
     // a location name is recorded once, by its name
@@ -380,7 +380,7 @@ describe('ivr listening line', () => {
     await call.start();
     await call.press('0');
     await call.press('1');
-    body = await call.press('00');
+    body = await call.press('000');
     assert.match(body, /t-ובזכרון משה\.f-\/zmanimrec\/system\/locsfardi\.t-ובישיבת מיר/);
     // one recording paused: that word is read as text again, the others still play
     await q(`UPDATE recordings SET paused = 1 WHERE key = 'hour:6'`).run();
@@ -388,7 +388,7 @@ describe('ivr listening line', () => {
     await call.start();
     await call.press('0');
     await call.press('1');
-    body = await call.press('00');
+    body = await call.press('000');
     assert.match(body, /f-\/zmanim_rec\/system\/at\.t-6\.f-\/zmanim_rec\/system\/min30/);
     // switched off in the settings: text only again
     await q(`INSERT INTO settings (key, value) VALUES ('recordings_enabled', '0')`).run();
@@ -406,9 +406,9 @@ describe('ivr listening line', () => {
     assert.match(body, /לשחרית הקישו 1/);
     assert.match(body, /לכל המניינים הקרובים הקישו 0/);
     body = await call.press('1'); // שחרית
-    assert.match(body, /t-הקישו שעה וסולמית\.t-אפשר להקיש גם דקות, אבל לא חובה/);
+    assert.match(body, /read=t-נא בחרו את השעה הרצויה\.t-וסולמית לסיום\.t-אפשר להקיש גם דקות, אבל לא חובה/);
     assert.doesNotMatch(body, /בחירת יום|ליום/); // no day question
-    assert.match(body, /לכל המניינים של היום מההתחלה הקישו 0 0 וסולמית/);
+    assert.match(body, /למניינים הקרובים הקישו 0 0 וסולמית\.t-לכל המניינים של היום הקישו 0 0 0 וסולמית=/); // the whole day: last
     body = await call.press('0630');
     assert.match(body, /t-שחרית בשעה 6 וחצי באהל משה עזרת נשים&/);
     assert.doesNotMatch(body, /זכרון משה/); // other area
@@ -453,16 +453,34 @@ describe('ivr listening line', () => {
     await call.start();
     await call.press('0');
     await call.press('1'); // שחרית
-    let body = await call.press('00');
+    let body = await call.press('000');
     assert.match(body, /t-שחרית בשעה 6 וחצי באהל משה\.t-שחרית בשעה 7 בזכרון משה\.t-שחרית 30 דקות לפני סוף זמן קריאת שמע באהל משה/);
     await q(`INSERT INTO minyanim (synagogue_id, prayer_id, time_kind, time, days, season_id) VALUES (2, 2, 'fixed', '13:30', 127, 1), (2, 2, 'fixed', '19:30', 127, 1)`).run();
-    await call.press('2'); // מנחה
-    body = await call.press('00');
+    // 0: only the minyanim at special times (relative to a time of day), the whole day
+    await call.press('1');
+    body = await call.press('0');
+    assert.match(body, /^id_list_message=t-שחרית 30 דקות לפני סוף זמן קריאת שמע באהל משה&read=t-בחירת תפילה/);
+    body = await call.press('2'); // מנחה: not at fixed times
+    assert.match(body, /למניינים שלא בזמנים קבועים הקישו 0\.t-למניינים הקרובים/);
+    body = await call.press('000');
     assert.match(body, /t-מנחה בשעה 13 וחצי בזכרון משה\.t-מנחה 15 דקות לפני שקיעה באהל משה\.t-מנחה בשעה 19 וחצי בזכרון משה/, 'ordered by today\'s sunset');
     await call.press('2');
     body = await call.press('19');
     assert.match(body, /t-מנחה בשעה 19 וחצי בזכרון משה/);
     assert.doesNotMatch(body, /לפני שקיעה/, 'mincha before sunset is earlier than 19:00');
+  });
+
+  test('0 on the time menu: "בנץ" when the special minyanim of the prayer are all at sunrise', async () => {
+    env.FIXED_NOW = at(findDay(false), '05:00');
+    const sunrise = (await q(`SELECT id FROM anchors WHERE calc = 'sunrise'`).first()).id;
+    await q(`INSERT INTO minyanim (synagogue_id, prayer_id, time_kind, anchor_id, offset_minutes, days, season_id) VALUES (1, 1, 'relative', ?, 0, 127, 1)`).bind(sunrise).run();
+    const call = listen();
+    await call.start();
+    await call.press('0');
+    let body = await call.press('1');
+    assert.match(body, /t-אפשר להקיש גם דקות, אבל לא חובה\.t-למניינים בנץ הקישו 0\.t-למניינים הקרובים/);
+    body = await call.press('0');
+    assert.match(body, /^id_list_message=t-שחרית בהנץ החמה באהל משה&/);
   });
 
   test('long lists are read in pages', async () => {
