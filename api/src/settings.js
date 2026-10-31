@@ -26,6 +26,7 @@ export const SETTINGS = {
   registration_notify: { type: 'bool', default: true },   // e-mail the approvers about each verified request
   registration_blocklist: { type: 'text', default: '', max: 5000 }, // one per line: e-mail, @domain, phone or IP
   recordings_enabled: { type: 'bool', default: true },   // play uploaded recordings instead of text-to-speech
+  recordings_manage_enabled: { type: 'bool', default: true }, // ... also on the management line
   yemot_token: { type: 'secret', default: '', max: 300 },  // Yemot API token for uploading recordings
   recordings_folder: { type: 'text', default: 'zmanimrec/system', max: 100 },     // Yemot folder of the sentences
   recordings_syn_folder: { type: 'text', default: 'zmanimrec/synagogues', max: 100 }, // Yemot folder of synagogue names

@@ -88,9 +88,13 @@ export function RecordingsPage() {
   if (loading && !data) return html`<div class="page"><${Spinner} /></div>`;
   if (error && !data) return html`<div class="page"><${ErrorBox} error=${error} onRetry=${reload} /></div>`;
   const ready = Boolean(data.settings.token);
-  const done = data.items.filter((i) => i.recorded).length;
+  const lineItems = (line) => data.items.filter((i) => (i.line || 'listen') === line);
+  const listen = lineItems('listen');
+  const manage = lineItems('manage');
+  const done = listen.filter((i) => i.recorded).length;
+  const manageDone = manage.filter((i) => i.recorded).length;
   const changed = (it) => setData((d) => ({ ...d, items: d.items.map((x) => (x.key === it.key ? it : x)) }));
-  const shown = data.items.filter((i) => (show === 'all' || (show === 'missing' ? !i.recorded : i.recorded))
+  const shown = (tab === 'manage' ? manage : listen).filter((i) => (show === 'all' || (show === 'missing' ? !i.recorded : i.recorded))
     && (!q || norm(`${i.text} ${i.group} ${i.where}`).includes(norm(q))));
   const groups = [...new Set(shown.map((i) => i.group))];
 
@@ -99,18 +103,22 @@ export function RecordingsPage() {
       <p class="muted">מה שתקליטו כאן יושמע בקו השמיעה בקול שלכם, במקום קול המחשב. מה שלא הוקלט ממשיך להיקרא כרגיל.</p></div></header>
     <${YemotSettings} settings=${data.settings} webhook=${data.webhook} onSaved=${(s) => setData((d) => ({ ...d, settings: s }))} onSynced=${reload} />
     <div class="stats">
-      <div class="card stat"><span class="stat-icon"><${Icon} name="mic" size=${20} /></span><div><div class="stat-value">${done} / ${data.items.length}</div><div class="muted small">משפטים ומילים הוקלטו</div>
-        <div class="rec-meter"><span style=${`width:${(done / Math.max(1, data.items.length)) * 100}%`} /></div></div></div>
+      <div class="card stat"><span class="stat-icon"><${Icon} name="mic" size=${20} /></span><div><div class="stat-value">${done} / ${listen.length}</div><div class="muted small">קו השמיעה: משפטים ומילים</div>
+        <div class="rec-meter"><span style=${`width:${(done / Math.max(1, listen.length)) * 100}%`} /></div></div></div>
       <div class="card stat"><span class="stat-icon"><${Icon} name="building" size=${20} /></span><div><div class="stat-value">${data.synagogues.recorded} / ${data.synagogues.total}</div><div class="muted small">שמות בתי כנסת הוקלטו</div>
         <div class="rec-meter"><span style=${`width:${(data.synagogues.recorded / Math.max(1, data.synagogues.total)) * 100}%`} /></div></div></div>
+      <div class="card stat"><span class="stat-icon"><${Icon} name="key" size=${20} /></span><div><div class="stat-value">${manageDone} / ${manage.length}</div><div class="muted small">קו הניהול</div>
+        <div class="rec-meter"><span style=${`width:${(manageDone / Math.max(1, manage.length)) * 100}%`} /></div></div></div>
     </div>
     ${!ready && html`<div class="alert alert-info">כדי להעלות הקלטות, הזינו קודם למעלה את הטוקן של ימות המשיח.</div>`}
     ${data.errors > 0 && html`<div class="alert alert-error">${data.errors === 1 ? 'הקלטה אחת לא הושמעה בקו' : `${data.errors} הקלטות לא הושמעו בקו`} (ימות המשיח דיווחו על שגיאה). הן הושהו ונשמעות בקול המחשב עד שתעלו אותן מחדש. מסומנות באדום ברשימה.</div>`}
     <div class="tabs">
-      <button class=${cx('tab', tab === 'phrases' && 'active')} onClick=${() => setTab('phrases')}>משפטים ומילים<span class="count">${data.items.length}</span></button>
+      <button class=${cx('tab', tab === 'phrases' && 'active')} onClick=${() => setTab('phrases')}>משפטים ומילים<span class="count">${listen.length}</span></button>
       <button class=${cx('tab', tab === 'syn' && 'active')} onClick=${() => setTab('syn')}>שמות בתי כנסת<span class="count">${data.synagogues.total}</span></button>
+      <button class=${cx('tab', tab === 'manage' && 'active')} onClick=${() => setTab('manage')}>קו הניהול<span class="count">${manage.length}</span></button>
     </div>
-    ${tab === 'phrases' ? html`
+    ${tab === 'manage' && !data.settings.manage_enabled && html`<div class="alert alert-info">השמעת ההקלטות בקו הניהול כבויה (בהגדרות למעלה). אפשר להעלות, והן יושמעו כשתדליקו.</div>`}
+    ${tab !== 'syn' ? html`
       <div class="toolbar filters">
         <div class="search"><${Icon} name="search" /><input class="input" placeholder="חיפוש משפט או מילה…" value=${q} onInput=${(e) => setQ(e.currentTarget.value)} /></div>
         <div class="segmented">${[['all', 'הכל'], ['missing', 'חסרים'], ['done', 'הוקלטו']].map(([k, l]) =>
@@ -160,11 +168,13 @@ function YemotSettings({ settings, webhook, onSaved, onSynced }) {
   const run = async (what, fn) => { setBusy(what); try { await fn(); } catch (e) { e.fields && Object.keys(e.fields).length ? setErrors(e.fields) : toastError(e); } setBusy(''); };
   const save = () => run('save', async () => { setErrors({}); const s = await api.patch('/admin/recordings/settings', v); onSaved(s); setV({ token: s.token, folder: s.folder, syn_folder: s.syn_folder }); toast('נשמר'); });
   const enabled = (on) => run('toggle', async () => { onSaved(await api.patch('/admin/recordings/settings', { enabled: on })); toast(on ? 'ההקלטות מושמעות בקו' : 'הקו חוזר לקול המחשב בלבד'); });
+  const manageOn = (on) => run('toggle', async () => { onSaved(await api.patch('/admin/recordings/settings', { manage_enabled: on })); toast(on ? 'ההקלטות מושמעות גם בקו הניהול' : 'קו הניהול בקול המחשב בלבד'); });
   return html`<div class="card yemot-settings">
     <div class="row gap-sm wrap">
       <span class="stat-icon"><${Icon} name="phone" size=${18} /></span>
       <div class="grow"><b>חיבור לימות המשיח</b><div class="muted small">${settings.token ? `טוקן ${settings.token} · תיקיות ${settings.folder}, ${settings.syn_folder}` : 'לא הוגדר טוקן'}</div></div>
-      <${Toggle} checked=${settings.enabled} onChange=${enabled} label="השמעת ההקלטות בקו" disabled=${busy === 'toggle'} />
+      <${Toggle} checked=${settings.enabled} onChange=${enabled} label="השמעת ההקלטות" disabled=${busy === 'toggle'} />
+      <${Toggle} checked=${settings.manage_enabled} onChange=${manageOn} label="גם בקו הניהול" disabled=${busy === 'toggle' || !settings.enabled} />
       <${Button} small kind="ghost" icon=${open ? 'up' : 'settings'} onClick=${() => setOpen(!open)}>${open ? 'סגירה' : 'הגדרות'}<//>
     </div>
     ${open && html`<div class="yemot-form">

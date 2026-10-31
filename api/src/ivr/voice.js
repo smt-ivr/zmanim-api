@@ -4,6 +4,7 @@
 // and the words of a time ("8", "וחצי") can be recorded too.
 import { all } from '../db.js';
 import { text } from './yemot.js';
+import { MANAGE_PHRASES } from './managePhrases.js';
 
 // ------------------------------------------------------------------ what can be recorded
 /** Fixed sentences of the listening line. `where`: shown in the admin next to the sentence. */
@@ -89,6 +90,7 @@ export async function catalog(env, settings) {
       { key: `anchor:${a.id}`, text: a.name, group: 'זמני היום', where: `"15 דקות לפני ${a.name}"` },
     ]),
     ...locations.filter((l) => l.name).map((l) => ({ key: locationKey(l.name), text: l.name, group: 'שמות מיקומים', where: `אחרי שם בית הכנסת (${l.n === 1 ? 'בבית כנסת אחד' : `ב־${l.n} בתי כנסת`})` })),
+    ...MANAGE_PHRASES.map((t) => ({ key: manageKey(t), text: t, group: 'קו הניהול', where: t.startsWith('ל') && !t.includes(' ') ? 'אפשרות בתפריט, ואחריה "הקישו"' : 'קו הניהול', line: 'manage' })),
     ...WEEKDAYS.map((w, i) => ({ key: `wday:${i}`, text: w, group: 'תאריך', where: 'בתחילת השיחה: "יום ראשון", כ״ט בתשרי' })),
     ...Array.from({ length: 30 }, (_, i) => ({ key: `hday:${i + 1}`, text: hebrewDay(i + 1), group: 'תאריך', where: `יום ראשון, "${hebrewDay(i + 1)}" בתשרי` })),
     ...HEB_MONTHS.map((m, i) => ({ key: `hmonth:${i}`, text: `ב${m}`, group: 'תאריך', where: `יום ראשון, כ״ט "ב${m}"` })),
@@ -97,11 +99,38 @@ export async function catalog(env, settings) {
   ];
 }
 
-/** A location is recorded once by its name ("ספרדי" in every synagogue): key "loc:<hash of the name>". */
-export function locationKey(name) {
+const hash = (s) => {
   let h = 0x811c9dc5;
-  for (const ch of String(name).trim()) { h ^= ch.codePointAt(0); h = Math.imul(h, 0x01000193) >>> 0; }
-  return `loc:${h.toString(16)}`;
+  for (const ch of String(s).trim()) { h ^= ch.codePointAt(0); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h.toString(16);
+};
+/** A location is recorded once by its name ("ספרדי" in every synagogue): key "loc:<hash of the name>". */
+export const locationKey = (name) => `loc:${hash(name)}`;
+/** A sentence of the management line, by its text as spoken (after the Yemot clean-up): "m:<hash>". */
+export const manageKey = (sentence) => `m:${hash(text(sentence).slice(2))}`;
+
+/**
+ * The management line speaks plain text; with recordings on there, each message that is exactly a
+ * recorded sentence plays the file, and a menu item "ל<label> הקישו <d>" plays "ל<label>" + "הקישו <d>".
+ * Returns a function over the Yemot message parts, or null when there is nothing to play.
+ */
+export async function manageVoice(env, settings) {
+  if (!settings.recordings_enabled || !settings.recordings_manage_enabled) return null;
+  const rows = await all(env, `SELECT key, path FROM recordings WHERE paused = 0 AND (key LIKE 'm:%' OR key LIKE 'sys:press_%')`);
+  if (!rows.length) return null;
+  const files = new Map(rows.map((r) => [r.key, r.path]));
+  const file = (key) => files.get(key);
+  return (parts) => parts.flatMap((p) => {
+    if (!p.startsWith('t-')) return [p];
+    const t = p.slice(2);
+    const whole = file(`m:${hash(t)}`);
+    if (whole) return [`f-${whole}`];
+    const item = /^(ל.+) הקישו (\d)$/.exec(t);
+    const label = item && file(`m:${hash(item[1])}`);
+    if (!label) return [p];
+    const press = file(`sys:press_${item[2]}`);
+    return [`f-${label}`, press ? `f-${press}` : `t-הקישו ${item[2]}`];
+  });
 }
 
 /** File name in the Yemot folder for a key: letters and digits only ("sys:welcome" -> "welcome", "prayer:3" -> "prayer3"). */

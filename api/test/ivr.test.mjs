@@ -296,6 +296,27 @@ describe('ivr management', () => {
   });
 });
 
+describe('management line recordings', () => {
+  test('the list of its sentences is up to date with the code', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { extract, render } = await import('../../scripts/manage-phrases.mjs');
+    const dir = new URL('../src/ivr/', import.meta.url);
+    const fresh = render(extract(['flow.js', 'engine.js'].map((f) => readFileSync(new URL(f, dir), 'utf8'))));
+    assert.equal(readFileSync(new URL('managePhrases.js', dir), 'utf8'), fresh, 'run: node scripts/manage-phrases.mjs > api/src/ivr/managePhrases.js');
+  });
+
+  test('a recorded sentence plays; a menu item plays its label + "הקישו"; can be switched off', async () => {
+    const { manageKey } = await import('../src/ivr/voice.js');
+    await q(`INSERT INTO recordings (key, path) VALUES (?, '/zmanimrec/system/mmenu'), (?, '/zmanimrec/system/mchoose'), ('sys:press_1', '/zmanimrec/system/press1')`)
+      .bind(manageKey('תפריט ראשי'), manageKey('לבחירת בית כנסת')).run();
+    let body = await yemotCall('0583206823').start();
+    assert.match(body, /^read=t-שלום מנהל על\.f-\/zmanimrec\/system\/mmenu\.f-\/zmanimrec\/system\/mchoose\.f-\/zmanimrec\/system\/press1\.t-להוספת בית כנסת הקישו 2/);
+    await q(`INSERT INTO settings (key, value) VALUES ('recordings_manage_enabled', '0')`).run();
+    body = await yemotCall('0583206823').start();
+    assert.match(body, /^read=t-שלום מנהל על\.t-תפריט ראשי\.t-לבחירת בית כנסת הקישו 1/);
+  });
+});
+
 describe('ivr listening line', () => {
   const listen = (phone = '0501111111') => yemotCall(phone, { path: '/api/ivr/listen', key: '' });
 

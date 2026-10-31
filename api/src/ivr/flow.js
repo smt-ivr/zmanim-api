@@ -11,6 +11,7 @@ import { normalizePhone } from '../validate.js';
 import { callStore, chosenIndex, end, go, goodbye, invalid, listChoice, menu, number, numberedList, readParams, reply, runCall } from './engine.js';
 import { speakMinyan as speakFull, speakPhone, text } from './yemot.js';
 import { callLog } from './callLog.js';
+import { manageVoice } from './voice.js';
 
 const PASSWORD_LIMIT = { max: 5, window: 30 * 60, lock: 30 * 60 };
 
@@ -44,7 +45,7 @@ async function handle(env, params) {
   }
 
   const store = callStore(env, 'ivr_calls', { user_id: user.id });
-  const flow = { ...store, screens: SCREENS, start, recover: goSynagogueOrHome, log: callLog(env, { line: 'manage', phone, userId: user.id }) };
+  const flow = { ...store, screens: SCREENS, start, recover: goSynagogueOrHome, log: callLog(env, { line: 'manage', phone, userId: user.id }), voice: await manageVoice(env, settings) };
   return runCall(env, params, flow, { user, actor: await actorFor(env, user), settings, store });
 }
 

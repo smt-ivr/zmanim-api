@@ -53,7 +53,7 @@ async function itemOf(env, s, key) {
 }
 
 const settingsView = (s) => ({
-  enabled: s.recordings_enabled, folder: s.recordings_folder, syn_folder: s.recordings_syn_folder, token: publicView(s).yemot_token,
+  enabled: s.recordings_enabled, manage_enabled: s.recordings_manage_enabled, folder: s.recordings_folder, syn_folder: s.recordings_syn_folder, token: publicView(s).yemot_token,
 });
 
 /** Playable by Yemot: letters, digits and "/" only ("-" splits the f-<path> message, "_" is not allowed). */
@@ -104,6 +104,7 @@ export async function patchSettings({ env, request }) {
   const d = await request.json().catch(() => ({}));
   const out = {};
   if (typeof d.enabled === 'boolean') out.recordings_enabled = d.enabled;
+  if (typeof d.manage_enabled === 'boolean') out.recordings_manage_enabled = d.manage_enabled;
   if (typeof d.token === 'string' && !d.token.includes('••••')) out.yemot_token = d.token.trim().slice(0, 300);
   for (const [k, col] of [['folder', 'recordings_folder'], ['syn_folder', 'recordings_syn_folder']]) {
     if (d[k] === undefined) continue;
