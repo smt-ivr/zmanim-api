@@ -14,6 +14,8 @@ import { callLog } from './callLog.js';
 import { clockWords, loadVoice, placeWords } from './voice.js';
 import { normalizePhone } from '../validate.js';
 
+const CHUNK = 6; // minyanim per read; the next ones follow after a second of silence
+
 export async function handleListen({ env, request, url }) {
   let voice = null;
   try {
@@ -144,7 +146,7 @@ async function list(c, prayerId, from, { special = false, back = 'main' } = {}) 
     return go(c, back); // nothing found: one step back too
   }
   // the minyanim are read inside the read (not as a message before it): any key stops and goes one step back
-  return go(c, 'results', { rest, roshChodesh: now.roshChodesh, back });
+  return go(c, 'results', { rest, roshChodesh: now.roshChodesh, started: false, back });
 }
 
 /** "730" / "0730" -> 450 minutes; "7" / "07" -> a whole hour. Null when not a time. */
@@ -217,15 +219,21 @@ const SCREENS = {
     },
   },
 
-  // The minyanim, read as the read's own prompt: whatever key is pressed (or none, when the reading ends)
-  // goes one step back — to the time menu, or to the prayer menu when "all upcoming" was chosen there.
+  // The minyanim, read as the read's own prompt, a few at a time: when nothing is pressed for a second
+  // (Yemot sends the empty value) the next few follow, so a long list sounds continuous. Any key goes
+  // one step back — to the time menu, or to the prayer menu when "all upcoming" was chosen there.
   results: {
     back: (c) => go(c, c.state.data.back || 'main'),
-    empty: (c) => go(c, c.state.data.back || 'main'),
-    prompt: (c) => ({
-      messages: [...(c.state.data.roshChodesh ? c.voice.phrase('rosh_chodesh') : []), ...c.state.data.rest.flatMap((x) => c.voice.sentence(x))],
-      opts: { max: 1, min: 1, wait: 5, attempts: 1 },
-    }),
+    empty: (c) => (c.state.data.rest.length ? go(c, 'results') : go(c, c.state.data.back || 'main')),
+    prompt(c) {
+      const first = c.state.data.roshChodesh && !c.state.data.started;
+      c.state.data.started = true;
+      const chunk = c.state.data.rest.splice(0, CHUNK);
+      return {
+        messages: [...(first ? c.voice.phrase('rosh_chodesh') : []), ...chunk.flatMap((x) => c.voice.sentence(x))],
+        opts: { max: 1, min: 1, wait: 1, attempts: 1 },
+      };
+    },
     handle: (c) => go(c, c.state.data.back || 'main'),
   },
 };

@@ -61,7 +61,7 @@ describe('ivr access', () => {
   test('admin gets the main menu; read syntax is well formed; hangup clears state', async () => {
     const call = yemotCall('+972583206823');
     const body = await call.start();
-    assert.match(body, /^id_list_message=t-שלום מנהל על&read=t-תפריט ראשי\.t-לבחירת בית כנסת/);
+    assert.match(body, /^read=t-שלום מנהל על\.t-תפריט ראשי\.t-לבחירת בית כנסת/);
     assert.match(body, /=s1,no,1,1,10,No,no,no,,,2,Ok,None,$/);
     assert.equal(await call.hangup(), '');
     assert.equal((await q(`SELECT COUNT(*) AS n FROM ivr_calls`).first()).n, 0);
@@ -77,7 +77,7 @@ describe('ivr access', () => {
     const first = await call.start();
     // Same request again (no answer for s1): the same question comes back
     const repeat = await worker.fetch(new Request(`https://x.test/api/ivr?${new URLSearchParams({ ApiCallId: `call-${callSeq}`, ApiPhone: '0583206823', key: KEY })}`), env);
-    assert.equal(await repeat.text(), first.split('&').at(-1));
+    assert.equal(await repeat.text(), first.replace('t-שלום מנהל על.', ''), 'the greeting is not repeated');
     const body = await call.press('7');
     assert.match(body, /הקשה לא חוקית/);
     assert.match(body, /=s2,/);
@@ -126,7 +126,7 @@ describe('ivr management', () => {
     // the manager calls: goes straight into the synagogue
     const m = yemotCall('052-111-2233');
     body = await m.start();
-    assert.match(body, /read=t-אהל משה, זמני קיץ\./); // the season being worked on is announced
+    assert.match(body, /t-אהל משה, זמני קיץ\./); // the season being worked on is announced
     assert.doesNotMatch(body, /הגדרות בית הכנסת/); // admin-only option hidden
 
     // add: shacharit 06:30, every day, (no locations), into the season being worked on
@@ -188,7 +188,7 @@ describe('ivr management', () => {
     await call.press('0');
     body = await call.press('1'); // save
     assert.match(body, /שחרית לא אחרי 12:00/);
-    assert.match(body, /read=t-בית כנסת/); // back in the synagogue menu
+    assert.match(body, /t-בית כנסת, זמני/); // back in the synagogue menu
   });
 
   test('edit: hide, change time, delete; quotas respected', async () => {
@@ -419,7 +419,7 @@ describe('ivr listening line', () => {
     assert.match(body, /^read=t-שחרית\.t-נא בחרו את השעה הרצויה/);
     body = await call.press('7'); // hour only
     assert.match(body, /t-שחרית בשעה 7 בזכרון משה|אין מניינים מהשעה 7/);
-    assert.match(body, /read=t-שחרית\.t-נא בחרו/, 'nothing found: back to the time menu');
+    assert.match(body, /t-שחרית\.t-נא בחרו/, 'nothing found: back to the time menu');
     body = await call.press('0631');
     assert.match(body, /אין מניינים מהשעה 6 31/);
   });
@@ -499,20 +499,24 @@ describe('ivr listening line', () => {
     assert.match(body, /t-לכל האזורים\.f-\/zmanimrec\/system\/press0\.t-לגבעת שאול/);
   });
 
-  test('the whole list is read in one go; any key, or none, goes one step back', async () => {
+  test('long lists: a few at a time, the next ones after a second of silence; any key goes one step back', async () => {
     env.FIXED_NOW = at(findDay(false), '05:00');
     for (let i = 0; i < 10; i++) await q(`INSERT INTO minyanim (synagogue_id, prayer_id, time_kind, time, days, season_id) VALUES (2, 1, 'fixed', ?, 127, 1)`).bind(`09:${String(i * 5).padStart(2, '0')}`).run();
     const call = listen();
     await call.start();
     await call.press('0');
     let body = await call.press('0'); // all upcoming, from the prayer menu
-    assert.match(body, /^read=t-שחרית בשעה 6 וחצי[^&]*בשעה 9 45[^&]*=s\d+,no,1,1,5,/);
-    assert.doesNotMatch(body, /להמשך|id_list_message/);
-    body = await call.press('7');
-    assert.match(body, /^read=t-בחירת תפילה/, 'back to where the list was asked for');
-    await call.press('0');
-    body = await call.press('None'); // the reading ended, nothing pressed
+    assert.match(body, /^read=t-שחרית בשעה 6 וחצי[^&]*בשעה 9 ורבע בזכרון משה=s\d+,no,1,1,1,/, 'six, then wait one second');
+    assert.doesNotMatch(body, /9 20|להמשך|id_list_message/);
+    body = await call.press('None'); // a second of silence: the next ones
+    assert.match(body, /^read=t-שחרית בשעה 9 20[^&]*9 45 בזכרון משה=s\d+,no,1,1,1,/);
+    body = await call.press('None');
+    assert.match(body, /^read=t-מנחה 15 דקות לפני שקיעה באהל משה=/);
+    body = await call.press('None'); // the end of the list: one step back
     assert.match(body, /^read=t-בחירת תפילה/);
+    await call.press('0');
+    body = await call.press('7'); // a key in the middle: back
+    assert.match(body, /^read=t-בחירת תפילה/, 'back to where the list was asked for');
   });
 
   test('* on the first menu ends with "&" alone (no "goodbye")', async () => {

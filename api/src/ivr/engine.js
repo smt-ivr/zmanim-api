@@ -71,16 +71,19 @@ async function step(env, params, flow, context, callId) {
     ask = await answer(c, input);
   }
 
+  const voice = flow.voice ? (parts) => flow.voice(parts) : (parts) => parts; // recordings instead of text (voice.js)
   if (ask.end) {
     await flow.clear(callId);
-    return { text: goodbye(c.say), input, screen, ended: true };
+    return { text: goodbye(voice(c.say)), input, screen, ended: true };
   }
   state.step += 1;
   const val = `s${state.step}`;
-  const read = ask.voice ? readVoice(ask.messages, val) : readDigits(ask.messages, val, ask.opts);
-  state.prompt = read; // a repeat does not replay one-time announcements
+  // What there is to say (e.g. "saved") is read as part of the next question, not as a separate message
+  // before it: one read, which a key press can interrupt.
+  const build = (messages) => (ask.voice ? readVoice(voice(messages), val) : readDigits(voice(messages), val, ask.opts));
+  state.prompt = build(ask.messages); // a repeat does not replay one-time announcements
   await flow.save(callId, state);
-  return { text: [c.say.length && idListMessage(c.say), read].filter(Boolean).join('&'), input, screen };
+  return { text: c.say.length ? build([...c.say, ...ask.messages]) : state.prompt, input, screen };
 }
 
 async function answer(c, input) {
