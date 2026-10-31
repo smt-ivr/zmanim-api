@@ -172,6 +172,7 @@ function App() {
       <div class="wrap foot-row">
         <span>${name}</span>
         ${data?.catalog?.site?.guest_chat && html`<a href="admin/#/contact"><${Icon} name="mail" size=${14} /> פנייה להנהלה</a>`}
+        ${data?.catalog?.site?.contact_email && html`<a class="foot-mail" href=${`mailto:${data.catalog.site.contact_email}`} dir="ltr">${data.catalog.site.contact_email}</a>`}
         <a class="credit" href="https://smti.uk" target="_blank" rel="noopener">פותח ע״י
           <img class="smt-logo" src="https://smti.uk/smt.png" alt="SMT" draggable="false" /></a>
       </div>

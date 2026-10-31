@@ -220,3 +220,4 @@ a.row:hover { background: var(--surface-2); }
 .gabbai-btn { display: inline-flex; align-items: center; gap: 6px; height: 38px; padding: 0 14px; border-radius: 10px; background: var(--primary); color: #fff; font-weight: 700; font-size: 14px; white-space: nowrap; }
 .gabbai-btn:hover { background: var(--primary-2); }
 @media (max-width: 560px) { .gabbai-btn span { display: none; } .gabbai-btn { width: 38px; padding: 0; justify-content: center; } }
+.foot-mail { font-size: 12.5px; opacity: .85; }
