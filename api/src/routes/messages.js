@@ -5,7 +5,7 @@ import { checkLock, recordFailure } from '../auth.js';
 import { all, first, nowIso, nowSec, run } from '../db.js';
 import { forbidden, invalid, json, noContent, notFound, readJson } from '../http.js';
 import { adminUrl, mailReady, sendMail, sendMailBatch, siteUrl } from '../mail.js';
-import { getSettings } from '../settings.js';
+import { getSettings, saveSettings } from '../settings.js';
 import { clean, fields, id, normalizeEmail } from '../validate.js';
 import PostalMime from '../vendor/postal-mime/postal-mime.js';
 import { nameRow } from '../names.js';
@@ -216,7 +216,9 @@ export async function getConversation({ env, actor, params }) {
     FROM messages m LEFT JOIN users u ON u.id = m.staff_user_id WHERE m.conversation_id = ? ORDER BY m.created_at, m.id`, c.id);
   if (c.staff_unread) await run(env, `UPDATE conversations SET staff_unread = 0 WHERE id = ?`, c.id);
   const { notified_at, ...conversation } = c;
-  return json({ conversation: { ...conversation, staff_unread: 0, can_message: c.user_id ? c.can_message === 1 : null }, messages: await withFiles(env, c.id, messages.map((m) => nameRow(actor, m, 'st', 'staff_name'))) });
+  // an outside sender (e-mail only) is blocked through the blocklist, like registrations
+  const blocked = !c.user_id && c.email ? blockedEmail(await getSettings(env), normalizeEmail(c.email)) : null;
+  return json({ conversation: { ...conversation, staff_unread: 0, can_message: c.user_id ? c.can_message === 1 : !blocked, blocked }, messages: await withFiles(env, c.id, messages.map((m) => nameRow(actor, m, 'st', 'staff_name'))) });
 }
 
 /** POST /admin/conversations/:id/messages { body, send_email } or a form with files (an outside sender is always answered by e-mail) */
@@ -266,8 +268,18 @@ export async function startConversation({ env, request }) {
 /** PATCH /admin/conversations/:id { status } */
 export async function patchConversation({ env, params, request }) {
   const c = await loadConversation(env, params.id);
-  const d = fields(await readJson(request), { partial: true }).oneOf('status', ['open', 'closed']).done();
+  const d = fields(await readJson(request), { partial: true }).oneOf('status', ['open', 'closed']).bool('blocked').done();
   if (d.status) await run(env, `UPDATE conversations SET status = ? WHERE id = ?`, d.status, c.id);
+  if (d.blocked !== undefined) {
+    // an outside sender: their address goes into (or out of) the blocklist — no more mail into the chat,
+    // no writing through the site
+    const email = normalizeEmail(c.email);
+    if (c.user_id || !email) throw invalid({ blocked: 'חסימת משתמש נעשית בהגדרות המשתמש' });
+    const s = await getSettings(env);
+    const lines = s.registration_blocklist.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).filter((l) => l.toLowerCase() !== email);
+    if (d.blocked) lines.push(email);
+    await saveSettings(env, { registration_blocklist: lines.join('\n') });
+  }
   return noContent();
 }
 

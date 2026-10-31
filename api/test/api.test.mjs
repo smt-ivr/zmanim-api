@@ -1244,6 +1244,12 @@ describe('e-mail (Resend mocked)', () => {
     await call('POST', `/admin/conversations/${c.id}/messages`, { token: admin, body: { body: 'בשעה 13:30' } });
     const thread = (await guest('GET', '/public/chat')).body;
     assert.deepEqual(thread.messages.map((m) => [m.sender, m.body]), [['user', 'מתי מנחה בשבת?'], ['staff', 'בשעה 13:30']]);
+    // blocked from the conversation, like a user: no more writing through the site
+    await call('PATCH', `/admin/conversations/${c.id}`, { token: admin, body: { blocked: true } });
+    assert.equal((await call('GET', `/admin/conversations/${c.id}`, { token: admin })).body.conversation.blocked, true);
+    assert.equal((await guest('POST', '/public/chat/messages', { body: 'שוב' })).status, 403);
+    await call('PATCH', `/admin/conversations/${c.id}`, { token: admin, body: { blocked: false } });
+    assert.equal((await guest('POST', '/public/chat/messages', { body: 'שוב' })).status, 201);
     // closed by the super admin
     await call('PATCH', '/admin/control', { token: admin, body: { guest_chat_enabled: false } });
     assert.equal((await guest('POST', '/public/chat/messages', { body: 'עוד' })).status, 403);

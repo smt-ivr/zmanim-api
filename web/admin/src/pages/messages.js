@@ -207,8 +207,16 @@ function Conversation({ id, onBack, onChange }) {
     if (m.emailed) toast('נשלח גם במייל');
   };
   async function blockUser() {
-    try { await api.patch(`/admin/users/${c.user_id}`, { can_message: !c.can_message }); toast(c.can_message ? 'המשתמש לא יוכל לשלוח הודעות' : 'המשתמש יכול שוב לשלוח הודעות'); reload(); }
-    catch (e) { toastError(e); }
+    try {
+      if (external) {
+        await api.patch(`/admin/conversations/${id}`, { blocked: !c.blocked });
+        toast(c.blocked ? 'הכתובת שוחררה מהחסימה' : 'הכתובת נחסמה: מיילים ממנה לא יגיעו, והיא לא תוכל לפנות דרך האתר');
+      } else {
+        await api.patch(`/admin/users/${c.user_id}`, { can_message: !c.can_message });
+        toast(c.can_message ? 'המשתמש לא יוכל לשלוח הודעות' : 'המשתמש יכול שוב לשלוח הודעות');
+      }
+      reload();
+    } catch (e) { toastError(e); }
   }
   async function remove() {
     if (!(await confirm({ title: 'מחיקת שיחה', body: 'כל ההודעות בשיחה יימחקו.', confirmLabel: 'מחיקה', danger: true }))) return;
@@ -220,8 +228,9 @@ function Conversation({ id, onBack, onChange }) {
       <${Avatar} name=${c.name || c.email} size=${36} />
       <div class="grow"><b>${c.name || c.email}</b>
         <div class="muted small" dir="ltr">${[c.email, c.user_phone].filter(Boolean).join(' · ')}</div></div>
-      ${external ? html`<${Badge}>פנייה במייל<//>` : c.can_message === false && html`<${Badge} tone="warn">חסום מהודעות<//>`}
-      ${!external && html`<${Button} kind="ghost" small onClick=${blockUser}>${c.can_message ? 'חסימה' : 'ביטול חסימה'}<//>`}
+      ${external && html`<${Badge}>פנייה במייל<//>`}
+      ${(external ? c.blocked : c.can_message === false) && html`<${Badge} tone="warn">חסום<//>`}
+      ${(!external || c.email) && html`<${Button} kind="ghost" small onClick=${blockUser}>${(external ? c.blocked : !c.can_message) ? 'ביטול חסימה' : 'חסימה'}<//>`}
       <${Button} kind="ghost" small icon="trash" title="מחיקת השיחה" onClick=${remove} />
     </header>
     ${c.subject && html`<div class="conv-subject">נושא: ${c.subject}</div>`}
