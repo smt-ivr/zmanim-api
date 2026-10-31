@@ -1,4 +1,5 @@
-// Public site: minyan times by area, prayer and day. Read-only, no login.
+// Public site: the upcoming minyanim first (by time, every place at the same time on one row), today's
+// Hebrew date and zmanim, filters by prayer / area / day, a page per synagogue, print and share. Read-only.
 import { h, render } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
@@ -57,13 +58,6 @@ function withClock(list, catalog, offset) {
 const effectiveTime = (m, rc) => (m.time_kind === 'relative' ? m.clock : rc && m.rosh_chodesh_time ? m.rosh_chodesh_time : m.time);
 const hasClock = (m) => m.time_kind !== 'relative' || Boolean(m.clock);
 
-function nextStart(m, nowMin, rc) {
-  if (m.time_kind === 'fixed' || m.clock) { const t = toMinutes(effectiveTime(m, rc)); return t >= nowMin ? t : null; }
-  if (m.time_kind === 'interval') {
-    for (let t = toMinutes(m.time); t <= toMinutes(m.end_time); t += m.every_minutes) if (t >= nowMin) return t;
-  }
-  return null;
-}
 
 /** Time cell: Rosh Chodesh time on Rosh Chodesh, otherwise the regular one with the RC time as a hint. */
 function TimeCell({ m, rc, cls = 'time' }) {
@@ -75,10 +69,6 @@ function TimeCell({ m, rc, cls = 'time' }) {
   return html`<span class=${cx(cls, m.time_kind === 'relative' && 'rel', m.time_kind === 'interval' && 'interval')}>${m.time_label}</span>`;
 }
 
-function dateForDay(offset) {
-  const d = new Date(Date.now() + offset * 86400000);
-  return d.toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric', timeZone: 'Asia/Jerusalem' });
-}
 
 async function get(path) {
   const res = await fetch(API + path);
@@ -88,6 +78,8 @@ async function get(path) {
 
 // ------------------------------------------------------------------ icons
 const PATHS = {
+  share: 'M18 8a3 3 0 1 0-2.8-4M6 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 22a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM8.6 13.5l6.8 4M15.4 6.5l-6.8 4',
+  print: 'M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v8H6z',
   mail: 'M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM22 6l-10 7L2 6',
   phone: 'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z',
   pin: 'M12 21s7-6.1 7-12a7 7 0 1 0-14 0c0 5.9 7 12 7 12zM12 11a2 2 0 1 0 0-4 2 2 0 0 0 0 4z',
@@ -188,99 +180,181 @@ function App() {
     </footer>`;
 }
 
-// ------------------------------------------------------------------ home
+// ------------------------------------------------------------------ Hebrew date
+const HEB_ONES = ['', 'א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט'];
+function hebrewDay(n) {
+  let l = ['', 'י', 'כ', 'ל'][Math.floor(n / 10)] + HEB_ONES[n % 10];
+  if (n === 15) l = 'טו';
+  if (n === 16) l = 'טז';
+  return l.length > 1 ? `${l.slice(0, -1)}״${l.slice(-1)}` : `${l}׳`;
+}
+/** "שבת, כ׳ בחשוון" for the day `offset` days from today (in Israel). */
+function hebrewDate(offset = 0) {
+  const d = new Date(Date.now() + offset * 86400000);
+  const p = Object.fromEntries(new Intl.DateTimeFormat('he-u-ca-hebrew', { timeZone: 'Asia/Jerusalem', day: 'numeric', month: 'long' })
+    .formatToParts(d).map((x) => [x.type, x.value]));
+  return `${hebrewDay(Number(p.day))} ב${p.month}`;
+}
+const gregorian = (offset = 0) => new Date(Date.now() + offset * 86400000).toLocaleDateString('he-IL', { day: 'numeric', month: 'long', timeZone: 'Asia/Jerusalem' });
+const dayTitle = (day) => (day === 6 ? 'שבת קודש' : `יום ${DAY_NAMES[day]}`);
+
+/**
+ * The minyanim of the shown day as timed rows: one row per prayer + exact time, with every place that
+ * prays then ("07:00 שחרית: אהל משה, זכרון משה"). Interval minyanim give a row per start. Minyanim
+ * relative to a time of day that is not computed come last, as set ("לפני שקיעה").
+ */
+function timeline(list, byId, rc) {
+  const rows = new Map();
+  const loose = [];
+  const add = (key, t, m, label) => {
+    if (!rows.has(key)) rows.set(key, { t, label, prayer: m.prayer_name, prayerId: m.prayer_id, places: [] });
+    const s = byId.get(m.synagogue_id);
+    if (s && !rows.get(key).places.some((x) => x.s.id === s.id && x.loc === m.location_name)) rows.get(key).places.push({ s, loc: m.location_name, notes: m.notes });
+  };
+  for (const m of list) {
+    if (m.time_kind === 'interval') {
+      for (let t = toMinutes(m.time); t <= toMinutes(m.end_time); t += m.every_minutes) add(`${m.prayer_id}|${t}`, t, m, null);
+    } else if (m.time_kind === 'fixed') {
+      const t = toMinutes(effectiveTime(m, rc));
+      add(`${m.prayer_id}|${t}`, t, m, null);
+    } else if (m.clock) {
+      add(`${m.prayer_id}|${toMinutes(m.clock)}|${m.time_label}`, toMinutes(m.clock), m, m.time_label);
+    } else {
+      loose.push(m);
+    }
+  }
+  const timed = [...rows.values()].sort((a, b) => a.t - b.t || a.prayerId - b.prayerId);
+  const later = new Map();
+  for (const m of loose) {
+    const key = `${m.prayer_id}|${m.time_label}`;
+    if (!later.has(key)) later.set(key, { t: null, label: m.time_label, prayer: m.prayer_name, prayerId: m.prayer_id, places: [] });
+    const s = byId.get(m.synagogue_id);
+    if (s) later.get(key).places.push({ s, loc: m.location_name, notes: m.notes });
+  }
+  return { timed, loose: [...later.values()] };
+}
+
+const inWords = (mins) => (mins <= 0 ? 'עכשיו' : mins < 60 ? `בעוד ${mins} דק׳` : `בעוד ${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, '0')} שע׳`);
+
+/** Share the shown minyanim (WhatsApp on phones without the share sheet). */
+async function share(title, lines) {
+  const text = `${title}\n\n${lines.join('\n')}\n\n${location.href}`;
+  try {
+    if (navigator.share) { await navigator.share({ title, text }); return; }
+  } catch (e) { if (e?.name === 'AbortError') return; }
+  window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener');
+}
+
+// ------------------------------------------------------------------ home: the upcoming minyanim
 function Home({ data, season: pickedSeason, setSeason }) {
   const { catalog, minyanim, byId } = data;
   const phone = sitePhone(data);
   const shabbat = catalog.site?.shabbat_enabled !== false;
   const now = israelNow();
-  const currentSeason = data.catalog.current_season;
+  const nowMin = toMinutes(now.time);
+  const currentSeason = catalog.current_season;
   const season = pickedSeason ?? currentSeason?.id ?? null;
   const seasonName = catalog.seasons.find((x) => x.id === season)?.name;
 
-  // Days from today; while Shabbat is off, Shabbat itself is skipped (start from Sunday).
   const [offset, setOffset] = useState(() => (!shabbat && now.day === 6 ? 1 : 0));
   const [area, setArea] = useState(() => store.get('area', null));
   const [prayer, setPrayer] = useState(null);
   const [q, setQ] = useState('');
-  const [view, setView] = useState(() => store.get('view', 'time'));
+  const [mode, setMode] = useState('soon'); // soon | day
+  const [, tick] = useState(0);
   useEffect(() => store.set('area', area), [area]);
-  useEffect(() => store.set('view', view), [view]);
+  useEffect(() => { const t = setInterval(() => tick((x) => x + 1), 60000); return () => clearInterval(t); }, []); // "בעוד" stays right
 
   const day = (now.day + offset) % 7;
   const validArea = area !== null && catalog.areas.some((a) => a.id === area) ? area : null;
-
-  const shown = useMemo(() => withClock(minyanim.filter((m) => {
+  const rc = isRoshChodesh(offset);
+  const list = useMemo(() => withClock(minyanim.filter((m) => {
     const s = byId.get(m.synagogue_id);
-    return s && (m.days & (1 << day)) &&
-      (validArea === null || s.area_id === validArea) &&
-      (prayer === null || m.prayer_id === prayer) &&
+    return s && (m.days & (1 << day)) && (validArea === null || s.area_id === validArea) && (prayer === null || m.prayer_id === prayer) &&
       (!q || norm(`${s.name} ${s.address} ${s.area_name || ''} ${m.location_name || ''}`).includes(norm(q)));
   }), catalog, offset), [minyanim, day, validArea, prayer, q, offset]);
+  const { timed, loose } = timeline(list, byId, rc);
+  const soon = offset === 0 && mode === 'soon';
+  const rows = soon ? timed.filter((r) => r.t >= nowMin - 5) : timed;
+  const zmanim = catalog.anchors.filter((a) => a.calc).map((a) => ({ name: a.name, t: catalog.zmanim?.[offset]?.times?.[a.id] })).filter((z) => z.t);
 
-  // Next start of each minyan from now (interval minyanim: the next slot)
-  const rc = isRoshChodesh(offset);
-  const upcoming = offset === 0
-    ? shown.map((m) => ({ m, next: nextStart(m, toMinutes(now.time), rc) })).filter((x) => x.next !== null)
-        .sort((a, b) => a.next - b.next).slice(0, 6)
-    : [];
+  const dayLabel = offset === 0 ? 'היום' : offset === 1 ? 'מחר' : dayTitle(day);
+  const shareTitle = `${catalog.site?.name || 'זמני תפילות'} · ${dayTitle(day)}, ${hebrewDate(offset)}${prayer ? ` · ${catalog.prayers.find((p) => p.id === prayer)?.name}` : ''}`;
+  const shareLines = rows.slice(0, 40).map((r) => `${hhmm(r.t)} ${r.prayer}${r.label ? ` (${r.label})` : ''}: ${r.places.map((p) => p.s.name + (p.loc ? ` ${p.loc}` : '')).join(', ')}`);
 
   return html`
-    <section class="hero">
-      <h1>${catalog.site?.name || 'מערכת זמני התפילות'}</h1>
-      <p>${seasonName ? html`<span class="season-tag">זמני ${seasonName}</span> ` : ''}כל המניינים בבתי הכנסת, לפי אזור, תפילה ויום.${rc && offset === 0 ? ' היום ראש חודש.' : ''}</p>
-      ${phone.phone && html`<a class="hero-phone" href=${`tel:${phone.phone}`}>
-        <span class="hero-phone-icon"><${Icon} name="phone" size=${20} /></span>
-        <span><small>${phone.ready ? 'שמיעת הזמנים בטלפון' : 'בקרוב: שמיעת הזמנים בטלפון'}</small><b dir="ltr">${formatPhone(phone.phone)}</b></span>
-      </a>`}
-    </section>
+    <div class="home">
+      <aside class="side">
+        <section class="card today">
+          <div class="today-day">${dayTitle(day)}${rc ? html` <span class="badge">ראש חודש</span>` : ''}</div>
+          <div class="today-heb">${hebrewDate(offset)}</div>
+          <div class="today-greg">${gregorian(offset)}${seasonName ? ` · זמני ${seasonName}` : ''}</div>
+          ${zmanim.length > 0 && html`<div class="zmanim">${zmanim.map((z) => html`<div class="zman"><small>${z.name}</small><b>${z.t}</b></div>`)}</div>`}
+        </section>
+        ${phone.phone && html`<a class="card phone-card" href=${`tel:${phone.phone}`}>
+          <span class="phone-icon"><${Icon} name="phone" size=${22} /></span>
+          <span><small>${phone.ready ? 'לשמיעת הזמנים בטלפון' : 'בקרוב: שמיעת הזמנים בטלפון'}</small><b dir="ltr">${formatPhone(phone.phone)}</b></span>
+        </a>`}
+      </aside>
 
-    <div class="days" role="tablist" aria-label="יום">
-      ${[0, 1, 2, 3, 4, 5, 6].filter((o) => shabbat || (now.day + o) % 7 !== 6).map((o) => {
-        const d = (now.day + o) % 7;
-        return html`<button role="tab" aria-selected=${offset === o} class=${cx('day', offset === o && 'on', d === 6 && 'shabbat')} onClick=${() => setOffset(o)}>
-          <b>${o === 0 ? 'היום' : o === 1 ? 'מחר' : DAY_NAMES[d]}</b><small>${o < 2 ? `יום ${DAY_SHORT[d]}` : dateForDay(o)}</small></button>`;
-      })}
-    </div>
-
-    <div class="filters">
-      <div class="search"><${Icon} name="search" /><input type="search" placeholder="חיפוש בית כנסת או כתובת" value=${q} onInput=${(e) => setQ(e.currentTarget.value)} /></div>
-      ${catalog.areas.length > 0 && html`<div class="chips" role="group" aria-label="אזור">
-        <button class=${cx('chip', validArea === null && 'on')} onClick=${() => setArea(null)}>כל האזורים</button>
-        ${catalog.areas.map((a) => html`<button class=${cx('chip', validArea === a.id && 'on')} onClick=${() => setArea(a.id)}>${a.name}</button>`)}
-      </div>`}
-      <div class="filters-row">
-        <div class="seg" role="group" aria-label="תפילה">
-          <button class=${cx(prayer === null && 'on')} onClick=${() => setPrayer(null)}>הכל</button>
-          ${catalog.prayers.map((p) => html`<button class=${cx(prayer === p.id && 'on')} onClick=${() => setPrayer(p.id)}>${p.name}</button>`)}
+      <section class="main-col">
+        <div class="card controls">
+          <div class="search"><${Icon} name="search" /><input type="search" placeholder="חיפוש בית כנסת, כתובת או מיקום" value=${q} onInput=${(e) => setQ(e.currentTarget.value)} /></div>
+          <div class="seg prayers" role="group" aria-label="תפילה">
+            <button class=${cx(prayer === null && 'on')} onClick=${() => setPrayer(null)}>כל התפילות</button>
+            ${catalog.prayers.map((p) => html`<button class=${cx(prayer === p.id && 'on')} onClick=${() => setPrayer(p.id)}>${p.name}</button>`)}
+          </div>
+          ${catalog.areas.length > 1 && html`<div class="chips" role="group" aria-label="אזור">
+            <button class=${cx('chip', validArea === null && 'on')} onClick=${() => setArea(null)}>כל האזורים</button>
+            ${catalog.areas.map((a) => html`<button class=${cx('chip', validArea === a.id && 'on')} onClick=${() => setArea(a.id)}>${a.name}</button>`)}
+          </div>`}
+          <div class="controls-row">
+            <div class="days" role="tablist" aria-label="יום">
+              ${[0, 1, 2, 3, 4, 5, 6].filter((o) => shabbat || (now.day + o) % 7 !== 6).map((o) => {
+                const d = (now.day + o) % 7;
+                return html`<button role="tab" aria-selected=${offset === o} class=${cx('day', offset === o && 'on')} onClick=${() => setOffset(o)}>
+                  ${o === 0 ? 'היום' : o === 1 ? 'מחר' : d === 6 ? 'שבת' : DAY_NAMES[d]}</button>`;
+              })}
+            </div>
+            ${catalog.site?.season_choice && catalog.seasons.length > 1 && html`<select class="select" value=${season ?? ''} onChange=${(e) => setSeason(Number(e.currentTarget.value))} aria-label="עונה">
+              ${catalog.seasons.map((x) => html`<option value=${x.id}>זמני ${x.name}${x.id === currentSeason?.id ? ' (עכשיו)' : ''}</option>`)}
+            </select>`}
+          </div>
         </div>
-        ${catalog.site?.season_choice && catalog.seasons.length > 1 && html`<select class="select" value=${season ?? ''} onChange=${(e) => setSeason(Number(e.currentTarget.value))} aria-label="עונה">
-          ${catalog.seasons.map((s) => html`<option value=${s.id}>זמני ${s.name}${s.id === currentSeason?.id ? ' (עכשיו)' : ''}</option>`)}
-        </select>`}
-        <div class="seg view-toggle" role="group" aria-label="תצוגה">
-          <button class=${cx(view === 'time' && 'on')} onClick=${() => setView('time')}><${Icon} name="clock" size=${16} /> לפי שעה</button>
-          <button class=${cx(view === 'syn' && 'on')} onClick=${() => setView('syn')}><${Icon} name="building" size=${16} /> לפי בית כנסת</button>
+
+        <div class="list-head">
+          <h1>${soon ? 'המניינים הקרובים' : `המניינים ${dayLabel}`}</h1>
+          <div class="list-actions">
+            ${offset === 0 && html`<div class="seg small"><button class=${cx(mode === 'soon' && 'on')} onClick=${() => setMode('soon')}>מעכשיו</button><button class=${cx(mode === 'day' && 'on')} onClick=${() => setMode('day')}>כל היום</button></div>`}
+            <button class="icon-btn" onClick=${() => share(shareTitle, shareLines)} aria-label="שיתוף" title="שיתוף"><${Icon} name="share" /></button>
+            <button class="icon-btn" onClick=${() => window.print()} aria-label="הדפסה" title="הדפסה"><${Icon} name="print" /></button>
+          </div>
         </div>
-      </div>
-    </div>
+        <div class="print-title">${shareTitle}</div>
 
-    ${upcoming.length > 0 && !q && html`<section class="upcoming">
-      <h2>המניינים הקרובים</h2>
-      <div class="upcoming-row">${upcoming.map(({ m, next }) => {
-        const mins = next - toMinutes(now.time);
-        const s = byId.get(m.synagogue_id);
-        return html`<a class="up-card" href=${`#/s/${s.id}`}>
-          ${m.clock
-            ? html`<b class="up-time up-rel">${m.time_label}</b>`
-            : html`<span class="up-in">${mins === 0 ? 'עכשיו' : mins < 60 ? `בעוד ${mins} דק׳` : `בעוד ${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, '0')} שע׳`}</span>
-              <b class="up-time">${hhmm(next)}</b>`}<span>${m.prayer_name}</span><small>${s.name}</small></a>`;
-      })}</div>
-    </section>`}
-
-    ${shown.length === 0
-      ? html`<div class="state"><b>אין מניינים שמתאימים לבחירה</b><span>נסו יום, אזור או תפילה אחרים</span></div>`
-      : view === 'time' ? html`<${ByTime} list=${shown} byId=${byId} catalog=${catalog} rc=${rc} />` : html`<${BySynagogue} list=${shown} byId=${byId} rc=${rc} />`}
-  `;
+        ${rows.length === 0 && loose.length === 0
+          ? html`<div class="state"><b>${soon ? 'אין עוד מניינים היום לפי הבחירה' : 'אין מניינים שמתאימים לבחירה'}</b>
+              <span>${soon ? html`<button class="link" onClick=${() => setOffset(1)}>למניינים של מחר</button>` : 'נסו יום, אזור או תפילה אחרים'}</span></div>`
+          : html`<div class="timeline">
+              ${rows.map((r) => {
+                const past = offset === 0 && r.t < nowMin;
+                return html`<div class=${cx('slot', past && 'past')}>
+                  <div class="slot-time"><b>${hhmm(r.t)}</b>${offset === 0 && !past && r.t - nowMin <= 180 && html`<small>${inWords(r.t - nowMin)}</small>`}</div>
+                  <div class="slot-body">
+                    <div class="slot-prayer">${r.prayer}${r.label ? html` <span class="rel">${r.label}</span>` : ''}${rc && html``}</div>
+                    <div class="places">${r.places.map((p) => html`<a class="place" href=${`#/s/${p.s.id}`}><b>${p.s.name}</b>${p.loc && html`<span>${p.loc}</span>`}${!validArea && p.s.area_name && catalog.areas.length > 1 ? html`<small>${p.s.area_name}</small>` : ''}</a>`)}</div>
+                  </div>
+                </div>`;
+              })}
+              ${loose.length > 0 && html`<div class="loose-title">לפי זמני היום</div>${loose.map((r) => html`<div class="slot">
+                <div class="slot-time rel-time"><b>${r.label}</b></div>
+                <div class="slot-body"><div class="slot-prayer">${r.prayer}</div>
+                  <div class="places">${r.places.map((p) => html`<a class="place" href=${`#/s/${p.s.id}`}><b>${p.s.name}</b>${p.loc && html`<span>${p.loc}</span>`}</a>`)}</div></div>
+              </div>`)}`}
+            </div>`}
+        ${soon && rows.length > 0 && html`<button class="more-btn" onClick=${() => setMode('day')}>לכל המניינים של היום</button>`}
+      </section>
+    </div>`;
 }
 
 function groupByPrayer(list, catalog, rc = false) {
@@ -295,43 +369,6 @@ function groupByPrayer(list, catalog, rc = false) {
     g.relative.sort((a, b) => a.anchor_id - b.anchor_id || a.offset_minutes - b.offset_minutes);
     return g;
   });
-}
-
-function ByTime({ list, byId, catalog, rc }) {
-  return html`<div class="groups">${groupByPrayer(list, catalog, rc).map((g) => html`<section class="group">
-    <h2>${g.name} <small>${g.fixed.length + g.relative.length}</small></h2>
-    <div class="rows">
-      ${[...g.fixed, ...g.relative].map((m) => {
-        const s = byId.get(m.synagogue_id);
-        return html`<a class="row" href=${`#/s/${s.id}`}>
-          <${TimeCell} m=${m} rc=${rc} />
-          <span class="row-main"><b>${s.name}</b>
-            <small>${[s.area_name, m.location_name].filter(Boolean).join(' · ')}${m.notes ? ` · ${m.notes}` : ''}</small></span>
-        </a>`;
-      })}
-    </div>
-  </section>`)}</div>`;
-}
-
-function BySynagogue({ list, byId, rc }) {
-  const bySyn = new Map();
-  for (const m of list) {
-    if (!bySyn.has(m.synagogue_id)) bySyn.set(m.synagogue_id, []);
-    bySyn.get(m.synagogue_id).push(m);
-  }
-  const syns = [...bySyn.keys()].map((id) => byId.get(id)).sort((a, b) => a.name.localeCompare(b.name, 'he'));
-  return html`<div class="cards">${syns.map((s) => {
-    const prayers = new Map();
-    for (const m of bySyn.get(s.id)) {
-      if (!prayers.has(m.prayer_name)) prayers.set(m.prayer_name, []);
-      prayers.get(m.prayer_name).push(m);
-    }
-    return html`<a class="card" href=${`#/s/${s.id}`}>
-      <div class="card-head"><b>${s.name}</b><small>${[s.area_name, s.address].filter(Boolean).join(' · ')}</small></div>
-      ${[...prayers.entries()].map(([name, ms]) => html`<div class="card-line"><span class="card-prayer">${name}</span>
-        <span class="times">${ms.map((m) => html`<${TimeCell} m=${m} rc=${rc} cls="t" />`)}</span></div>`)}
-    </a>`;
-  })}</div>`;
 }
 
 // ------------------------------------------------------------------ synagogue page
@@ -349,9 +386,13 @@ function SynagoguePage({ data, id }) {
   const mapUrl = s.address ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.address)}` : null;
 
   return html`
-    <a class="back" href="#/"><${Icon} name="back" size=${16} /> לכל בתי הכנסת</a>
-    <section class="syn-head">
-      <h1>${s.name}</h1>
+    <a class="back" href="#/"><${Icon} name="back" size=${16} /> לכל המניינים</a>
+    <section class="card syn-head">
+      <div class="syn-title"><h1>${s.name}</h1>
+        <div class="list-actions">
+          <button class="icon-btn" onClick=${() => share(`${s.name} · ${day === null ? 'זמני התפילות' : dayTitle(day)}`, groups.map((g) => `${g.name}: ${[...g.fixed, ...g.relative].map((m) => (m.time_kind === 'fixed' ? effectiveTime(m, rc) : m.time_label) + (m.location_name ? ` (${m.location_name})` : '')).join(', ')}`))} aria-label="שיתוף" title="שיתוף"><${Icon} name="share" /></button>
+          <button class="icon-btn" onClick=${() => window.print()} aria-label="הדפסה" title="הדפסה"><${Icon} name="print" /></button>
+        </div></div>
       <div class="syn-meta">
         ${s.area_name && html`<span><${Icon} name="pin" size=${16} /> ${s.area_name}</span>`}
         ${s.address && html`<a href=${mapUrl} target="_blank" rel="noopener"><${Icon} name="map" size=${16} /> ${s.address}</a>`}

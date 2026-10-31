@@ -41,12 +41,12 @@ await env.DB.batch([
   `INSERT INTO areas (name, sort) VALUES ('רמות', 10), ('גבעת שאול', 20), ('הר נוף', 30)`,
   `INSERT INTO synagogues (name, area_id, address) VALUES ('אהל משה', 1, 'רחוב הרב פרנק 12'), ('בית יעקב', 1, 'שדרות גולדה מאיר 40'), ('זכרון משה', 2, 'רחוב קוטלר 5'), ('היכל שלמה', 3, 'רחוב הקבלן 30')`,
   `INSERT INTO locations (synagogue_id, name, sort) VALUES (1, 'היכל ראשי', 10), (1, 'בית מדרש', 20)`,
-  `INSERT INTO minyanim (synagogue_id, prayer_id, location_id, days, time_kind, time, notes) VALUES
-     (1, 1, 1, 127, 'fixed', '06:15', 'ותיקין'), (1, 1, 2, 63, 'fixed', '07:30', ''), (1, 3, 1, 31, 'fixed', '21:45', ''),
-     (2, 1, NULL, 127, 'fixed', '06:45', ''), (2, 1, NULL, 31, 'fixed', '08:00', ''), (3, 1, NULL, 127, 'fixed', '07:00', ''),
-     (3, 3, NULL, 127, 'fixed', '20:30', ''), (4, 1, NULL, 64, 'fixed', '08:30', 'שבת'), (4, 3, NULL, 31, 'fixed', '22:15', '')`,
-  `INSERT INTO minyanim (synagogue_id, prayer_id, days, time_kind, anchor_id, offset_minutes) VALUES
-     (1, 2, 31, 'relative', 2, -15), (2, 2, 127, 'relative', 2, -20), (3, 2, 31, 'relative', 2, -10), (4, 3, 127, 'relative', 3, 0)`,
+  `INSERT INTO minyanim (synagogue_id, prayer_id, location_id, days, time_kind, time, notes, season_id) VALUES
+     (1, 1, 1, 127, 'fixed', '06:15', 'ותיקין', 1), (1, 1, 2, 63, 'fixed', '07:30', '', 1), (1, 3, 1, 31, 'fixed', '21:45', '', 1),
+     (2, 1, NULL, 127, 'fixed', '06:45', '', 1), (2, 1, NULL, 31, 'fixed', '08:00', '', 1), (3, 1, NULL, 127, 'fixed', '07:00', '', 1),
+     (4, 1, NULL, 63, 'fixed', '07:00', '', 1), (3, 3, NULL, 127, 'fixed', '20:30', '', 1), (4, 1, NULL, 64, 'fixed', '08:30', 'שבת', 1), (4, 3, NULL, 31, 'fixed', '22:15', '', 1)`,
+  `INSERT INTO minyanim (synagogue_id, prayer_id, days, time_kind, anchor_id, offset_minutes, season_id) VALUES
+     (1, 2, 31, 'relative', 2, -15, 1), (2, 2, 127, 'relative', 2, -20, 1), (3, 2, 31, 'relative', 2, -10, 1), (4, 3, 127, 'relative', 3, 0, 1)`,
 ].map((sql) => env.DB.prepare(sql)));
 
 createServer(async (req, res) => {
