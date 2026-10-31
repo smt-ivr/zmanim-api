@@ -42,6 +42,36 @@ export const PHRASES = [
 // Times: whole hours, "ורבע" and "וחצי" in words; any other time stays as numbers ("9 45").
 const PAST = { 15: 'ורבע', 30: 'וחצי' };
 
+// ------------------------------------------------------------------ the Hebrew date ("יום ראשון, כ״ט בתשרי")
+export const WEEKDAYS = ['יום ראשון', 'יום שני', 'יום שלישי', 'יום רביעי', 'יום חמישי', 'יום שישי', 'שבת'];
+export const HEB_MONTHS = ['תשרי', 'חשוון', 'כסלו', 'טבת', 'שבט', 'אדר', 'אדר א׳', 'אדר ב׳', 'ניסן', 'אייר', 'סיוון', 'תמוז', 'אב', 'אלול'];
+const ONES = ['', 'א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט'];
+/** 29 -> "כ״ט", 15 -> "ט״ו", 1 -> "א׳" */
+export function hebrewDay(n) {
+  const tens = ['', 'י', 'כ', 'ל'][Math.floor(n / 10)];
+  let letters = tens + ONES[n % 10];
+  if (n === 15) letters = 'טו';
+  if (n === 16) letters = 'טז';
+  return letters.length > 1 ? `${letters.slice(0, -1)}״${letters.slice(-1)}` : `${letters}׳`;
+}
+
+/** Today in Israel: { weekday: 0-6, day: 1-30, month: index in HEB_MONTHS } */
+export function hebrewToday(date = new Date()) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('he-u-ca-hebrew', { timeZone: 'Asia/Jerusalem', day: 'numeric', month: 'long', weekday: 'short' })
+    .formatToParts(date).map((x) => [x.type, x.value]));
+  const wd = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Jerusalem', weekday: 'short' }).format(date);
+  return { weekday: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(wd), day: Number(p.day), month: HEB_MONTHS.indexOf(p.month) };
+}
+
+/** "יום ראשון, כ״ט בתשרי": { tts, parts }, each part recordable. */
+export function hebrewDateWords(date) {
+  const { weekday, day, month } = hebrewToday(date);
+  const wd = WEEKDAYS[weekday];
+  const dd = hebrewDay(day);
+  const mm = `ב${HEB_MONTHS[month] ?? ''}`;
+  return { tts: `${wd} ${dd} ${mm}`, parts: [{ key: `wday:${weekday}`, text: wd }, { key: `hday:${day}`, text: dd }, { key: `hmonth:${month}`, text: mm }] };
+}
+
 /** Everything that can be recorded (except synagogues): [{ key, text, group, where }]. */
 export async function catalog(env, settings) {
   const [prayers, areas, locations, anchors] = await Promise.all([
@@ -59,6 +89,9 @@ export async function catalog(env, settings) {
       { key: `anchor:${a.id}`, text: a.name, group: 'זמני היום', where: `"15 דקות לפני ${a.name}"` },
     ]),
     ...locations.filter((l) => l.name).map((l) => ({ key: locationKey(l.name), text: l.name, group: 'שמות מיקומים', where: `אחרי שם בית הכנסת (${l.n === 1 ? 'בבית כנסת אחד' : `ב־${l.n} בתי כנסת`})` })),
+    ...WEEKDAYS.map((w, i) => ({ key: `wday:${i}`, text: w, group: 'תאריך', where: 'בתחילת השיחה: "יום ראשון", כ״ט בתשרי' })),
+    ...Array.from({ length: 30 }, (_, i) => ({ key: `hday:${i + 1}`, text: hebrewDay(i + 1), group: 'תאריך', where: `יום ראשון, "${hebrewDay(i + 1)}" בתשרי` })),
+    ...HEB_MONTHS.map((m, i) => ({ key: `hmonth:${i}`, text: `ב${m}`, group: 'תאריך', where: `יום ראשון, כ״ט "ב${m}"` })),
     ...Array.from({ length: 23 }, (_, i) => ({ key: `hour:${i + 1}`, text: String(i + 1), group: 'שעות', where: `"בשעה ${i + 1}"` })),
     ...Object.entries(PAST).map(([m, w]) => ({ key: `min:${m}`, text: w, group: 'שעות', where: `"בשעה 8 ${w}"` })),
   ];

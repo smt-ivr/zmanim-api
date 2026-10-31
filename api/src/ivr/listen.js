@@ -11,7 +11,7 @@ import { callStore, chosenIndex, go, goodbye, invalid, number, readParams, reply
 import { text } from './yemot.js';
 import { CALCS, israelDate, placeOf, zmanTime } from '../zmanim.js';
 import { callLog } from './callLog.js';
-import { clockWords, loadVoice, placeWords } from './voice.js';
+import { clockWords, hebrewDateWords, loadVoice, placeWords } from './voice.js';
 import { normalizePhone } from '../validate.js';
 
 const CHUNK = 6; // minyanim per read; the next ones follow after a second of silence
@@ -46,11 +46,13 @@ function israelNow(env) {
     date: israelDate(date),
   };
 }
+const nowOf = (c) => (c.env.FIXED_NOW ? new Date(c.env.FIXED_NOW) : new Date());
 const toMinutes = (hhmm) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3));
 
 async function start(c) {
   await c.store.prune();
   await c.log.prune();
+  c.say.push(...c.voice.sentence(hebrewDateWords(nowOf(c)))); // "יום ראשון, כ״ט בתשרי"
   const areas = await all(c.env, `SELECT id FROM areas`);
   return areas.length > 1 ? go(c, 'area') : go(c, 'main', { area: null });
 }
