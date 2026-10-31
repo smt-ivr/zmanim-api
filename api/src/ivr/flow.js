@@ -393,7 +393,7 @@ const SCREENS = {
       const i = chosenIndex(input, c.state.data.locs, { zero: true });
       if (i === null) return invalid(c);
       c.state.data.draft.location_id = i === -1 ? null : c.state.data.locs[i];
-      return go(c, 'mConfirm');
+      return afterLocation(c);
     },
   },
   // The season the caller works in; a minyan is always added to it.
@@ -773,11 +773,42 @@ const SCREENS = {
 };
 
 // Wizard order: add = prayer, kind, time, days, location, confirm (the season is the one being worked on). Edit jumps to confirm after the changed part.
-const afterTime = (c) => (c.state.data.mode === 'add' ? go(c, 'mDays') : go(c, 'mConfirm'));
-const afterDays = (c) => (c.state.data.mode === 'add' ? goLocation(c) : go(c, 'mConfirm'));
+/**
+ * Checks the minyan as entered so far, so a problem is said at the step that causes it (e.g. right after
+ * the time: "שחרית לא אחרי 12:00"), not only when saving. Returns the message for the given fields, or null.
+ */
+async function problem(c, fields) {
+  const d = c.state.data.draft;
+  try {
+    await validateMinyan(c.env, await synagogue(c), { ...d, days: d.days ?? 0, id: c.state.data.mode === 'edit' ? c.state.data.editId : undefined });
+    return null;
+  } catch (err) {
+    if (!(err instanceof HttpError) || !err.fields) throw err;
+    return fields.map((f) => err.fields[f]).find(Boolean) || null;
+  }
+}
+const TIME_FIELDS = ['prayer_id', 'time', 'anchor_id', 'offset_minutes'];
+const retime = (c) => go(c, c.state.data.draft.time_kind === 'relative' ? 'mAnchor' : 'mTime');
+
+async function afterTime(c) {
+  const msg = await problem(c, TIME_FIELDS);
+  if (msg) { c.say.push(text(`${msg}. נא להקיש זמן אחר`)); return retime(c); }
+  return c.state.data.mode === 'add' ? go(c, 'mDays') : go(c, 'mConfirm');
+}
+async function afterDays(c) {
+  const msg = await problem(c, ['days', 'time']);
+  if (msg) { c.say.push(text(msg)); return go(c, 'mDays'); }
+  return c.state.data.mode === 'add' ? goLocation(c) : go(c, 'mConfirm');
+}
 async function goLocation(c) {
   const { n } = await first(c.env, `SELECT COUNT(*) AS n FROM locations WHERE synagogue_id = ?`, c.state.data.sid);
-  return n ? go(c, 'mLoc') : go(c, 'mConfirm');
+  return n ? go(c, 'mLoc') : afterLocation(c);
+}
+/** With days and place known, a clash with another minyan is said here, and the time is asked again. */
+async function afterLocation(c) {
+  const msg = await problem(c, ['location_id', 'time']);
+  if (msg) { c.say.push(text(`${msg}. נא להקיש זמן אחר`)); return retime(c); }
+  return go(c, 'mConfirm');
 }
 /** Seasons this caller may write into: all for admins / approved synagogues, otherwise the current one. */
 async function seasonsFor(c) {

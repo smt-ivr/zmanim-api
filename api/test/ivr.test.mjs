@@ -183,12 +183,16 @@ describe('ivr management', () => {
     await call.press('2'); // add
     await call.press('1'); // shacharit (04:00-12:00)
     await call.press('1');
-    await call.press('1500'); // 15:00 -> out of range
-    await call.press('1');
-    await call.press('0');
+    body = await call.press('1500'); // 15:00 -> out of range: said right away, and the time is asked again
+    assert.match(body, /^read=t-שחרית לא אחרי 12:00 נא להקיש זמן אחר\.t-הקישו את השעה/);
+    await call.press('0700');
+    await call.press('1'); // every day
     body = await call.press('1'); // save
-    assert.match(body, /שחרית לא אחרי 12:00/);
-    assert.match(body, /t-בית כנסת, זמני/); // back in the synagogue menu
+    assert.match(body, /המניין נשמר/);
+    // the same time again: the clash is said as soon as it is known, and the time is asked again
+    for (const k of ['2', '1', '1']) await call.press(k);
+    body = await call.press('0700');
+    assert.match(body, /כבר קיים מניין באותה שעה ובאותו מיקום נא להקיש זמן אחר\.t-הקישו את השעה/);
   });
 
   test('edit: hide, change time, delete; quotas respected', async () => {
