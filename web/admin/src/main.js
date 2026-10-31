@@ -15,6 +15,7 @@ import { SynagoguePicker, Workspace } from './pages/workspace.js';
 import { Avatar, Button, Credit, Icon, Modal, Spinner, SynagogueSearch, toast } from './ui.js';
 import { PhoneActivity } from './pages/phone-activity.js';
 import { RecordingsPage } from './pages/recordings.js';
+import { ContactPage } from './pages/contact.js';
 
 // ------------------------------------------------------------------ routing (#/path)
 const parseHash = () => (location.hash.replace(/^#/, '') || '/').split('?')[0];
@@ -96,6 +97,7 @@ function App() {
   if (path === '/reset' && linkToken) return html`<${ResetPassword} token=${linkToken} onDone=${signedIn} />`;
   if (path === '/verify' && linkToken) return html`<${VerifyPage} token=${linkToken} />`;
   if (path === '/register' && session.status !== 'ready') return html`<${RegisterPage} />`;
+  if (path === '/contact') return html`<${ContactPage} />`; // anyone, no login
   if (session.status === 'loading') return html`<div class="boot"><${Spinner} /></div>`;
   if (session.status === 'anon') return html`<${Login} onDone=${signedIn} />`;
 

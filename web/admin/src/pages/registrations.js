@@ -11,6 +11,7 @@ export function RegisterPage() {
   const [areas, setAreas] = useState([]);
   const [v, setV] = useState({ synagogue_name: '', area_id: null, address: '', contact_name: '', email: '', phone: '', message: '', website: '' });
   const [sent, setSent] = useState(false);
+  const [withMessage, setWithMessage] = useState(false);
   useEffect(() => {
     api.get('/public/registrations/form').then(setForm).catch(() => setForm({ enabled: false }));
     api.get('/public/catalog').then((c) => setAreas(c.areas)).catch(() => {});
@@ -36,19 +37,30 @@ export function RegisterPage() {
       <p class="muted small center">לא הגיע? בדקו בתיקיית הספאם. הקישור תקף ל-24 שעות.</p>
       <a class="btn btn-secondary btn-block" href="#/">למסך הכניסה</a><//>`;
   }
-  return html`<${AuthCard} title="הצטרפות בית כנסת" subtitle="אחרי אימות המייל והאישור תקבלו כניסה לעדכון הזמנים">
+  return html`<${AuthCard} title="הצטרפות בית כנסת" subtitle="שלושה צעדים, ותקבלו כניסה לעדכון הזמנים">
+    <div class="steps compact">
+      <div class="step on"><b>1</b><span>פרטים</span></div>
+      <div class="step"><b>2</b><span>אימות המייל</span></div>
+      <div class="step"><b>3</b><span>אישור וכניסה</span></div>
+    </div>
     <form class="form" onSubmit=${submit}>
       ${error && html`<div class="alert alert-error">${error}</div>`}
+      <div class="form-section">בית הכנסת</div>
       <${Field} label="שם בית הכנסת" error=${fields.synagogue_name}><${Input} value=${v.synagogue_name} onInput=${set('synagogue_name')} required maxlength="80" autofocus /><//>
-      ${areas.length > 0 && html`<${Field} label="אזור" error=${fields.area_id}>
-        <${Select} value=${v.area_id} onChange=${set('area_id')} placeholder="בחירת אזור" options=${areas.map((a) => ({ value: a.id, label: a.name }))} /><//>`}
-      <${Field} label="כתובת" error=${fields.address}><${Input} value=${v.address} onInput=${set('address')} maxlength="150" /><//>
-      <${Field} label="שם איש הקשר" error=${fields.contact_name}><${Input} value=${v.contact_name} onInput=${set('contact_name')} required maxlength="80" /><//>
-      <div class="grid-2">
-        <${Field} label="מייל" error=${fields.email}><${Input} type="email" dir="ltr" value=${v.email} onInput=${set('email')} required /><//>
-        <${Field} label="טלפון" error=${fields.phone}><${Input} type="tel" dir="ltr" value=${v.phone} onInput=${set('phone')} required /><//>
+      <div class=${areas.length > 0 ? 'grid-2' : ''}>
+        ${areas.length > 0 && html`<${Field} label="אזור" error=${fields.area_id}>
+          <${Select} value=${v.area_id} onChange=${set('area_id')} placeholder="בחירה" options=${areas.map((a) => ({ value: a.id, label: a.name }))} /><//>`}
+        <${Field} label="כתובת" error=${fields.address}><${Input} value=${v.address} onInput=${set('address')} maxlength="150" /><//>
       </div>
-      <${Field} label="הודעה למנהל (לא חובה)" error=${fields.message}><${TextArea} value=${v.message} onInput=${set('message')} maxlength="500" rows="3" /><//>
+      <div class="form-section">הגבאי</div>
+      <${Field} label="שם מלא" error=${fields.contact_name}><${Input} value=${v.contact_name} onInput=${set('contact_name')} required maxlength="80" autocomplete="name" /><//>
+      <div class="grid-2">
+        <${Field} label="מייל" error=${fields.email}><${Input} type="email" dir="ltr" value=${v.email} onInput=${set('email')} required autocomplete="email" /><//>
+        <${Field} label="טלפון" error=${fields.phone}><${Input} type="tel" dir="ltr" value=${v.phone} onInput=${set('phone')} required autocomplete="tel" /><//>
+      </div>
+      ${withMessage || v.message
+        ? html`<${Field} label="הודעה להנהלה" error=${fields.message}><${TextArea} value=${v.message} onInput=${set('message')} maxlength="500" rows="3" /><//>`
+        : html`<button type="button" class="link" onClick=${() => setWithMessage(true)}>+ הוספת הודעה להנהלה</button>`}
       <div class="hp" aria-hidden="true"><label>אתר <input tabindex="-1" autocomplete="off" value=${v.website} onInput=${(e) => set('website')(e.currentTarget.value)} /></label></div>
       <${Button} kind="primary" class="btn-block" loading=${busy} type="submit">שליחת הבקשה<//>
       <a class="link center" href="#/">כבר יש לי משתמש</a>

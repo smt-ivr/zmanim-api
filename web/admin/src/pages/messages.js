@@ -36,7 +36,7 @@ function Files({ files }) {
 const clock = (iso) => new Date(iso).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
 
 /** Bubbles grouped by day. `mine(m)`: whether the message is on "my" side. */
-function Thread({ messages, mine, empty }) {
+export function Thread({ messages, mine, empty }) {
   const end = useRef();
   useEffect(() => { end.current?.scrollIntoView({ block: 'end' }); }, [messages.length]);
   if (!messages.length) return html`<div class="chat-empty">${empty}</div>`;
@@ -59,7 +59,7 @@ function Thread({ messages, mine, empty }) {
   </div>`;
 }
 
-function Composer({ onSend, disabled, placeholder = 'כתבו הודעה…', extra, initial = '' }) {
+export function Composer({ onSend, disabled, placeholder = 'כתבו הודעה…', extra, initial = '' }) {
   const [body, setBody] = useState(initial);
   const [files, setFiles] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -102,7 +102,7 @@ function Composer({ onSend, disabled, placeholder = 'כתבו הודעה…', ex
 }
 
 /** JSON when there are no files, otherwise a form with the same fields. */
-function asForm(fields, files) {
+export function asForm(fields, files) {
   if (!files.length) return fields;
   const f = new FormData();
   for (const [k, v] of Object.entries(fields)) f.append(k, String(v));

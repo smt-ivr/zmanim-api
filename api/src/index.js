@@ -31,6 +31,13 @@ export const router = new Router()
   .get('/public/synagogues/:id', pub.synagogue, PUBLIC)
   .get('/public/minyanim', pub.minyanim, PUBLIC)
   .get('/o/:token', messages.opened, PUBLIC) // e-mail opened (tracking image)
+  // anyone: prove an e-mail (Google / code), then write to the administration
+  .get('/public/chat/options', messages.guestOptions, PUBLIC)
+  .post('/public/chat/code', messages.guestCode, PUBLIC)
+  .post('/public/chat/verify', messages.guestVerify, PUBLIC)
+  .post('/public/chat/google', messages.guestGoogle, PUBLIC)
+  .get('/public/chat', messages.guestThread, PUBLIC)
+  .post('/public/chat/messages', messages.guestSend, PUBLIC)
   .get('/f/:token', serveFile, PUBLIC) // a file attached to a message (by its unguessable link)
   // self-service synagogue registration
   .get('/public/registrations/form', reg.form, PUBLIC)

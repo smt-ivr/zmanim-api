@@ -28,6 +28,7 @@ export function useSubmit(fn) {
     } catch (err) {
       if (err instanceof ApiError && Object.keys(err.fields).length) setFields(err.fields);
       else setError(err.message);
+    } finally {
       setBusy(false);
     }
   };
@@ -61,7 +62,7 @@ const G_LOGO = html`<svg width="18" height="18" viewBox="0 0 48 48" aria-hidden=
  * "Sign in with Google": a placeholder of the same size shows at once, Google's button fades in over it
  * when ready (no jumping). Also shows Google's One Tap card, which signs a returning user in by itself.
  */
-function GoogleButton({ clientId, onDone, onError }) {
+export function GoogleButton({ clientId, onDone, onError, endpoint = '/auth/google', oneTap = true }) {
   const box = useRef();
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -74,7 +75,7 @@ function GoogleButton({ clientId, onDone, onError }) {
       const gid = window.google.accounts.id;
       gid.initialize({
         client_id: clientId,
-        auto_select: !noAuto, // returning users are signed in without a click
+        auto_select: oneTap && !noAuto, // returning users are signed in without a click
         cancel_on_tap_outside: false,
         itp_support: true,
         use_fedcm_for_prompt: true,
@@ -82,7 +83,7 @@ function GoogleButton({ clientId, onDone, onError }) {
         callback: async ({ credential }) => {
           setBusy(true);
           try {
-            const session = await api.post('/auth/google', { credential });
+            const session = await api.post(endpoint, { credential });
             try { localStorage.removeItem(NO_AUTO); } catch { /* ignore */ }
             onDone(session);
           } catch (e) { setBusy(false); onError(e.message); }
@@ -103,7 +104,7 @@ function GoogleButton({ clientId, onDone, onError }) {
       };
       waitFrame();
       setTimeout(() => alive && setReady(true), 4000); // never leave the placeholder forever
-      gid.prompt(); // One Tap
+      if (oneTap) gid.prompt(); // One Tap
     }).catch((e) => onError(e.message));
     return () => { alive = false; window.google?.accounts?.id?.cancel(); };
   }, [clientId]);
@@ -140,9 +141,14 @@ export function Login({ onDone }) {
   const switchTo = (m) => { setMode(m); setSent(false); };
 
   if (sent) {
-    return html`<${AuthCard} title="בדקו את המייל" subtitle="אם הפרטים רשומים במערכת, נשלח אליכם מייל עם קישור">
-      <p class="muted small">הקישור תקף ${mode === 'link' ? 'ל-30 דקות' : 'לשעה'} ולשימוש אחד. לא הגיע? בדקו בתיקיית הספאם.</p>
-      <${Button} class="btn-block" onClick=${() => switchTo('password')}>חזרה לכניסה<//>
+    return html`<${AuthCard} title="בדקו את המייל" subtitle=${mode === 'link' ? 'שלחנו קישור לכניסה ישירה' : 'שלחנו קישור לבחירת סיסמה חדשה'}>
+      <div class="auth-mail"><${Icon} name="mail" size=${30} /></div>
+      <p class="center">אם <b dir="ltr">${login}</b> רשום במערכת, המייל כבר בדרך.</p>
+      <p class="muted small center">הקישור תקף ${mode === 'link' ? 'ל־30 דקות' : 'לשעה'} ולשימוש אחד. לא הגיע תוך דקה? בדקו בתיקיית הספאם.</p>
+      <div class="auth-actions">
+        <${ResendButton} onResend=${() => api.post(mode === 'link' ? '/auth/email-link' : '/auth/reset-request', { login })} />
+        <${Button} kind="ghost" class="btn-block" onClick=${() => switchTo('password')}>חזרה לכניסה<//>
+      </div>
     <//>`;
   }
 
@@ -168,9 +174,29 @@ export function Login({ onDone }) {
         ${mode !== 'link' && options.magic_link && html`<button type="button" class="link" onClick=${() => switchTo('link')}>כניסה עם קישור למייל</button>`}
         ${mode !== 'reset' && options.password_reset && html`<button type="button" class="link" onClick=${() => switchTo('reset')}>שכחתי סיסמה</button>`}
       </div>
-      ${mode === 'password' && options.registration && html`<div class="auth-register">בית כנסת חדש? <a class="link" href="#/register">הצטרפות למערכת</a></div>`}
+      ${mode === 'password' && (options.registration || options.guest_chat) && html`<div class="auth-register">
+        ${options.registration && html`<span>בית כנסת חדש? <a class="link" href="#/register">הצטרפות למערכת</a></span>`}
+        ${options.guest_chat && html`<span>אין לך משתמש? <a class="link" href="#/contact">פנייה להנהלה</a></span>`}
+      </div>`}
     </form>
   <//>`;
+}
+
+/** "Send again", available again after 30 seconds. */
+function ResendButton({ onResend }) {
+  const [wait, setWait] = useState(30);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (wait <= 0) return undefined;
+    const t = setTimeout(() => setWait((w) => w - 1), 1000);
+    return () => clearTimeout(t);
+  }, [wait]);
+  async function again() {
+    setBusy(true);
+    try { await onResend(); setWait(30); } catch (e) { alert(e.message); }
+    setBusy(false);
+  }
+  return html`<${Button} class="btn-block" loading=${busy} disabled=${wait > 0} onClick=${again}>${wait > 0 ? `שליחה שוב (${wait})` : 'שליחה שוב'}<//>`;
 }
 
 /**

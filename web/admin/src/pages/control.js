@@ -79,6 +79,7 @@ export function ControlPage({ onChanged }) {
       ${toggle('contact_email_shown', 'כתובת לפניות מוצגת באתר', 'באתר הציבורי (בראש העמוד ובתחתיתו) מוצגת כתובת מייל לפניות')}
       <${ContactEditor} data=${data} onSave=${(v) => save({ contact_email: v }, 'הכתובת עודכנה')} />
       ${toggle('feedback_enabled', 'משתמשים יכולים לשלוח הודעות', 'כבוי: אף משתמש לא יכול לשלוח הודעה מהמערכת. חסימה של משתמש מסוים נעשית מתוך השיחה איתו')}
+      ${toggle('guest_chat_enabled', 'כל אחד יכול לפנות דרך האתר', 'אחרי אימות המייל (Google או קוד שנשלח למייל). ההודעות מגיעות לצ׳אט שלך. כבוי: דף הפנייה סגור')}
     </section>
   </div>`;
 }

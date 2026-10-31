@@ -682,3 +682,18 @@ kbd { font: 12px/1 var(--font); padding: 3px 6px; border-radius: 5px; border: 1p
 .webhook-box { padding: 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); display: flex; flex-direction: column; gap: 6px; }
 .webhook-box p { margin: 0; }
 .webhook-box code { font-size: 12px; padding: 8px 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; overflow-wrap: anywhere; }
+
+/* auth screens: tidier secondary steps */
+.auth-mail { display: grid; place-items: center; width: 64px; height: 64px; margin: 14px auto 8px; border-radius: 50%; background: var(--primary-soft); color: var(--primary); }
+.auth-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; }
+.auth-register { display: flex; flex-direction: column; gap: 6px; }
+.form-inner { display: flex; flex-direction: column; gap: 14px; }
+.code-input { text-align: center; font-size: 26px; letter-spacing: 10px; font-variant-numeric: tabular-nums; height: 56px; }
+
+/* the public contact page */
+.contact-page { min-height: 100vh; background: var(--bg); }
+.contact-head { display: flex; align-items: center; gap: 12px; padding: 12px 20px; background: var(--surface); border-bottom: 1px solid var(--border); }
+.contact-head .brand { display: flex; align-items: center; gap: 10px; margin-inline-end: auto; text-decoration: none; color: var(--text); }
+.steps.compact { display: flex; gap: 6px; margin: 16px 0 0; }
+.steps.compact .step { flex: 1; flex-direction: column; text-align: center; font-size: 12.5px; gap: 4px; }
+.form-section { font-size: 13px; font-weight: 800; color: var(--muted); border-bottom: 1px solid var(--border); padding-bottom: 4px; margin-top: 4px; }

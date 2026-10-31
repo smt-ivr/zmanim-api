@@ -162,6 +162,7 @@ function App() {
         <a class="brand" href="#/"><span class="brand-mark"><${Icon} name="clock" /></span><span>${name}</span></a>
         <div class="top-actions">
           ${phone && html`<a class="phone-pill" href=${`tel:${phone}`}><${Icon} name="phone" size=${16} /><span dir="ltr">${formatPhone(phone)}</span></a>`}
+          <a class="gabbai-btn" href="admin/"><${Icon} name="lock" size=${15} /><span>כניסה לגבאים</span></a>
           <button class="icon-btn" onClick=${toggleTheme} aria-label=${dark ? 'מצב בהיר' : 'מצב כהה'}><${Icon} name=${dark ? 'sun' : 'moon'} /></button>
         </div>
       </div>
@@ -170,10 +171,7 @@ function App() {
     <footer class="foot">
       <div class="wrap foot-row">
         <span>${name}</span>
-        ${phone && html`<a href=${`tel:${phone}`}>שמיעה בטלפון: <span dir="ltr">${formatPhone(phone)}</span></a>`}
-        ${data?.catalog?.site?.contact_email && html`<a href=${`mailto:${data.catalog.site.contact_email}`}><${Icon} name="mail" size=${14} /> לפניות: <span dir="ltr">${data.catalog.site.contact_email}</span></a>`}
-        ${data?.catalog?.site?.registration && html`<a href="admin/#/register">הוספת בית כנסת</a>`}
-        <a href="admin/" class="foot-admin"><${Icon} name="lock" size=${14} /> כניסת מנהלים</a>
+        ${data?.catalog?.site?.guest_chat && html`<a href="admin/#/contact"><${Icon} name="mail" size=${14} /> פנייה להנהלה</a>`}
         <a class="credit" href="https://smti.uk" target="_blank" rel="noopener">פותח ע״י
           <img class="smt-logo" src="https://smti.uk/smt.png" alt="SMT" draggable="false" /></a>
       </div>

@@ -626,7 +626,7 @@ describe('e-mail (Resend mocked)', () => {
   test('control hides the key; test mail; options follow the switches', async () => {
     const admin = await setupAdmin();
     await env.DB.prepare(`UPDATE users SET is_super = 1`).run();
-    assert.deepEqual((await call('GET', '/auth/options')).body, { magic_link: false, password_reset: false, google_client_id: '89500817024-tbvsuu4dci6bqh173l65ua9lc65pe24p.apps.googleusercontent.com', system_name: 'מערכת זמני התפילות', registration: false });
+    assert.deepEqual((await call('GET', '/auth/options')).body, { magic_link: false, password_reset: false, google_client_id: '89500817024-tbvsuu4dci6bqh173l65ua9lc65pe24p.apps.googleusercontent.com', system_name: 'מערכת זמני התפילות', registration: false, guest_chat: true });
     await enableMail();
     const ctl = await call('GET', '/admin/control', { token: admin });
     assert.equal(ctl.body.resend_api_key, '••••1234');
@@ -635,7 +635,7 @@ describe('e-mail (Resend mocked)', () => {
     assert.equal((await call('POST', '/admin/control/test-mail', { token: admin })).status, 200);
     assert.equal(sent[0].headers.Authorization, 'Bearer re_secret_1234');
     assert.deepEqual(sent[0].body.to, ['admin@x.com']);
-    assert.deepEqual((await call('GET', '/auth/options')).body, { magic_link: true, password_reset: true, google_client_id: '89500817024-tbvsuu4dci6bqh173l65ua9lc65pe24p.apps.googleusercontent.com', system_name: 'מערכת זמני התפילות', registration: false });
+    assert.deepEqual((await call('GET', '/auth/options')).body, { magic_link: true, password_reset: true, google_client_id: '89500817024-tbvsuu4dci6bqh173l65ua9lc65pe24p.apps.googleusercontent.com', system_name: 'מערכת זמני התפילות', registration: false, guest_chat: true });
     await setSetting('magic_link_enabled', '0');
     assert.equal((await call('POST', '/auth/email-link', { body: { login: 'admin@x.com' } })).status, 403);
   });
@@ -1222,6 +1222,32 @@ describe('e-mail (Resend mocked)', () => {
     list = (await call('GET', '/admin/recordings', { token: admin })).body;
     assert.equal(list.items.find((i) => i.key === 'sys:at').recorded, true);
     globalThis.fetch = realFetch;
+  });
+
+  test('anyone can write after proving an e-mail with a code; the super admin can close it', async () => {
+    const admin = await setupAdmin();
+    await env.DB.prepare(`UPDATE users SET is_super = 1`).run();
+    await enableMail();
+    assert.equal((await call('GET', '/public/chat/options')).body.enabled, true);
+    assert.equal((await call('GET', '/public/chat')).status, 403, 'no token');
+    assert.equal((await call('POST', '/public/chat/code', { body: { email: 'visitor@out.com' } })).status, 204);
+    const code = /קוד האימות שלך: (\d{6})/.exec(sent.at(-1).body.subject)[1];
+    assert.equal((await call('POST', '/public/chat/verify', { body: { email: 'visitor@out.com', code: '000000' === code ? '111111' : '000000' } })).status, 422);
+    const v = await call('POST', '/public/chat/verify', { body: { email: 'visitor@out.com', code, name: 'אורח' } });
+    assert.equal(v.status, 200);
+    assert.match(v.body.token, /^g_[0-9a-f]{48}$/);
+    assert.equal((await call('POST', '/public/chat/verify', { body: { email: 'visitor@out.com', code } })).status, 422, 'one use');
+    const guest = (method, path, body) => worker.fetch(new Request(`https://x.test/api${path}`, { method, headers: { Authorization: `Bearer ${v.body.token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined }), env).then(async (r) => ({ status: r.status, body: r.status === 204 ? null : await r.json() }));
+    assert.equal((await guest('POST', '/public/chat/messages', { body: 'מתי מנחה בשבת?' })).status, 201);
+    const [c] = (await call('GET', '/admin/conversations', { token: admin })).body;
+    assert.deepEqual([c.email, c.name, c.user_id], ['visitor@out.com', 'אורח', null]);
+    await call('POST', `/admin/conversations/${c.id}/messages`, { token: admin, body: { body: 'בשעה 13:30' } });
+    const thread = (await guest('GET', '/public/chat')).body;
+    assert.deepEqual(thread.messages.map((m) => [m.sender, m.body]), [['user', 'מתי מנחה בשבת?'], ['staff', 'בשעה 13:30']]);
+    // closed by the super admin
+    await call('PATCH', '/admin/control', { token: admin, body: { guest_chat_enabled: false } });
+    assert.equal((await guest('POST', '/public/chat/messages', { body: 'עוד' })).status, 403);
+    assert.equal((await call('GET', '/public/chat/options')).body.enabled, false);
   });
 
   test('incoming e-mail: replies, outside senders, the staff answering from the mailbox', async () => {

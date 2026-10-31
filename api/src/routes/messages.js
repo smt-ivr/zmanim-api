@@ -517,3 +517,132 @@ async function emailBroadcast(env, url, bid, body, convs, tokens) {
   for (let i = 0; i < statements.length; i += 200) await env.DB.batch(statements.slice(i, i + 200));
   return convs.length - failedIds.length;
 }
+
+// ------------------------------------------------------------------ anyone (not a user): prove an e-mail, then chat
+// The person proves an e-mail address with Google or with a 6-digit code sent to it, and gets a guest token
+// for 30 days. Their messages go into the conversation of that address (the user's own one when the address
+// belongs to a user). The super admin can close this (guest_chat_enabled).
+const GUEST_TTL = 30 * 86400;
+const CODE_TTL = 10 * 60;
+const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+const digest = async (t) => hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)));
+const ipOf = (request) => request.headers.get('CF-Connecting-IP') || 'unknown';
+
+async function guestOpen(env) {
+  const s = await getSettings(env);
+  if (!s.guest_chat_enabled) throw forbidden('שליחת הודעות דרך האתר סגורה כרגע');
+  return s;
+}
+
+function blockedEmail(s, email) {
+  return s.registration_blocklist.split(/\r?\n/).map((l) => clean(l).toLowerCase()).filter(Boolean)
+    .some((l) => l === email || (l.startsWith('@') && email.endsWith(l)));
+}
+
+async function newGuestSession(env, email, name, via) {
+  const token = `g_${hex(crypto.getRandomValues(new Uint8Array(24)))}`;
+  await run(env, `INSERT INTO guest_sessions (token_hash, email, name, via, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)`,
+    await digest(token), email, name.slice(0, 80), via, nowSec(), nowSec() + GUEST_TTL);
+  return token;
+}
+
+async function guestOf(env, request) {
+  const token = (request.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
+  if (!token.startsWith('g_')) throw forbidden('יש לאמת קודם את המייל');
+  const g = await first(env, `SELECT * FROM guest_sessions WHERE token_hash = ? AND expires_at > ?`, await digest(token), nowSec());
+  if (!g) throw forbidden('האימות פג. יש לאמת שוב את המייל');
+  return g;
+}
+
+/** The conversation of a guest's address: the user's own when the address is a user's, otherwise one by e-mail. */
+async function guestConversation(env, g, create) {
+  const user = await first(env, `SELECT * FROM users WHERE email = ? AND is_active = 1`, g.email);
+  if (user) return create ? ensureConversation(env, user) : conversationOfUser(env, user.id);
+  const conv = await first(env, `SELECT * FROM conversations WHERE user_id IS NULL AND email = ?`, g.email);
+  if (conv || !create) return conv;
+  const res = await run(env, `INSERT INTO conversations (email, name, subject) VALUES (?, ?, ?)`, g.email, g.name || '', 'פנייה מהאתר');
+  return first(env, `SELECT * FROM conversations WHERE id = ?`, res.meta.last_row_id);
+}
+
+/** GET /public/chat/options — open or closed, and how to verify. */
+export async function guestOptions({ env }) {
+  const s = await getSettings(env);
+  return json({ enabled: s.guest_chat_enabled, code: s.guest_chat_enabled && (await mailReady(env)), google_client_id: s.google_login_enabled ? s.google_client_id || null : null, system_name: s.system_name });
+}
+
+/** POST /public/chat/code { email } — sends a 6-digit code (rate limited per address and per IP). */
+export async function guestCode({ env, request, url }) {
+  const s = await guestOpen(env);
+  if (!(await mailReady(env))) throw forbidden('שליחת קוד במייל אינה זמינה כרגע');
+  const d = fields(await readJson(request)).email('email', { required: true }).done();
+  if (blockedEmail(s, d.email)) throw forbidden('לא ניתן לשלוח הודעות מכתובת זו');
+  for (const key of [`gcode:${d.email}`, `gcodeip:${ipOf(request)}`]) {
+    try { await checkLock(env, key); } catch { throw forbidden('נשלחו יותר מדי קודים. נסו שוב מאוחר יותר'); }
+  }
+  await recordFailure(env, `gcode:${d.email}`, { max: 4, window: 3600, lock: 3600 });
+  await recordFailure(env, `gcodeip:${ipOf(request)}`, { max: 10, window: 3600, lock: 3600 });
+  const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1000000).padStart(6, '0');
+  await run(env, `INSERT INTO guest_codes (email, code_hash, expires_at, attempts) VALUES (?, ?, ?, 0)
+    ON CONFLICT(email) DO UPDATE SET code_hash = excluded.code_hash, expires_at = excluded.expires_at, attempts = 0`, d.email, await digest(code), nowSec() + CODE_TTL);
+  await sendMail(env, {
+    to: d.email, subject: `קוד האימות שלך: ${code}`, title: 'קוד האימות שלך', site: siteUrl(env, url),
+    paragraphs: ['כדי לשלוח הודעה להנהלה, הקלידו באתר את הקוד:'], details: [['קוד', code]],
+    note: 'הקוד תקף ל־10 דקות. אם לא ביקשתם קוד, אפשר להתעלם מהמייל.',
+  });
+  return noContent();
+}
+
+/** POST /public/chat/verify { email, code, name } — the code from the e-mail; returns a guest token. */
+export async function guestVerify({ env, request }) {
+  await guestOpen(env);
+  const d = fields(await readJson(request)).email('email', { required: true }).str('code', { required: true, max: 10 }).str('name', { max: 80 }).done();
+  const row = await first(env, `SELECT * FROM guest_codes WHERE email = ?`, d.email);
+  if (!row || row.expires_at < nowSec() || row.attempts >= 5) throw invalid({ code: 'הקוד פג. בקשו קוד חדש' });
+  if (row.code_hash !== (await digest(d.code.replace(/\D/g, '')))) {
+    await run(env, `UPDATE guest_codes SET attempts = attempts + 1 WHERE email = ?`, d.email);
+    throw invalid({ code: 'הקוד שגוי' });
+  }
+  await run(env, `DELETE FROM guest_codes WHERE email = ?`, d.email);
+  return json({ token: await newGuestSession(env, d.email, d.name || '', 'code'), email: d.email });
+}
+
+/** POST /public/chat/google { credential } — verified by Google; returns a guest token. */
+export async function guestGoogle({ env, request }) {
+  const s = await guestOpen(env);
+  if (!s.google_login_enabled || !s.google_client_id) throw forbidden('האימות עם Google סגור כרגע');
+  const d = fields(await readJson(request)).str('credential', { required: true, max: 4096 }).done();
+  const res = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(d.credential)}`);
+  const g = res.ok ? await res.json() : null;
+  if (!g?.email || g.aud !== s.google_client_id || String(g.email_verified) !== 'true' || Number(g.exp) * 1000 < Date.now()) {
+    throw forbidden('האימות מול Google נכשל. נסו שוב');
+  }
+  const email = normalizeEmail(g.email);
+  if (blockedEmail(s, email)) throw forbidden('לא ניתן לשלוח הודעות מכתובת זו');
+  return json({ token: await newGuestSession(env, email, clean(g.name || ''), 'google'), email });
+}
+
+/** GET /public/chat — the guest's conversation. */
+export async function guestThread({ env, request }) {
+  await guestOpen(env);
+  const g = await guestOf(env, request);
+  const conv = await guestConversation(env, g, false);
+  const messages = conv ? await withFiles(env, conv.id, await all(env, `SELECT id, sender, body, created_at FROM messages WHERE conversation_id = ? ORDER BY created_at, id`, conv.id)) : [];
+  if (conv?.user_unread) await run(env, `UPDATE conversations SET user_unread = 0 WHERE id = ?`, conv.id);
+  return json({ email: g.email, name: g.name, messages });
+}
+
+/** POST /public/chat/messages { body } (or a form with files) */
+export async function guestSend({ env, request, url }) {
+  const s = await guestOpen(env);
+  const g = await guestOf(env, request);
+  if (blockedEmail(s, g.email)) throw forbidden('לא ניתן לשלוח הודעות מכתובת זו');
+  const d = await readMessage(request);
+  checkFiles(env, d.files);
+  const conv = await guestConversation(env, g, true);
+  const { n } = await first(env, `SELECT COUNT(*) AS n FROM messages WHERE conversation_id = ? AND sender = 'user' AND created_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-1 hour')`, conv.id);
+  if (n >= 20) throw forbidden('נשלחו יותר מדי הודעות בשעה האחרונה');
+  const msg = await addMessage(env, conv, { sender: 'user', body: d.body, files: d.files });
+  await notifyStaff(env, url, conv, d.body, d.files);
+  const [shown] = await withFiles(env, conv.id, [{ id: msg.id, sender: 'user', body: msg.body, created_at: msg.created_at }]);
+  return json(shown, 201);
+}

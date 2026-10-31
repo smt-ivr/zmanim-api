@@ -10,6 +10,7 @@ export const SETTINGS = {
   listen_enabled: { type: 'bool', default: true },        // public listening phone line
   manage_phone_enabled: { type: 'bool', default: true },  // management phone line
   feedback_enabled: { type: 'bool', default: true },      // messages to the developers
+  guest_chat_enabled: { type: 'bool', default: true },    // anyone may write after proving an e-mail (Google / code)
   minyan_notes_enabled: { type: 'bool', default: false }, // free-text note on a minyan
   public_season_choice: { type: 'bool', default: false }, // public may view other seasons (default: current only)
   mail_enabled: { type: 'bool', default: false },         // send e-mail through Resend

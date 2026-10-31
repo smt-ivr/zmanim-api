@@ -113,6 +113,7 @@ export async function getOptions({ env }) {
     google_client_id: s.google_login_enabled && s.google_client_id ? s.google_client_id : null,
     system_name: s.system_name,
     registration: s.registration_enabled && ready, // "new synagogue? register" link
+    guest_chat: s.guest_chat_enabled, // "no user? write to the administration"
   });
 }
 
