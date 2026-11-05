@@ -33,6 +33,33 @@ function Files({ files }) {
   </div>`;
 }
 
+// Links in message text: http(s)://…, www.…, bare domains (smti.uk/zmanim) and e-mail addresses.
+const TLD = 'com|net|org|info|biz|io|co|me|app|dev|uk|il|us|de|fr|ru|edu|gov|ai|tv|xyz|site|online|store|shop|link|page|email|cloud|tech|pro|live|news|blog|today|world|workers';
+const LINK_RE = new RegExp(
+  '([\\w.+-]+@[a-z0-9-]+(?:\\.[a-z0-9-]+)*\\.[a-z]{2,})' + // e-mail
+  `|((?:https?:\\/\\/|www\\.)[^\\s<]+|(?:[a-z0-9-]+\\.)+(?:${TLD})(?![a-z0-9-])(?:[/?#:][^\\s<]*)?)`, 'gi');
+const TRAILING = /[.,;:!?'"״׳)\]}>]+$/; // punctuation after a link is part of the sentence, not the link
+
+/** Message text with every link clickable (opens in a new tab). */
+function Linkify({ text }) {
+  const out = [];
+  let last = 0;
+  for (const m of text.matchAll(LINK_RE)) {
+    let raw = m[0];
+    const tail = raw.match(TRAILING)?.[0] || '';
+    // keep a closing bracket that belongs to the URL, e.g. …/Foo_(bar)
+    let cut = tail.length;
+    if (tail.startsWith(')') && (raw.match(/\(/g) || []).length >= (raw.match(/\)/g) || []).length) cut = 0;
+    raw = raw.slice(0, raw.length - cut);
+    if (m.index > 0 && /[\w@.-]/.test(text[m.index - 1])) continue; // middle of a word
+    const href = m[1] ? `mailto:${raw}` : /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    out.push(text.slice(last, m.index), html`<a href=${href} target="_blank" rel="noopener noreferrer" dir="ltr">${raw}</a>`);
+    last = m.index + raw.length;
+  }
+  out.push(text.slice(last));
+  return out;
+}
+
 const clock = (iso) => new Date(iso).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
 
 /** Bubbles grouped by day. `mine(m)`: whether the message is on "my" side. */
@@ -48,7 +75,7 @@ export function Thread({ messages, mine, empty }) {
       return html`${sep}<div class=${cx('bubble', mine(m) ? 'mine' : 'theirs')} key=${m.id}>
         ${m.staff_name && !mine(m) ? html`<small class="bubble-who">${m.staff_name}</small>` : ''}
         <${Files} files=${m.files} />
-        ${m.body && html`<div class="bubble-body">${m.body}</div>`}
+        ${m.body && html`<div class="bubble-body"><${Linkify} text=${m.body} /></div>`}
         <small class="bubble-meta">${clock(m.created_at)}${m.broadcast_id ? ' · הודעה קבוצתית' : ''}${m.via === 'email' ? ' · במייל' : ''}${m.emailed ? ' · נשלח במייל' : ''}
           ${m.emailed && m.sender === 'staff' ? (m.opened_at
             ? html` · <span class="opened" title=${m.open_count > 1 ? `נפתח ${m.open_count} פעמים` : ''}>✓✓ נפתח ${dayLabel(m.opened_at) === 'היום' ? 'היום' : dayLabel(m.opened_at)} ${clock(m.opened_at)}</span>`
