@@ -1,0 +1,6 @@
+# Only for running this folder as its own Worker later (today it is served by the zmanim Worker
+# at smti.uk/zmanim/ivr-safed). To split: `npx wrangler deploy` from this folder, add a route.
+name = "ivr-safed"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+workers_dev = true

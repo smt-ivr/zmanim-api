@@ -1,0 +1,6 @@
+{
+  "name": "ivr-safed",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test --no-warnings test/*.test.mjs", "deploy": "wrangler deploy" }
+}
