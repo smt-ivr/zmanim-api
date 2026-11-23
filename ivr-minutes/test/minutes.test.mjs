@@ -245,12 +245,13 @@ test('blocked numbers cannot add, can still hear; import from the Yemot log', as
     row('0501110003', '16/10/2026', '10:26:13', '99999999999999999999'),
     row('0501110003', '24/07/2025', '22:03:00', '5'),
     row('', '24/07/2025', '22:03:00', '5'),                      // invalid
+    row('0521110001', '20/12/2024', '11:09:17', '30.'),          // "30." = 30
   ];
   // block the one who made a mess, then import
   let b = await req('POST', '/api/blocked', { phone: '0501110003', note: 'סכומים מטורפים' });
   assert.equal(b.status, 200);
   let res = await req('POST', '/api/import', { list: 'main', max: 120, rows: log });
-  assert.deepEqual([res.data.added, res.data.over_max, res.data.blocked, res.data.invalid, res.data.minutes], [2, 1, 2, 1, 30]);
+  assert.deepEqual([res.data.added, res.data.over_max, res.data.blocked, res.data.invalid, res.data.minutes], [3, 1, 2, 1, 60]);
   assert.equal(res.data.over_max_rows[0].minutes, '200');
   // the time is kept: 11/12/2024 11:18:04 Israel = 09:18:04 UTC
   const e = env.DB.db.prepare(`SELECT * FROM minutes_entries WHERE phone = '0521110001'`).get();
@@ -258,11 +259,11 @@ test('blocked numbers cannot add, can still hear; import from the Yemot log', as
   assert.equal(e.source, 'import');
   // importing again adds nothing
   res = await req('POST', '/api/import', { list: 'main', max: 120, rows: log });
-  assert.deepEqual([res.data.added, res.data.already], [0, 2]);
+  assert.deepEqual([res.data.added, res.data.already], [0, 3]);
 
   // the blocked number: cannot add, hears the total
   assert.equal(await caller(env, key, 'add', {}, { phone: '0501110003' })(), 'id_list_message=t-לא ניתן לעדכן ממספר טלפון זה&');
-  assert.equal(await caller(env, key, 'total', {}, { phone: '0501110003' })(), 'id_list_message=t-עד כה קיבלו על עצמן כל המשתתפות תוספת שבת של 30 דקות&');
+  assert.equal(await caller(env, key, 'total', {}, { phone: '0501110003' })(), 'id_list_message=t-עד כה קיבלו על עצמן כל המשתתפות תוספת שבת של 60 דקות&');
   // an imported update this week counts toward the weekly limit
   const sunday = Date.parse('2026-11-23T10:00:00Z');
   assert.match(await caller(env, key, 'add', {}, { phone: '041110002', now: sunday })(), /כבר עדכנת השבוע תוספת של 20 דקות/);

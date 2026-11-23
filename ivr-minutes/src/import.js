@@ -17,7 +17,7 @@ export function parseRow(r) {
   const tm = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(String(r['שעה'] ?? '').trim());
   if (!dm || !tm) return { skip: 'date' };
   const raw = String(r['תרומה נוכחית'] ?? r.amount ?? '').trim();
-  if (!/^\d+(\.\d+)?$/.test(raw)) return { skip: 'amount' };
+  if (!/^\d+(\.\d*)?$/.test(raw)) return { skip: 'amount' }; // "30." = 30 (the caller pressed * after the number)
   const minutes = Number(raw);
   return { phone, at: israelToEpoch(+dm[3], +dm[2], +dm[1], +tm[1], +tm[2], +(tm[3] || 0)), minutes };
 }
