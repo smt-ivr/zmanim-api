@@ -30,9 +30,7 @@ test('speaking minutes', () => {
   assert.equal(speakMinutes(1), 'דקה אחת');
   assert.equal(speakMinutes(45), '45 דקות');
   assert.equal(speakMinutes(135), '135 דקות');
-  assert.equal(speakMinutes(135, true), 'שעתיים ו 15 דקות');
-  assert.equal(speakMinutes(61, true), 'שעה אחת ו דקה אחת');
-  assert.equal(speakMinutes(120, true), 'שעתיים');
+  assert.equal(speakMinutes(55228), '55228 דקות');
 });
 
 test('windows', () => {
@@ -85,7 +83,7 @@ test('add, limit per day, change the last update, total line', async () => {
   assert.equal(await caller(env, key, 'total', {})(), 'id_list_message=t-עד כה קיבלו על עצמן כל המשתתפות תוספת שבת של 60 דקות&');
   assert.equal(await caller(env, key, 'total', {}, { phone: '' })(), 'id_list_message=t-עד כה קיבלו על עצמן כל המשתתפות תוספת שבת של 60 דקות&');
   assert.equal(await caller(env, key, 'total', { say: 'mine' })(), 'id_list_message=t-עד כה קיבלת על עצמך תוספת שבת של 45 דקות&');
-  assert.equal(await caller(env, key, 'total', { say: 'both', hours: '1' })(), 'id_list_message=t-עד כה קיבלו על עצמן כל המשתתפות תוספת שבת של שעה אחת.t-ואת קיבלת על עצמך תוספת שבת של 45 דקות&');
+  assert.equal(await caller(env, key, 'total', { say: 'both' })(), 'id_list_message=t-עד כה קיבלו על עצמן כל המשתתפות תוספת שבת של 60 דקות.t-ואת קיבלת על עצמך תוספת שבת של 45 דקות&');
   assert.equal(await caller(env, key, 'total', { say: 'both' }, { phone: '0531111111' })(), 'id_list_message=t-עד כה קיבלו על עצמן כל המשתתפות תוספת שבת של 60 דקות.t-ואת עדיין לא קיבלת על עצמך תוספת שבת&');
   assert.equal(await caller(env, key, 'total', { say: 'mine' }, { phone: '0531111111' })(), 'id_list_message=t-עדיין לא קיבלת על עצמך תוספת שבת&');
   assert.match(await caller(env, key, 'total', { say: 'mine' }, { phone: '' })(), /לא זוהה מספר הטלפון/);
@@ -257,6 +255,9 @@ test('blocked numbers cannot add, can still hear; import from the Yemot log', as
   const e = env.DB.db.prepare(`SELECT * FROM minutes_entries WHERE phone = '0521110001'`).get();
   assert.equal(e.created_at, Date.parse('2024-12-11T09:18:04Z') / 1000);
   assert.equal(e.source, 'import');
+  // only from a date
+  const fromDate = await req('POST', '/api/import', { list: 'other', max: 120, since: '2025-01-01', rows: log });
+  assert.equal(fromDate.data.before, 2); // the two rows of 20/12/2024 and 11/12/2024
   // importing again adds nothing
   res = await req('POST', '/api/import', { list: 'main', max: 120, rows: log });
   assert.deepEqual([res.data.added, res.data.already], [0, 3]);
