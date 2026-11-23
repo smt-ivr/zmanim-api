@@ -67,6 +67,8 @@ test('add, limit per day, change the last update, total line', async () => {
   assert.equal(r, 'id_list_message=t-נרשמה תוספת של 30 דקות.t-סך הכל קיבלת על עצמך תוספת שבת של 30 דקות&');
   assert.equal(await call('a2', '30'), r, 'a repeated request does not add twice');
 
+  // without saying the maximum
+  assert.match(await caller(env, key, 'add', { ...q, show_max: 'no' }, { phone: '0538888888' })(), /^read=t-הקישי את מספר הדקות של תוספת שבת שאת מקבלת על עצמך ובסיום הקישי סולמית=a1,/);
   // second call the same day: blocked, offered to change
   call = caller(env, key, 'add', q);
   r = await call();

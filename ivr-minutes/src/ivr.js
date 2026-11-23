@@ -56,6 +56,7 @@ export function settings(p) {
     times: int(p.times, 1, 999, 1),
     per: parsePer(p.per),
     edit: p.edit !== 'no',
+    showMax: p.show_max !== 'no', // say the maximum before typing
     // total line: all = only the total of everyone (default), both = everyone's and then hers, mine = only hers
     say: ['all', 'both', 'mine'].includes(p.say) ? p.say : p.all === '1' ? 'both' : 'all',
   };
@@ -150,8 +151,8 @@ async function status(c) {
 
 const mp = (c, n) => minutesParts(n);
 const totalLine = (c, t) => (t ? [P('total_is'), ...mp(c, t)] : [P('none_yet')]);
-const amountPrompt = (c) => [P('add_prompt'), String(c.s.max), P('end_hash')];
-const editPrompt = (c) => [P('edit_prompt'), String(c.s.max), P('edit_cancel'), P('end_hash')];
+const amountPrompt = (c) => (c.s.showMax ? [P('add_prompt'), String(c.s.max), P('end_hash')] : [P('add_prompt_free'), P('end_hash')]);
+const editPrompt = (c) => [...(c.s.showMax ? [P('edit_prompt'), String(c.s.max)] : [P('edit_prompt_free')]), P('edit_cancel'), P('end_hash')];
 const amountRead = (c, lines, val) => read(c.v, lines, val, { maxDigits: String(c.s.max).length, amount: true });
 
 function alreadyParts(per) {
