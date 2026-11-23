@@ -33,7 +33,7 @@ const FILES = {
   get: async (k) => (files.has(k) ? { body: new Response(files.get(k)).body, arrayBuffer: async () => files.get(k).buffer } : null),
   delete: async (keys) => [].concat(keys).forEach((k) => files.delete(k)),
 };
-const env = { DB: new D1Shim(), ASSETS, FILES, BASE_PATH: '/zmanim' };
+const env = { DB: new D1Shim(), ASSETS, FILES, BASE_PATH: '/zmanim', MINUTES_PASSWORD: 'preview' }; // ivr-minutes admin page: /zmanim/ivr-minutes/
 await env.DB.prepare(`INSERT INTO users (name, email, phone, password_hash, role, is_super) VALUES ('מנהל הדגמה', 'admin@example.com', '0500000000', ?, 'admin', 1)`)
   .bind(await hashPassword('preview')).run();
 // Demo content so the public site has something to show
