@@ -1,4 +1,4 @@
-// "תוספת דקות": callers add minutes to their own total by phone (Yemot HaMashiach type=api),
+// "תוספת שבת": listeners enter how many minutes of tosefet Shabbat they take on (by phone, Yemot type=api), and it adds up;
 // another extension only says how much they have accumulated, and an admin page shows it all.
 // Self-contained: no imports from outside this folder, its own minutes_* tables, so it can move
 // to its own Worker as is.

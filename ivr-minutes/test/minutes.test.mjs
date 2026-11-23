@@ -42,7 +42,7 @@ test('windows', () => {
   assert.equal(windowStart(parsePer('month'), now), Date.parse('2026-10-31T22:00:00Z') / 1000);
   assert.equal(windowStart(parsePer('12h'), now), now / 1000 - 12 * 3600);
   assert.equal(windowStart(parsePer('ever'), now), 0);
-  assert.deepEqual(parsePer('nonsense'), { kind: 'day' });
+  assert.deepEqual(parsePer('nonsense'), { kind: 'week' });
   // summer time: midnight is 21:00 UTC
   assert.equal(windowStart(parsePer('day'), Date.parse('2026-07-01T10:00:00Z')), Date.parse('2026-06-30T21:00:00Z') / 1000);
 });
@@ -62,34 +62,34 @@ test('add, limit per day, change the last update, total line', async () => {
 
   let call = caller(env, key, 'add', q);
   let r = await call();
-  assert.match(r, /^read=t-הקישו את מספר הדקות להוספה עד 120 ובסיום סולמית=a1,no,3,1,10,Number,/);
+  assert.match(r, /^read=t-הקישי את מספר הדקות של תוספת שבת שאת מקבלת על עצמך עד 120 ובסיום הקישי סולמית=a1,no,3,1,10,Number,/);
   r = await call('a1', '500'); // over the max -> asked again under a new name
-  assert.match(r, /ניתן להוסיף בין 1 ל 120 דקות.*=a2,/);
+  assert.match(r, /ניתן להקיש בין 1 ל 120 דקות.*=a2,/);
   r = await call('a2', '30');
-  assert.equal(r, 'id_list_message=t-הוספת 30 דקות.t-סך הכל צברת 30 דקות&');
+  assert.equal(r, 'id_list_message=t-נרשמה תוספת של 30 דקות.t-סך הכל קיבלת על עצמך תוספת שבת של 30 דקות&');
   assert.equal(await call('a2', '30'), r, 'a repeated request does not add twice');
 
   // second call the same day: blocked, offered to change
   call = caller(env, key, 'add', q);
   r = await call();
-  assert.match(r, /כבר עדכנת היום 30 דקות.*לשינוי העדכון הקישו 1.*=c1,no,1,1,10,No,/);
+  assert.match(r, /כבר עדכנת היום תוספת של 30 דקות.*לשינוי העדכון הקישי 1.*=c1,no,1,1,10,No,/);
   r = await call('c1', '1');
   const val = /=(e\d+_1),/.exec(r)[1];
   r = await call(val, '45');
-  assert.equal(r, 'id_list_message=t-העדכון שונה ל 45 דקות.t-סך הכל צברת 45 דקות&');
+  assert.equal(r, 'id_list_message=t-העדכון שונה לתוספת של 45 דקות.t-סך הכל קיבלת על עצמך תוספת שבת של 45 דקות&');
 
   // total line
   const other = caller(env, key, 'add', q, { phone: '0529999999' });
   await other(); await other('a1', '15');
-  assert.equal(await caller(env, key, 'total', {})(), 'id_list_message=t-עד כה צברת 45 דקות&');
-  assert.equal(await caller(env, key, 'total', { all: '1', hours: '1' })(), 'id_list_message=t-עד כה צברת 45 דקות.t-ובסך הכל כל המשתתפים צברו שעה אחת&');
-  assert.equal(await caller(env, key, 'total', {}, { phone: '0531111111' })(), 'id_list_message=t-עדיין לא צברת דקות&');
+  assert.equal(await caller(env, key, 'total', {})(), 'id_list_message=t-עד כה קיבלת על עצמך תוספת שבת של 45 דקות&');
+  assert.equal(await caller(env, key, 'total', { all: '1', hours: '1' })(), 'id_list_message=t-עד כה קיבלת על עצמך תוספת שבת של 45 דקות.t-ובסך הכל קיבלו כל המשתתפות תוספת שבת של שעה אחת&');
+  assert.equal(await caller(env, key, 'total', {}, { phone: '0531111111' })(), 'id_list_message=t-עדיין לא קיבלת על עצמך תוספת שבת&');
 
   // cancel with 0
   call = caller(env, key, 'add', q);
   await call(); r = await call('c1', '1');
   r = await call(/=(e\d+_1),/.exec(r)[1], '0');
-  assert.equal(r, 'id_list_message=t-העדכון בוטל.t-עדיין לא צברת דקות&');
+  assert.equal(r, 'id_list_message=t-העדכון בוטל.t-עדיין לא קיבלת על עצמך תוספת שבת&');
 
   // and now adding is open again
   assert.match(await caller(env, key, 'add', q)(), /=a1,/);
@@ -106,9 +106,9 @@ test('edit=no, several times per window, separate lists, next day opens again', 
   }
   // entries are stamped with the real clock; move them back to day1
   env.DB.db.exec(`UPDATE minutes_entries SET created_at = ${day1 / 1000}`);
-  assert.equal(await caller(env, key, 'add', q, { now: day1 })(), 'id_list_message=t-כבר עדכנת היום 2 פעמים בעדכון האחרון 20 דקות.t-סך הכל צברת 30 דקות&');
+  assert.equal(await caller(env, key, 'add', q, { now: day1 })(), 'id_list_message=t-כבר עדכנת היום 2 פעמים בעדכון האחרון 20 דקות.t-סך הכל קיבלת על עצמך תוספת שבת של 30 דקות&');
   assert.match(await caller(env, key, 'add', q, { now: day1 + 86400000 })(), /=a1,/);
-  assert.match(await caller(env, key, 'add', { ...q, list: 'other' }, { now: day1 })(), /^read=t-הקישו/);
+  assert.match(await caller(env, key, 'add', { ...q, list: 'other' }, { now: day1 })(), /^read=t-הקישי/);
 });
 
 test('admin API: login, people, edit, log, export', async () => {
@@ -155,7 +155,7 @@ test('admin API: login, people, edit, log, export', async () => {
   assert.notEqual(r.data.key, key);
 
   const page = await handle(new Request('http://x/ivr-minutes/'), env, '/');
-  assert.match(await page.text(), /<title>תוספת דקות<\/title>/);
+  assert.match(await page.text(), /<title>תוספת שבת<\/title>/);
   assert.equal((await handle(new Request('http://x/zmanim/ivr-minutes'), env, '')).headers.get('Location'), 'http://x/zmanim/ivr-minutes/');
 });
 
@@ -206,7 +206,7 @@ test('recordings: upload to Yemot, played instead of text, paused by the error w
   // Yemot reports the file failed: paused, back to text
   const hook = await handle(new Request('http://x/zmanim/ivr-minutes/file-error/' + key + '?FilePath=/minutesrec/sofar&Status=Error&Message=file%20audio%20not%20found'), env, '/file-error/' + key);
   assert.equal(hook.status, 200);
-  assert.equal(await caller(env, key, 'total', {})(), 'id_list_message=t-עד כה צברת 30 דקות&');
+  assert.equal(await caller(env, key, 'total', {})(), 'id_list_message=t-עד כה קיבלת על עצמך תוספת שבת של 30 דקות&');
   list = await (await req('GET', '/api/recordings')).json();
   const item = list.items.find((i) => i.key === 'so_far');
   assert.equal(item.paused, true);
@@ -217,5 +217,5 @@ test('recordings: upload to Yemot, played instead of text, paused by the error w
   assert.match(await caller(env, key, 'total', {})(), /^id_list_message=f-/);
   // recordings switched off
   await req('PATCH', '/api/recordings/settings', { enabled: false });
-  assert.equal(await caller(env, key, 'total', {})(), 'id_list_message=t-עד כה צברת 30 דקות&');
+  assert.equal(await caller(env, key, 'total', {})(), 'id_list_message=t-עד כה קיבלת על עצמך תוספת שבת של 30 דקות&');
 });

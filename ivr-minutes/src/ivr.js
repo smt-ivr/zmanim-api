@@ -166,7 +166,7 @@ function alreadyParts(per) {
 
 function blockedLine(c, recent) {
   const last = mp(c, recent[0].minutes);
-  if (c.s.times === 1) return [...alreadyParts(c.s.per), ...last];
+  if (c.s.times === 1) return [...alreadyParts(c.s.per), P('tosefet_of'), ...last];
   return [...alreadyParts(c.s.per), String(recent.length), P('times'), P('last_update'), ...last];
 }
 

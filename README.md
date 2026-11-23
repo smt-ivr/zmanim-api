@@ -199,7 +199,7 @@ web/                     האתר הציבורי (index.html, src/app.js, site.c
 scripts/preview.mjs      הרצה מקומית בלי wrangler
 docs/API.md              כל ה-endpoints
 ivr-safed/               פרויקט נפרד: זמני ערב שבת בצפת בטלפון (ראו ivr-safed/README.md)
-ivr-minutes/             פרויקט נפרד: תוספת דקות בטלפון וממשק משלו (ראו ivr-minutes/README.md)
+ivr-minutes/             פרויקט נפרד: תוספת שבת בטלפון וממשק משלו (ראו ivr-minutes/README.md)
 ```
 
 הממשק מדבר עם ה-API רק דרך HTTP, ולכן הוא נפרד לגמרי מהשרת. ראו "הפרדת ממשק הניהול" בהמשך.

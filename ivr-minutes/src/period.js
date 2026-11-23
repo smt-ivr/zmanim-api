@@ -1,5 +1,5 @@
 // The time window in which a caller may update a limited number of times (link parameter `per`).
-//   day | week | month   calendar day / week (from Sunday) / month, Israel time   (default: day)
+//   day | week | month   calendar day / week (from Sunday) / month, Israel time   (default: week — once per Shabbat)
 //   ever                 the whole time (times=1&per=ever: once, ever)
 //   90m | 12h | 3d       a rolling window: the last 90 minutes / 12 hours / 3 days
 import { TZ } from './data.js';
@@ -9,7 +9,7 @@ export function parsePer(raw) {
   if (['day', 'week', 'month', 'ever'].includes(v)) return { kind: v };
   const m = /^(\d{1,4})([mhd])$/.exec(v);
   if (m && +m[1] > 0) return { kind: 'rolling', n: +m[1], unit: m[2] };
-  return { kind: 'day' };
+  return { kind: 'week' };
 }
 
 function parts(ms) {
