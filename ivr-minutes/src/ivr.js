@@ -4,20 +4,25 @@
 //           inside a blocked window they can change their last update instead)
 //   /total  a caller only hears how much they have accumulated
 //
+// Settings come as request parameters, which Yemot sends from the extension's settings
+// (api_add_0=key=…, api_add_1=max=60 …), together with ApiPhone, ApiCallId and the values read so far.
+//
 // Stateless: Yemot sends back every value read earlier in the call (by its name), so the step is
 // known from which names are present. Each question gets a fresh name (a1, a2 …, c1, e<id>_1 …),
 // because Yemot must not be asked the same name twice. A call ends with `id_list_message=…&`,
 // which hands the caller back to the extension Yemot was in before.
-import { addEntry, deleteEntry, first, init, listName, listTotal, normalizePhone, phoneTotal, recentPhoneEntries, updateEntry, getKey } from './data.js';
+//
+// Every sentence is a list of parts: text, numbers and P(key) — fixed phrases that play the
+// administration's recording when there is one (voice.js).
+import { addEntry, deleteEntry, first, getKey, init, listName, listTotal, normalizePhone, phoneTotal, recentPhoneEntries, updateEntry } from './data.js';
 import { parsePer, speakPer, windowStart } from './period.js';
+import { loadVoice, P, plainVoice } from './voice.js';
 
 const ATTEMPTS = 3;
 
-// ------------------------------------------------------------------ Yemot text
-/** Characters Yemot treats as syntax inside a message. */
-const clean = (s) => String(s).replace(/[.\-"'&|=׳״,]/g, ' ').replace(/\s+/g, ' ').trim();
-const say = (lines) => lines.filter(Boolean).map((l) => `t-${clean(l)}`).join('.');
-const end = (lines) => (lines.filter(Boolean).length ? `id_list_message=${say(lines)}&` : '&');
+// ------------------------------------------------------------------ Yemot responses
+const say = (v, lines) => lines.filter((l) => l && (!Array.isArray(l) || l.length)).flatMap((l) => v.render(l)).join('.');
+const end = (v, lines) => { const s = say(v, lines); return s ? `id_list_message=${s}&` : '&'; };
 
 /**
  * Keypad read. Options in Yemot's order: val_name, re_enter_if_exists, max_digits, min_digits, sec_wait,
@@ -25,26 +30,29 @@ const end = (lines) => (lines.filter(Boolean).length ? `id_list_message=${say(li
  * allow_empty, empty_val, block_change_keyboard, confirm.
  * Amounts are read back ("Number") with Yemot's own "press 1 to confirm"; a menu key is not.
  */
-function read(lines, val, { maxDigits = '', minDigits = 1, amount = false } = {}) {
+function read(v, lines, val, { maxDigits = '', minDigits = 1, amount = false } = {}) {
   const ops = [val, 'no', maxDigits, minDigits, 10, amount ? 'Number' : 'No', 'no', 'no', '', '', 1, 'Ok', 'None', '', amount ? '' : 'no'];
-  return `read=${say(lines)}=${ops.join(',')}`;
+  return `read=${say(v, lines)}=${ops.join(',')}`;
 }
 
-/** 1 -> "דקה אחת", 45 -> "45 דקות"; with hours: 135 -> "2 שעות ו 15 דקות". */
-export function speakMinutes(n, hours = false) {
-  const mins = (k) => (k === 1 ? 'דקה אחת' : `${k} דקות`);
+/** 1 -> "דקה אחת", 45 -> "45 דקות"; with hours: 135 -> "שעתיים ו 15 דקות". As sentence parts. */
+export function minutesParts(n, hours = false) {
+  const mins = (k) => (k === 1 ? [P('one_minute')] : [String(k), P('minutes')]);
   const neg = n < 0;
   n = Math.abs(n);
-  let s;
-  if (!hours || n < 60) s = mins(n);
+  let parts;
+  if (!hours || n < 60) parts = mins(n);
   else {
     const h = Math.floor(n / 60), m = n % 60;
-    s = (h === 1 ? 'שעה אחת' : h === 2 ? 'שעתיים' : `${h} שעות`) + (m ? ` ו ${mins(m)}` : '');
+    parts = [...(h === 1 ? [P('one_hour')] : h === 2 ? [P('two_hours')] : [String(h), P('hours')]), ...(m ? [P('and'), ...mins(m)] : [])];
   }
-  return neg ? `מינוס ${s}` : s;
+  return neg ? [P('minus'), ...parts] : parts;
 }
 
-// ------------------------------------------------------------------ link parameters
+/** The same, as text: "שעתיים ו 15 דקות". */
+export const speakMinutes = (n, hours = false) => minutesParts(n, hours).map((p) => (typeof p === 'object' ? p.text : p)).join(' ');
+
+// ------------------------------------------------------------------ parameters (from the extension's settings)
 const int = (v, lo, hi, dflt) => (v != null && /^\d{1,5}$/.test(String(v).trim()) && +v >= lo && +v <= hi ? +v : dflt);
 
 export function settings(p) {
@@ -60,7 +68,7 @@ export function settings(p) {
 }
 
 // ------------------------------------------------------------------ entry
-async function readParams(request) {
+export async function readParams(request) {
   const url = new URL(request.url);
   const merged = new URLSearchParams(url.search);
   if (request.method === 'POST') {
@@ -79,37 +87,39 @@ const textReply = (body) => new Response(body, { status: 200, headers: { 'Conten
 
 /** mode: 'add' | 'total'. Always answers 200 with valid Yemot text (anything else plays "system error"). */
 export async function handleIvr(request, env, mode, nowMs = Date.now()) {
+  let v = plainVoice;
   try {
     const p = await readParams(request);
     if (p.hangup === 'yes') return textReply('');
     await init(env);
-    if (!p.key || p.key !== (await getKey(env))) return textReply(end(['הגישה לשלוחה זו חסומה']));
+    v = await loadVoice(env);
+    if (!p.key || p.key !== (await getKey(env))) return textReply(end(v, [[P('blocked')]]));
     const phone = normalizePhone(p.ApiPhone);
-    if (!phone) return textReply(end(['לא זוהה מספר הטלפון שלכם. יש להתקשר ממספר מזוהה']));
-    const c = { env, p, phone, s: settings(p), nowMs };
+    if (!phone) return textReply(end(v, [[P('no_phone')]]));
+    const c = { env, p, phone, v, s: settings(p), nowMs };
     return textReply(mode === 'total' ? await total(c) : await add(c));
   } catch (err) {
     console.error('[ivr-minutes]', err?.stack || err);
-    return textReply(end(['אירעה תקלה, נסו שוב מאוחר יותר']));
+    return textReply(end(v, [[P('error')]]));
   }
 }
 
 // ------------------------------------------------------------------ /total
 async function total(c) {
-  const { env, s, phone } = c;
+  const { env, s, phone, v } = c;
   const mine = await phoneTotal(env, s.list, phone);
-  const lines = [mine ? `עד כה צברת ${speakMinutes(mine, s.hours)}` : 'עדיין לא צברת דקות'];
-  if (s.all) lines.push(`ובסך הכל כל המשתתפים צברו ${speakMinutes(await listTotal(env, s.list), s.hours)}`);
-  return end(lines);
+  const lines = [mine ? [P('so_far'), ...minutesParts(mine, s.hours)] : [P('none_yet')]];
+  if (s.all) lines.push([P('all_total'), ...minutesParts(await listTotal(env, s.list), s.hours)]);
+  return end(v, lines);
 }
 
 // ------------------------------------------------------------------ /add
 /** The highest-numbered answer present for a prefix: a1, a2 … -> { n, value }. */
 function lastAnswer(p, prefix) {
   let best = null;
-  for (const [k, v] of Object.entries(p)) {
+  for (const [k, val] of Object.entries(p)) {
     const m = k.startsWith(prefix) && /^(\d+)$/.exec(k.slice(prefix.length));
-    if (m && (!best || +m[1] > best.n)) best = { n: +m[1], value: String(v).trim() };
+    if (m && (!best || +m[1] > best.n)) best = { n: +m[1], value: String(val).trim() };
   }
   return best;
 }
@@ -117,9 +127,9 @@ function lastAnswer(p, prefix) {
 /** Edit answers are named e<entryId>_<attempt>, so a repeated request changes the same entry. */
 function lastEdit(p) {
   let best = null;
-  for (const [k, v] of Object.entries(p)) {
+  for (const [k, val] of Object.entries(p)) {
     const m = /^e(\d+)_(\d+)$/.exec(k);
-    if (m && (!best || +m[2] > best.n)) best = { id: +m[1], n: +m[2], value: String(v).trim() };
+    if (m && (!best || +m[2] > best.n)) best = { id: +m[1], n: +m[2], value: String(val).trim() };
   }
   return best;
 }
@@ -140,73 +150,82 @@ async function status(c) {
   return { recent, blocked: recent.length >= s.times, total: await phoneTotal(env, s.list, phone) };
 }
 
-const totalLine = (c, t) => (t ? `סך הכל צברת ${speakMinutes(t, c.s.hours)}` : 'עדיין לא צברת דקות');
-const amountPrompt = (c) => `הקישו את מספר הדקות להוספה, עד ${c.s.max}, ובסיום סולמית`;
-const editPrompt = (c) => `הקישו את מספר הדקות המעודכן, עד ${c.s.max}. לביטול העדכון הקישו 0. ובסיום סולמית`;
+const mp = (c, n) => minutesParts(n, c.s.hours);
+const totalLine = (c, t) => (t ? [P('total_is'), ...mp(c, t)] : [P('none_yet')]);
+const amountPrompt = (c) => [P('add_prompt'), String(c.s.max), P('end_hash')];
+const editPrompt = (c) => [P('edit_prompt'), String(c.s.max), P('edit_cancel'), P('end_hash')];
+const amountRead = (c, lines, val) => read(c.v, lines, val, { maxDigits: String(c.s.max).length, amount: true });
+
+function alreadyParts(per) {
+  if (per.kind === 'day') return [P('already_day')];
+  if (per.kind === 'week') return [P('already_week')];
+  if (per.kind === 'month') return [P('already_month')];
+  if (per.kind === 'ever') return [P('already')];
+  return [P('already'), speakPer(per)];
+}
 
 function blockedLine(c, recent) {
-  const when = speakPer(c.s.per);
-  const last = speakMinutes(recent[0].minutes, c.s.hours);
-  if (c.s.times === 1) return `כבר עדכנת ${when} ${last}`;
-  return `כבר עדכנת ${when} ${recent.length} פעמים. בעדכון האחרון ${last}`;
+  const last = mp(c, recent[0].minutes);
+  if (c.s.times === 1) return [...alreadyParts(c.s.per), ...last];
+  return [...alreadyParts(c.s.per), String(recent.length), P('times'), P('last_update'), ...last];
 }
 
 async function start(c) {
   const st = await status(c);
-  if (!st.blocked) return read([st.total && `עד כה צברת ${speakMinutes(st.total, c.s.hours)}`, amountPrompt(c)], 'a1', { maxDigits: String(c.s.max).length, amount: true });
-  if (c.s.edit) return read([blockedLine(c, st.recent), 'לשינוי העדכון הקישו 1. ליציאה הקישו 2'], 'c1', { maxDigits: 1 });
-  return end([blockedLine(c, st.recent), totalLine(c, st.total)]);
+  if (!st.blocked) return amountRead(c, [st.total && [P('so_far'), ...mp(c, st.total)], amountPrompt(c)], 'a1');
+  if (c.s.edit) return read(c.v, [blockedLine(c, st.recent), [P('edit_menu')]], 'c1', { maxDigits: 1 });
+  return end(c.v, [blockedLine(c, st.recent), totalLine(c, st.total)]);
 }
 
-const noInput = (v) => v === '' || v === 'None' || v.includes('*');
+const empty = (value) => value === 'None' || value === '';
 
 async function onAmount(c, { n, value }) {
-  const { env, s, phone, p } = c;
-  if (value.includes('*')) return end([]);
+  const { env, s, phone, p, v } = c;
+  if (value.includes('*')) return end(v, []);
   const minutes = /^\d+$/.test(value) ? +value : NaN;
   if (!(minutes >= 1 && minutes <= s.max)) {
-    if (n >= ATTEMPTS) return end([value === 'None' || value === '' ? 'לא התקבלה הקשה' : 'לא עודכן']);
-    const why = value === 'None' || value === '' ? 'לא התקבלה הקשה' : `ניתן להוסיף בין 1 ל ${s.max} דקות`;
-    return read([why, amountPrompt(c)], `a${n + 1}`, { maxDigits: String(s.max).length, amount: true });
+    if (n >= ATTEMPTS) return end(v, [[P(empty(value) ? 'no_input' : 'not_updated')]]);
+    const why = empty(value) ? [P('no_input')] : [P('range_add'), String(s.max), P('minutes')];
+    return amountRead(c, [why, amountPrompt(c)], `a${n + 1}`);
   }
   const callId = p.ApiCallId ? String(p.ApiCallId) : null;
   if (callId) {
     // Yemot repeated the request after we already saved: answer the same way
     const done = await first(env, `SELECT minutes FROM minutes_entries WHERE call_id = ?`, callId);
-    if (done) return end([`הוספת ${speakMinutes(done.minutes, s.hours)}`, totalLine(c, await phoneTotal(env, s.list, phone))]);
+    if (done) return end(v, [[P('added'), ...mp(c, done.minutes)], totalLine(c, await phoneTotal(env, s.list, phone))]);
   }
   const st = await status(c); // checked again: another call from the same phone may have updated meanwhile
-  if (st.blocked) return end([blockedLine(c, st.recent), totalLine(c, st.total)]);
+  if (st.blocked) return end(v, [blockedLine(c, st.recent), totalLine(c, st.total)]);
   await addEntry(env, { list: s.list, phone, minutes, source: 'phone', callId });
-  return end([`הוספת ${speakMinutes(minutes, s.hours)}`, totalLine(c, await phoneTotal(env, s.list, phone))]);
+  return end(v, [[P('added'), ...mp(c, minutes)], totalLine(c, await phoneTotal(env, s.list, phone))]);
 }
 
 async function onChoice(c, { n, value }) {
   if (value !== '1') {
-    if (value === '2' || noInput(value) || n >= ATTEMPTS) return end([]);
-    return read(['הקשה לא חוקית', 'לשינוי העדכון הקישו 1. ליציאה הקישו 2'], `c${n + 1}`, { maxDigits: 1 });
+    if (value === '2' || empty(value) || value.includes('*') || n >= ATTEMPTS) return end(c.v, []);
+    return read(c.v, [[P('invalid')], [P('edit_menu')]], `c${n + 1}`, { maxDigits: 1 });
   }
-  if (!c.s.edit) return end([]);
+  if (!c.s.edit) return end(c.v, []);
   const st = await status(c);
   if (!st.recent.length) return start(c); // nothing left to change (the window moved on): add instead
-  return read([editPrompt(c)], `e${st.recent[0].id}_1`, { maxDigits: String(c.s.max).length, amount: true });
+  return amountRead(c, [editPrompt(c)], `e${st.recent[0].id}_1`);
 }
 
 async function onEdit(c, { id, n, value }) {
-  const { env, s, phone } = c;
-  if (!s.edit || value.includes('*')) return end([]);
+  const { env, s, phone, v } = c;
+  if (!s.edit || value.includes('*')) return end(v, []);
   const entry = await first(env, `SELECT * FROM minutes_entries WHERE id = ? AND list = ? AND phone = ?`, id, s.list, phone);
   const minutes = /^\d+$/.test(value) ? +value : NaN;
   if (!(minutes >= 0 && minutes <= s.max)) {
-    if (n >= ATTEMPTS) return end(['לא עודכן']);
-    const why = value === 'None' || value === '' ? 'לא התקבלה הקשה' : `ניתן לעדכן בין 0 ל ${s.max} דקות`;
-    return read([why, editPrompt(c)], `e${id}_${n + 1}`, { maxDigits: String(s.max).length, amount: true });
+    if (n >= ATTEMPTS) return end(v, [[P('not_updated')]]);
+    const why = empty(value) ? [P('no_input')] : [P('range_edit'), String(s.max), P('minutes')];
+    return amountRead(c, [why, editPrompt(c)], `e${id}_${n + 1}`);
   }
   if (minutes === 0) {
     if (entry) await deleteEntry(env, entry, 'phone');
-    return end(['העדכון בוטל', totalLine(c, await phoneTotal(env, s.list, phone))]);
+    return end(v, [[P('canceled')], totalLine(c, await phoneTotal(env, s.list, phone))]);
   }
-  if (!entry) return end(['העדכון לא נמצא', totalLine(c, await phoneTotal(env, s.list, phone))]);
+  if (!entry) return end(v, [[P('not_found')], totalLine(c, await phoneTotal(env, s.list, phone))]);
   if (entry.minutes !== minutes) await updateEntry(env, entry, { minutes }, 'phone');
-  return end([`העדכון שונה ל ${speakMinutes(minutes, s.hours)}`, totalLine(c, await phoneTotal(env, s.list, phone))]);
+  return end(v, [[P('changed_to'), ...mp(c, minutes)], totalLine(c, await phoneTotal(env, s.list, phone))]);
 }

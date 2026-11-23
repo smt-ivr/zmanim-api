@@ -58,6 +58,12 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
 .tag{display:inline-block;font-size:12px;border-radius:999px;padding:1px 8px;background:var(--soft);color:var(--muted)}
 .pos{color:var(--ok)}.neg{color:var(--danger)}
 .hint{font-size:13px;color:var(--muted);margin:4px 0 0}
+.rec{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:10px 0;border-bottom:1px solid var(--line)}
+.rec:last-child{border-bottom:0}
+.rec-text{flex:1;min-width:220px}
+.rec.on .rec-text b::before{content:"✓ ";color:var(--ok)}
+.rec-actions{display:flex;gap:6px;flex-wrap:wrap}
+.rec-actions .btn{padding:5px 10px;font-size:14px}
 #toast{position:fixed;bottom:16px;inset-inline-start:50%;transform:translateX(50%);background:var(--ink);color:var(--bg);padding:8px 16px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none}
 #toast.on{opacity:1}
 @media (max-width:600px){main{padding:12px}th,td{padding:7px 6px}}
@@ -121,6 +127,7 @@ async function render() {
   <div class="tabs" id="tabs">
     <button data-tab="people">משתתפים</button>
     <button data-tab="log">פעילות</button>
+    <button data-tab="recordings">הקלטות</button>
     <button data-tab="setup">הגדרת שלוחות</button>
   </div>
   <div id="view"></div>
@@ -158,8 +165,10 @@ async function loadStats() {
 
 function showTab() {
   document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === state.tab));
+  const view = $('#view'); view.onclick = view.oninput = view.onchange = null;
+  stopPlaying();
   loadStats().catch((e) => toast(e.message));
-  ({ people: viewPeople, log: viewLog, setup: viewSetup })[state.tab]().catch((e) => { $('#view').innerHTML = '<div class="card err">' + esc(e.message) + '</div>'; });
+  (({ people: viewPeople, log: viewLog, recordings: viewRecordings, setup: viewSetup })[state.tab] || viewPeople)().catch((e) => { $('#view').innerHTML = '<div class="card err">' + esc(e.message) + '</div>'; });
 }
 
 // ------------------------------------------------------------------ people
@@ -271,6 +280,127 @@ async function viewLog() {
   $('#ltable').onclick = (e) => { const tr = e.target.closest('tr[data-phone]'); if (tr) openPerson(tr.dataset.phone); };
 }
 
+// ------------------------------------------------------------------ recordings
+let playing = null; // { audio, url, btn }
+function stopPlaying() { if (playing) { playing.audio.pause(); URL.revokeObjectURL(playing.url); playing.btn.textContent = '▶ השמעה'; playing = null; } }
+let recorder = null; // { rec, key, btn, stream }
+
+async function viewRecordings() {
+  const data = await api('recordings');
+  const s = data.settings;
+  const done = data.items.filter((i) => i.recorded).length;
+  const errors = data.items.filter((i) => i.error).length;
+  const groups = [...new Set(data.items.map((i) => i.group))];
+  const row = (i) => {
+    const st = !i.recorded ? 'off' : i.paused ? 'paused' : 'on';
+    return '<div class="rec ' + st + '" data-key="' + i.key + '">' +
+      '<div class="rec-text"><b>' + esc(i.text) + '</b><div class="small muted">' + esc(i.where) + ' · קובץ: <span dir="ltr">' + esc(i.file) + '</span>' +
+      (i.recorded && i.updated_at ? ' · הועלה ' + fmtDate(i.updated_at) : '') + '</div>' +
+      (i.paused ? '<span class="tag">מושהה · נשמע בקול המחשב</span> ' : '') +
+      (i.changed ? '<span class="tag">הנוסח השתנה מאז ההעלאה</span> ' : '') +
+      (i.error ? '<div class="small neg">ההשמעה בקו נכשלה: ' + esc(i.error) + '</div>' : '') + '</div>' +
+      '<div class="rec-actions">' +
+      (i.recorded ? '<button class="btn" data-act="play">▶ השמעה</button>' : '') +
+      '<button class="btn" data-act="mic">● הקלטה</button>' +
+      '<button class="btn' + (i.recorded ? '' : ' primary') + '" data-act="file">' + (i.recorded ? 'החלפה' : 'העלאת קובץ') + '</button>' +
+      (i.recorded ? '<button class="btn" data-act="pause">' + (i.paused ? 'הפעלה' : 'השהיה') + '</button><button class="btn danger" data-act="del">מחיקה</button>' : '') +
+      '</div></div>';
+  };
+  $('#view').innerHTML =
+    '<div class="card"><h3 style="margin-top:0">חיבור לימות המשיח</h3>' +
+    '<p class="muted small" style="margin-top:0">ההקלטות עולות ישר למערכת שלכם בימות המשיח, ומשם מושמעות בשלוחות במקום קול המחשב. משפט שלא הוקלט ממשיך להיקרא בקול המחשב.</p>' +
+    '<form id="rs" class="grid2">' +
+    '<label class="f">טוקן של ימות המשיח' + '<input id="r_token" dir="ltr" autocomplete="off" placeholder="' + (s.has_token ? esc(s.token) : 'מספר מערכת:סיסמה, או טוקן') + '"></label>' +
+    '<label class="f">תיקייה בימות המשיח (אותיות באנגלית וספרות)<input id="r_folder" dir="ltr" value="' + esc(s.folder) + '"></label>' +
+    '<label class="chk"><input type="checkbox" id="r_enabled"' + (s.enabled ? ' checked' : '') + '> להשמיע את ההקלטות בשלוחות</label>' +
+    '<label class="chk"><input type="checkbox" id="r_numbers"' + (s.yemot_numbers ? ' checked' : '') + '> מספרים בקול המערכת של ימות המשיח (במקום קול המחשב)</label>' +
+    '<div class="row" style="grid-column:1/-1"><button class="btn primary">שמירה</button><button class="btn" type="button" id="r_test"' + (s.has_token ? '' : ' disabled') + '>בדיקת החיבור</button>' +
+    '<span class="small ' + (s.has_token ? 'pos' : 'muted') + '">' + (s.has_token ? '✓ יש טוקן שמור (' + esc(s.token) + ')' : 'עדיין אין טוקן') + '</span></div></form></div>' +
+    '<div class="stats"><div class="stat"><b>' + done + ' / ' + data.items.length + '</b><span>משפטים הוקלטו</span></div>' +
+    (errors ? '<div class="stat"><b class="neg">' + errors + '</b><span>נכשלו בהשמעה (הושהו)</span></div>' : '') + '</div>' +
+    (!s.has_token ? '<div class="card">כדי להעלות הקלטות, הזינו קודם למעלה את הטוקן של ימות המשיח.</div>' : '') +
+    groups.map((g) => '<div class="card"><h3 style="margin-top:0">' + esc(g) + '</h3>' + data.items.filter((i) => i.group === g).map(row).join('') + '</div>').join('') +
+    '<input type="file" id="r_file" accept="audio/*,.wav,.mp3,.m4a,.webm,.ogg,.amr" hidden>';
+
+  $('#rs').onsubmit = async (e) => {
+    e.preventDefault();
+    const body = { folder: $('#r_folder').value, enabled: $('#r_enabled').checked, yemot_numbers: $('#r_numbers').checked };
+    if ($('#r_token').value.trim()) body.token = $('#r_token').value.trim();
+    try { await api('recordings/settings', { method: 'PATCH', body }); toast('נשמר'); viewRecordings(); } catch (err) { alert(err.message); }
+  };
+  $('#r_test').onclick = async () => { try { await api('recordings/test', { method: 'POST' }); toast('החיבור לימות המשיח תקין ✓'); } catch (err) { alert(err.message); } };
+
+  let pickKey = null;
+  const send = async (key, blob, name) => {
+    const form = new FormData();
+    form.append('file', blob, name);
+    toast('מעלה לימות המשיח…');
+    const res = await fetch(API + 'recordings/' + key, { method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: form });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(d.error || 'ההעלאה נכשלה');
+    toast('הועלה ויושמע בשלוחה מעכשיו');
+    viewRecordings();
+  };
+  $('#r_file').onchange = async (e) => {
+    const f = e.target.files[0]; e.target.value = '';
+    if (f && pickKey) { try { await send(pickKey, f, f.name); } catch (err) { alert(err.message); } }
+  };
+  $('#view').onclick = async (e) => {
+    const btn = e.target.closest('button[data-act]'); if (!btn) return;
+    const key = btn.closest('[data-key]').dataset.key;
+    const act = btn.dataset.act;
+    try {
+      if (act === 'file') { if (!s.has_token) return alert('יש להזין קודם טוקן של ימות המשיח'); pickKey = key; $('#r_file').click(); }
+      if (act === 'play') {
+        if (playing && playing.btn === btn) return stopPlaying();
+        stopPlaying();
+        btn.textContent = 'טוען…';
+        const res = await fetch(API + 'recordings/' + key + '/audio', { headers: { Authorization: 'Bearer ' + token } });
+        if (!res.ok) { btn.textContent = '▶ השמעה'; throw new Error((await res.json().catch(() => ({}))).error || 'לא ניתן להשמיע'); }
+        const url = URL.createObjectURL(await res.blob());
+        const audio = new Audio(url);
+        playing = { audio, url, btn };
+        audio.onended = stopPlaying;
+        btn.textContent = '■ עצירה';
+        await audio.play();
+      }
+      if (act === 'mic') {
+        if (recorder && recorder.key === key) { recorder.rec.stop(); return; }
+        if (recorder) return alert('יש הקלטה אחרת פעילה');
+        if (!s.has_token) return alert('יש להזין קודם טוקן של ימות המשיח');
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const rec = new MediaRecorder(stream);
+        const chunks = [];
+        rec.ondataavailable = (ev) => chunks.push(ev.data);
+        rec.onstop = async () => {
+          stream.getTracks().forEach((t) => t.stop());
+          recorder = null;
+          btn.textContent = '● הקלטה'; btn.classList.remove('primary');
+          const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
+          if (!blob.size) return;
+          const back = new Audio(URL.createObjectURL(blob));
+          back.play().catch(() => {});
+          if (!confirm('להעלות את ההקלטה? (היא מושמעת עכשיו לבדיקה)')) { back.pause(); return; }
+          back.pause();
+          try { await send(key, blob, 'recording.' + ((rec.mimeType || '').includes('ogg') ? 'ogg' : (rec.mimeType || '').includes('mp4') ? 'm4a' : 'webm')); } catch (err) { alert(err.message); }
+        };
+        recorder = { rec, key, btn, stream };
+        rec.start();
+        btn.textContent = '■ סיום הקלטה'; btn.classList.add('primary');
+      }
+      if (act === 'pause') {
+        const paused = btn.textContent === 'השהיה';
+        await api('recordings/' + key, { method: 'PATCH', body: { paused } });
+        toast(paused ? 'מושהה: יישמע בקול המחשב' : 'ההקלטה מושמעת שוב'); viewRecordings();
+      }
+      if (act === 'del') {
+        if (!confirm('למחוק את ההקלטה? הקובץ יימחק מימות המשיח והמשפט ייקרא שוב בקול המחשב.')) return;
+        await api('recordings/' + key, { method: 'DELETE' }); toast('נמחק'); viewRecordings();
+      }
+    } catch (err) { alert(err.message); }
+  };
+}
+
 // ------------------------------------------------------------------ setup (Yemot extension settings)
 async function viewSetup() {
   const { key } = await api('settings');
@@ -329,10 +459,12 @@ async function viewSetup() {
     const c = { max: +$('#s_max').value || 60, times: +$('#s_times').value || 1, per: $('#s_per').value, perN: +$('#s_n').value || 1, perUnit: $('#s_unit').value, edit: $('#s_edit').checked, hours: $('#s_hours').checked, all: $('#s_all').checked };
     store.set('minutes_setup', JSON.stringify(c));
     $('#rollWrap').style.display = c.per === 'rolling' ? '' : 'none';
-    const common = ['key=' + key, ...(state.list !== 'main' ? ['list=' + encodeURIComponent(state.list)] : []), ...(c.hours ? ['hours=1'] : [])];
+    // Yemot does not take parameters in api_link: fixed values go in api_add_0, api_add_1 … (numbered from 0, no gaps)
+    const common = ['key=' + key, ...(state.list !== 'main' ? ['list=' + state.list] : []), ...(c.hours ? ['hours=1'] : [])];
     const addQ = [...common, 'max=' + c.max, 'times=' + c.times, 'per=' + (c.per === 'rolling' ? c.perN + c.perUnit : c.per), ...(c.edit ? [] : ['edit=no'])];
     const totQ = [...common, ...(c.all ? ['all=1'] : [])];
-    const ini = (path, q) => 'type=api\\napi_link=' + origin + path + '?' + q.join('&') + '\\napi_hangup_send=no';
+    const ini = (path, q) => ['type=api', 'api_link=' + origin + path, ...q.map((x, i) => 'api_add_' + i + '=' + x),
+      'api_hangup_send=no', 'api_send_webhook_error_link=' + origin + 'file-error/' + key].join('\\n');
     $('#addIni').textContent = ini('add', addQ);
     $('#totalIni').textContent = ini('total', totQ);
   };

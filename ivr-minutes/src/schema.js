@@ -34,4 +34,15 @@ export const SCHEMA = [
   `CREATE INDEX IF NOT EXISTS minutes_log_list ON minutes_log (list, at)`,
   `CREATE TABLE IF NOT EXISTS minutes_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS minutes_logins (ip TEXT PRIMARY KEY, fails INTEGER NOT NULL, first_at INTEGER NOT NULL)`,
+  // Recordings uploaded to Yemot from the admin page; a phrase with one plays it instead of text-to-speech.
+  `CREATE TABLE IF NOT EXISTS minutes_recordings (
+    key TEXT PRIMARY KEY,                   -- phrase key (voice.js)
+    path TEXT NOT NULL,                     -- for playing: "/minutesrec/addprompt" (no extension)
+    text TEXT NOT NULL DEFAULT '',          -- the phrase's text when it was uploaded
+    size INTEGER NOT NULL DEFAULT 0,
+    paused INTEGER NOT NULL DEFAULT 0,      -- kept in Yemot, but read by text-to-speech
+    error TEXT,                             -- Yemot reported that playing it failed (it is paused)
+    error_at INTEGER,
+    updated_at INTEGER NOT NULL
+  )`,
 ];

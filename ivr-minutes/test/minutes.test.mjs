@@ -158,3 +158,64 @@ test('admin API: login, people, edit, log, export', async () => {
   assert.match(await page.text(), /<title>תוספת דקות<\/title>/);
   assert.equal((await handle(new Request('http://x/zmanim/ivr-minutes'), env, '')).headers.get('Location'), 'http://x/zmanim/ivr-minutes/');
 });
+
+test('recordings: upload to Yemot, played instead of text, paused by the error webhook', async () => {
+  const env = fresh();
+  const key = await keyOf(env);
+  const { data: { token } } = await (async () => {
+    const r = await handle(new Request('http://x/zmanim/ivr-minutes/api/login', { method: 'POST', body: JSON.stringify({ password: 'secret' }) }), env, '/api/login');
+    return { data: await r.json() };
+  })();
+  const req = (method, path, body, isForm) => handle(new Request('http://x/zmanim/ivr-minutes' + path, {
+    method, headers: { Authorization: 'Bearer ' + token, ...(body && !isForm ? { 'Content-Type': 'application/json' } : {}) }, body: isForm ? body : body ? JSON.stringify(body) : undefined,
+  }), env, path);
+
+  // no token yet: upload refused
+  const form = () => { const f = new FormData(); f.append('file', new Blob([new Uint8Array(100)], { type: 'audio/webm' }), 'a.webm'); return f; };
+  assert.equal((await req('POST', '/api/recordings/so_far', form(), true)).status, 409);
+
+  await req('PATCH', '/api/recordings/settings', { token: '0771234567:1234' });
+  let list = await (await req('GET', '/api/recordings')).json();
+  assert.equal(list.settings.has_token, true);
+  assert.ok(!JSON.stringify(list).includes('0771234567:1234'), 'the token is never sent back');
+  assert.equal(list.webhook, 'http://x/zmanim/ivr-minutes/file-error/' + key);
+  assert.equal((await req('PATCH', '/api/recordings/settings', { folder: 'bad_folder' })).status, 400);
+
+  const realFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, opts) => {
+    calls.push({ url: String(url), body: opts?.body });
+    return new Response(JSON.stringify({ responseStatus: 'OK', path: 'ivr2:/minutesrec/sofar.wav' }), { headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const r = await req('POST', '/api/recordings/so_far', form(), true);
+    assert.equal(r.status, 201);
+    assert.equal(calls[0].url, 'https://www.call2all.co.il/ym/api/UploadFile');
+    assert.equal(calls[0].body.get('path'), 'ivr2:/minutesrec/sofar.wav');
+    assert.equal(calls[0].body.get('token'), '0771234567:1234');
+  } finally { globalThis.fetch = realFetch; }
+
+  // the line plays the recording, the rest stays text
+  const c = caller(env, key, 'add', {}); await c(); await c('a1', '30');
+  assert.equal(await caller(env, key, 'total', {})(), 'id_list_message=f-/minutesrec/sofar.t-30 דקות&');
+  // Yemot numbers
+  await req('PATCH', '/api/recordings/settings', { yemot_numbers: true });
+  assert.equal(await caller(env, key, 'total', {})(), 'id_list_message=f-/minutesrec/sofar.n-30.t-דקות&');
+  await req('PATCH', '/api/recordings/settings', { yemot_numbers: false });
+
+  // Yemot reports the file failed: paused, back to text
+  const hook = await handle(new Request('http://x/zmanim/ivr-minutes/file-error/' + key + '?FilePath=/minutesrec/sofar&Status=Error&Message=file%20audio%20not%20found'), env, '/file-error/' + key);
+  assert.equal(hook.status, 200);
+  assert.equal(await caller(env, key, 'total', {})(), 'id_list_message=t-עד כה צברת 30 דקות&');
+  list = await (await req('GET', '/api/recordings')).json();
+  const item = list.items.find((i) => i.key === 'so_far');
+  assert.equal(item.paused, true);
+  assert.match(item.error, /file audio not found/);
+  assert.equal((await handle(new Request('http://x/file-error/wrong'), env, '/file-error/wrong')).status, 403);
+  // resumed by hand
+  await req('PATCH', '/api/recordings/so_far', { paused: false });
+  assert.match(await caller(env, key, 'total', {})(), /^id_list_message=f-/);
+  // recordings switched off
+  await req('PATCH', '/api/recordings/settings', { enabled: false });
+  assert.equal(await caller(env, key, 'total', {})(), 'id_list_message=t-עד כה צברת 30 דקות&');
+});

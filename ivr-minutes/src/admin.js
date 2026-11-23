@@ -1,5 +1,6 @@
 // JSON API for the admin page (login and password: auth.js).
 import { changePassword, checkToken, HttpError, login, setting } from './auth.js';
+import * as rec from './recordings.js';
 import { addEntry, all, db, deleteEntry, first, getKey, listName, normalizePhone, rotateKey, run, TZ, updateEntry } from './data.js';
 
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } });
@@ -139,6 +140,15 @@ const ROUTES = [
       headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="minutes-${encodeURIComponent(list)}.csv"`, 'Cache-Control': 'no-store' },
     });
   }],
+
+  // recordings (recordings.js)
+  ['GET', /^recordings$/, (env, req, url) => rec.list(env, req, url, url.pathname.slice(0, url.pathname.lastIndexOf('/api/')))],
+  ['PATCH', /^recordings\/settings$/, (env, req) => rec.patchSettings(env, req)],
+  ['POST', /^recordings\/test$/, (env) => rec.test(env)],
+  ['POST', /^recordings\/([a-z0-9_]+)$/, (env, req, url, [key]) => rec.upload(env, req, key)],
+  ['PATCH', /^recordings\/([a-z0-9_]+)$/, (env, req, url, [key]) => rec.setPaused(env, req, key)],
+  ['DELETE', /^recordings\/([a-z0-9_]+)$/, (env, req, url, [key]) => rec.remove(env, key)],
+  ['GET', /^recordings\/([a-z0-9_]+)\/audio$/, (env, req, url, [key]) => rec.audio(env, key)],
 
   ['GET', /^settings$/, async (env) => json({ key: await getKey(env) })],
   ['POST', /^settings\/rotate-key$/, async (env) => json({ key: await rotateKey(env) })],
