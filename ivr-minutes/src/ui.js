@@ -6,7 +6,7 @@ export const PAGE = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>תוספת דקות</title>
+<title>תוספת שבת</title>
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--ink:#1d2330;--muted:#677084;--line:#e3e6ec;--accent:#2457c5;--accent-ink:#fff;--soft:#eef3fd;--danger:#c33a3a;--ok:#1d7a4c;--shadow:0 1px 2px rgba(20,30,50,.06),0 2px 8px rgba(20,30,50,.05)}
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#12151b;--card:#1a1f27;--ink:#e6e9ef;--muted:#98a1b3;--line:#2b323d;--accent:#6e9bff;--accent-ink:#0d1220;--soft:#1f2a40;--danger:#ff7b7b;--ok:#5fd39a;--shadow:none}}
@@ -101,7 +101,7 @@ async function api(path, { method = 'GET', body } = {}) {
 async function renderLogin() {
   let configured = true;
   try { configured = (await api('status')).configured; } catch {}
-  $('#app').innerHTML = '<div class="login card"><h1>תוספת דקות · כניסה</h1>' + (configured
+  $('#app').innerHTML = '<div class="login card"><h1>תוספת שבת · כניסה</h1>' + (configured
     ? '<form id="lf"><div class="row"><input id="pw" type="password" class="grow" placeholder="סיסמה" autocomplete="current-password" required autofocus><button class="btn primary">כניסה</button></div><p class="err" id="le"></p></form>'
     : '<p>עדיין לא הוגדרה סיסמת ניהול במסד הנתונים.</p>') + '</div>';
   const f = $('#lf');
@@ -117,7 +117,7 @@ async function render() {
   if (!token) return renderLogin();
   $('#app').innerHTML = \`
 <header>
-  <h1>תוספת דקות</h1>
+  <h1>תוספת שבת</h1>
   <label class="row small muted">רשימה <select id="list"></select></label>
   <button class="btn" id="newList" title="רשימה חדשה">+ רשימה</button>
   <button class="btn" id="logout">יציאה</button>
@@ -125,7 +125,7 @@ async function render() {
 <main>
   <div class="stats" id="stats"></div>
   <div class="tabs" id="tabs">
-    <button data-tab="people">משתתפים</button>
+    <button data-tab="people">משתתפות</button>
     <button data-tab="log">פעילות</button>
     <button data-tab="recordings">הקלטות</button>
     <button data-tab="setup">הגדרת שלוחות</button>
@@ -156,10 +156,10 @@ function setList(name) { state.list = name; store.set('minutes_list', name); loa
 async function loadStats() {
   const s = await api('summary?list=' + encodeURIComponent(state.list));
   $('#stats').innerHTML = [
-    [fmtMin(s.minutes), 'סך הכל נצבר (' + num(s.minutes) + ' דקות)'],
-    [num(s.phones), 'משתתפים'],
+    [fmtMin(s.minutes), 'סך הכל תוספת שבת (' + num(s.minutes) + ' דקות)'],
+    [num(s.phones), 'משתתפות'],
     [num(s.entries), 'עדכונים'],
-    [fmtMin(s.today_minutes), 'נוסף היום · ' + num(s.today_phones) + ' משתתפים'],
+    [fmtMin(s.today_minutes), 'נוסף היום · ' + num(s.today_phones) + ' משתתפות'],
   ].map(([b, t]) => '<div class="stat"><b>' + b + '</b><span>' + esc(t) + '</span></div>').join('');
 }
 
@@ -405,7 +405,7 @@ async function viewRecordings() {
 async function viewSetup() {
   const { key } = await api('settings');
   const saved = JSON.parse(store.get('minutes_setup') || '{}');
-  const v = { max: 60, times: 1, per: 'day', perN: 12, perUnit: 'h', edit: true, hours: false, all: false, ...saved };
+  const v = { max: 60, times: 1, per: 'week', perN: 12, perUnit: 'h', edit: true, hours: false, all: false, ...saved };
   $('#view').innerHTML = \`
   <div class="card">
     <h3 style="margin-top:0">שלוחת עדכון דקות</h3>
@@ -430,7 +430,7 @@ async function viewSetup() {
   </div>
   <div class="card">
     <h3 style="margin-top:0">שלוחת שמיעת הסכום</h3>
-    <label class="chk"><input type="checkbox" id="s_all" \${v.all ? 'checked' : ''}> להשמיע גם את הסכום של כל המשתתפים</label>
+    <label class="chk"><input type="checkbox" id="s_all" \${v.all ? 'checked' : ''}> להשמיע גם את הסכום של כל המשתתפות</label>
     <pre id="totalIni"></pre>
     <button class="btn" data-copy="totalIni">העתקה</button>
   </div>
@@ -449,9 +449,9 @@ async function viewSetup() {
     <p class="hint">אחרי ההחלפה כל שאר המחוברים מתנתקים.</p>
   </div>
   <div class="card small muted">
-    <b>איך זה עובד:</b> כל מתקשר מזוהה לפי מספר הטלפון שלו. בשלוחת העדכון הוא שומע כמה צבר, מקיש כמה דקות להוסיף ומאשר.
-    אם כבר עדכן את מספר הפעמים המותר בפרק הזמן, הוא יכול לשנות את העדכון האחרון (או לבטל אותו בהקשת 0).
-    בשלוחת הסכום הוא רק שומע כמה צבר. מספר חסוי לא יכול לעדכן. רשימה אחרת (<span dir="ltr">list=</span>) נותנת ספירה נפרדת לגמרי.
+    <b>איך זה עובד:</b> כל משתתפת מזוהה לפי מספר הטלפון שלה. בשלוחת העדכון היא שומעת כמה תוספת שבת קיבלה על עצמה עד כה, מקישה כמה דקות היא מקבלת על עצמה ומאשרת, והדקות מצטברות.
+    אם כבר עדכנה את מספר הפעמים המותר בפרק הזמן (ברירת המחדל: פעם בשבוע), היא יכולה לשנות את העדכון האחרון (או לבטל אותו בהקשת 0).
+    בשלוחת הסכום היא רק שומעת כמה נצבר לה. מספר חסוי לא יכול לעדכן. רשימה אחרת (<span dir="ltr">list=</span>) נותנת ספירה נפרדת לגמרי.
   </div>\`;
   $('#s_per').value = v.per; $('#s_unit').value = v.perUnit;
   const origin = location.origin + BASE;
