@@ -501,6 +501,7 @@ async function viewSetup() {
     </div>
     <div class="row" style="margin-top:12px;gap:18px">
       <label class="chk"><input type="checkbox" id="s_edit" \${v.edit ? 'checked' : ''}> אפשר לשנות את העדכון האחרון כשהגיעו למגבלה</label>
+      <label class="chk"><input type="checkbox" id="s_showmax" \${v.showMax !== false ? 'checked' : ''}> להשמיע לפני ההקשה מה המקסימום</label>
     </div>
     <p class="hint">הגדרות השלוחה בימות המשיח (ext.ini):</p>
     <pre id="addIni"></pre>
@@ -539,12 +540,12 @@ async function viewSetup() {
   $('#s_per').value = v.per; $('#s_unit').value = v.perUnit; $('#s_say').value = v.say || 'all';
   const origin = location.origin + BASE;
   const update = () => {
-    const c = { max: +$('#s_max').value || 60, times: +$('#s_times').value || 1, per: $('#s_per').value, perN: +$('#s_n').value || 1, perUnit: $('#s_unit').value, edit: $('#s_edit').checked, say: $('#s_say').value };
+    const c = { max: +$('#s_max').value || 60, times: +$('#s_times').value || 1, per: $('#s_per').value, perN: +$('#s_n').value || 1, perUnit: $('#s_unit').value, edit: $('#s_edit').checked, showMax: $('#s_showmax').checked, say: $('#s_say').value };
     store.set('minutes_setup', JSON.stringify(c));
     $('#rollWrap').style.display = c.per === 'rolling' ? '' : 'none';
     // Yemot does not take parameters in api_link: fixed values go in api_add_0, api_add_1 … (numbered from 0, no gaps)
     const common = ['key=' + key, ...(state.list !== 'main' ? ['list=' + state.list] : [])];
-    const addQ = [...common, 'max=' + c.max, 'times=' + c.times, 'per=' + (c.per === 'rolling' ? c.perN + c.perUnit : c.per), ...(c.edit ? [] : ['edit=no'])];
+    const addQ = [...common, 'max=' + c.max, 'times=' + c.times, 'per=' + (c.per === 'rolling' ? c.perN + c.perUnit : c.per), ...(c.edit ? [] : ['edit=no']), ...(c.showMax ? [] : ['show_max=no'])];
     const totQ = [...common, ...(c.say !== 'all' ? ['say=' + c.say] : [])];
     const ini = (path, q) => ['type=api', 'api_link=' + origin + path, ...q.map((x, i) => 'api_add_' + i + '=' + x),
       'api_hangup_send=no', 'api_send_webhook_error_link=' + origin + 'file-error/' + key].join('\\n');
