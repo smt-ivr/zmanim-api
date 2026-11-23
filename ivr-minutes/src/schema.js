@@ -1,0 +1,37 @@
+// Tables of this project. All are prefixed minutes_ so they can live in a shared database
+// (today: the zmanim database) without touching anything else there. Created on first use.
+export const SCHEMA = [
+  `CREATE TABLE IF NOT EXISTS minutes_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    list TEXT NOT NULL DEFAULT 'main',
+    phone TEXT NOT NULL,
+    minutes INTEGER NOT NULL,
+    source TEXT NOT NULL DEFAULT 'phone',   -- phone | admin
+    call_id TEXT,                           -- Yemot ApiCallId (one addition per call)
+    note TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS minutes_entries_phone ON minutes_entries (list, phone, created_at)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS minutes_entries_call ON minutes_entries (call_id) WHERE call_id IS NOT NULL`,
+  `CREATE TABLE IF NOT EXISTS minutes_people (
+    list TEXT NOT NULL,
+    phone TEXT NOT NULL,
+    name TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (list, phone)
+  )`,
+  `CREATE TABLE IF NOT EXISTS minutes_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at INTEGER NOT NULL,
+    list TEXT NOT NULL,
+    phone TEXT NOT NULL,
+    action TEXT NOT NULL,                   -- add | edit | delete (by phone or admin)
+    by TEXT NOT NULL,                       -- phone | admin
+    minutes INTEGER,
+    before INTEGER,
+    entry_id INTEGER
+  )`,
+  `CREATE INDEX IF NOT EXISTS minutes_log_list ON minutes_log (list, at)`,
+  `CREATE TABLE IF NOT EXISTS minutes_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS minutes_logins (ip TEXT PRIMARY KEY, fails INTEGER NOT NULL, first_at INTEGER NOT NULL)`,
+];

@@ -1,5 +1,6 @@
 // Entry point. Every API path lives under /api; anything else is the admin UI (static assets).
 import { handle as ivrSafed } from '../../ivr-safed/src/index.js';
+import { handle as ivrMinutes } from '../../ivr-minutes/src/index.js';
 import { authenticate, cleanup, requireAdmin, requirePerm, requireSuper } from './auth.js';
 import { HttpError, errorResponse, json } from './http.js';
 import { Router } from './router.js';
@@ -204,6 +205,8 @@ export default {
 
     // Separate project living in /ivr-safed (its own folder, no shared code): Safed Friday-evening times by phone.
     if (path === '/ivr-safed' || path.startsWith('/ivr-safed/')) return ivrSafed(request);
+    // Separate project living in /ivr-minutes (own folder and minutes_* tables): minutes added by phone, with its own admin page.
+    if (path === '/ivr-minutes' || path.startsWith('/ivr-minutes/')) return ivrMinutes(request, env, path.slice('/ivr-minutes'.length));
 
     if (path === '/admin') return Response.redirect(`${url.origin}${(env.BASE_PATH || '').replace(/\/$/, '')}/admin/${url.search}`, 301);
     if (!path.startsWith('/api/') && path !== '/api') {

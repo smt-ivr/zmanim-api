@@ -1,0 +1,13 @@
+# Only for running this folder as its own Worker later (today it is served by the zmanim Worker
+# at smti.uk/zmanim/ivr-minutes and keeps its minutes_* tables in the zmanim database).
+# To split: create a D1 database, put its id below, `npx wrangler deploy` from this folder, add a route,
+# The admin password lives (hashed) in the minutes_settings table, so copy that table too.
+name = "ivr-minutes"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+[[d1_databases]]
+binding = "MINUTES_DB"
+database_name = "ivr-minutes"
+database_id = "REPLACE_WITH_DATABASE_ID"
