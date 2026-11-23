@@ -256,7 +256,7 @@ async function openPerson(phone) {
   $('#addFor', d).onclick = () => openManual(phone);
   $('#blockBtn', d).onclick = async () => {
     try {
-      if (p.blocked) { await api('blocked/' + phone, { method: 'DELETE' }); toast('החסימה בוטלה'); }
+      if (p.blocked) { if (!confirm('לבטל את החסימה של ' + phone + '? המספר יוכל שוב לעדכן דקות בטלפון.')) return; await api('blocked/' + phone, { method: 'DELETE' }); toast('החסימה בוטלה'); }
       else {
         if (!confirm('לחסום את ' + phone + '? המספר לא יוכל לעדכן דקות בטלפון (שמיעת הסכום תמשיך לעבוד).')) return;
         const del = confirm('למחוק גם את כל הדקות שהמספר הזה עדכן עד עכשיו? (אישור = למחוק, ביטול = להשאיר אותן)');
@@ -341,6 +341,7 @@ async function openBlocked(inPage) {
   };
   d.querySelector('.dlg-body').onclick = async (e) => {
     const p = e.target.dataset.unblock; if (!p) return;
+    if (!confirm('לבטל את החסימה של ' + p + '? המספר יוכל שוב לעדכן דקות בטלפון.')) return;
     try { await api('blocked/' + p, { method: 'DELETE' }); toast('החסימה בוטלה'); again(); if (!inPage) showTab(); else loadStats(); } catch (err) { alert(err.message); }
   };
 }
