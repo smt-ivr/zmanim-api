@@ -284,3 +284,56 @@ test('blocked numbers cannot add, can still hear; import from the Yemot log', as
   people = await req('GET', '/api/people?list=main');
   assert.ok(!people.data.some((p) => p.phone === '0521110001'));
 });
+
+test('manager: main list only, no token / passwords / key / deleting history; admin deletes history', async () => {
+  const env = fresh();
+  await keyOf(env);
+  await setPassword(env, '7777777', 'manager');
+  const call = async (method, path, b, token) => {
+    const res = await handle(new Request('http://x/zmanim/ivr-minutes' + path, {
+      method, headers: { ...(token ? { Authorization: 'Bearer ' + token } : {}), 'Content-Type': 'application/json' }, body: b ? JSON.stringify(b) : undefined,
+    }), env, path.split('?')[0]);
+    return { status: res.status, data: res.headers.get('Content-Type').includes('json') ? await res.json() : await res.text() };
+  };
+  const admin = (await call('POST', '/api/login', { password: 'secret' })).data;
+  const mgr = (await call('POST', '/api/login', { password: '7777777' })).data;
+  assert.equal(admin.role, 'admin');
+  assert.equal(mgr.role, 'manager');
+  assert.equal((await call('GET', '/api/me', null, mgr.token)).data.role, 'manager');
+
+  // the admin adds to another list; the manager cannot see it, and her additions go to main
+  await call('POST', '/api/entries', { list: 'other', phone: '0521110001', minutes: 50 }, admin.token);
+  await call('POST', '/api/entries', { list: 'main', phone: '0521110002', minutes: 20 }, admin.token);
+  await call('POST', '/api/entries', { list: 'other', phone: '0521110003', minutes: 7 }, mgr.token);
+  assert.deepEqual((await call('GET', '/api/lists', null, mgr.token)).data.map((l) => l.list), ['main']);
+  assert.deepEqual((await call('GET', '/api/lists', null, admin.token)).data.map((l) => l.list), ['main', 'other']);
+  assert.equal((await call('GET', '/api/summary?list=other', null, mgr.token)).data.minutes, 27); // forced to main
+  const otherEntry = env.DB.db.prepare(`SELECT id FROM minutes_entries WHERE list = 'other'`).get();
+  assert.equal((await call('DELETE', '/api/entries/' + otherEntry.id, null, mgr.token)).status, 404);
+
+  // forbidden for the manager
+  for (const [m, p, b] of [['POST', '/api/password', { current: '7777777', next: '12345' }], ['PATCH', '/api/recordings/settings', { token: 'x' }],
+    ['POST', '/api/recordings/test'], ['POST', '/api/settings/rotate-key'], ['DELETE', '/api/log?scope=all'], ['POST', '/api/manager-password', { code: '1234' }],
+    ['DELETE', '/api/lists/main', { confirm: 'main' }]]) {
+    assert.equal((await call(m, p, b, mgr.token)).status, 403, `${m} ${p}`);
+  }
+  await call('PATCH', '/api/recordings/settings', { token: '0771234567:1234' }, admin.token);
+  const recs = (await call('GET', '/api/recordings', null, mgr.token)).data;
+  assert.deepEqual(recs.settings, { has_token: true, enabled: true });
+
+  // history says who did what; the admin deletes their own or everything
+  let log = (await call('GET', '/api/log?list=main', null, mgr.token)).data;
+  assert.deepEqual(log.map((l) => l.by), ['manager', 'admin']);
+  assert.deepEqual((await call('GET', '/api/log?list=main&by=manager', null, mgr.token)).data.length, 1);
+  assert.equal((await call('DELETE', '/api/log?list=main&scope=mine', null, admin.token)).data.deleted, 1);
+  log = (await call('GET', '/api/log?list=main', null, admin.token)).data;
+  assert.deepEqual(log.map((l) => l.by), ['manager']);
+  assert.equal((await call('DELETE', '/api/log?list=main&scope=all', null, admin.token)).data.deleted, 1);
+  assert.equal((await call('GET', '/api/log?list=other', null, admin.token)).data.length, 1, 'other lists are untouched');
+
+  // a new manager password logs her out; the admin password cannot be reused for her
+  assert.equal((await call('POST', '/api/manager-password', { code: 'secret' }, admin.token)).status, 400);
+  await call('POST', '/api/manager-password', { code: '8888888' }, admin.token);
+  assert.equal((await call('GET', '/api/me', null, mgr.token)).status, 401);
+  assert.equal((await call('POST', '/api/login', { password: '8888888' })).data.role, 'manager');
+});

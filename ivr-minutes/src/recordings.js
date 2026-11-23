@@ -55,12 +55,13 @@ const phraseOf = (key) => {
 
 // ------------------------------------------------------------------ routes (all behind the admin login)
 /** GET recordings — settings and every phrase with its status. */
-export async function list(env, request, url, base) {
+export async function list(env, request, url, base, role = 'admin') {
   const s = await getSettings(env);
   const rows = await all(env, `SELECT key, text, paused, error, error_at, updated_at FROM minutes_recordings`);
   const byKey = new Map(rows.map((r) => [r.key, r]));
   return json({
-    settings: view(s),
+    // the manager never sees the token or the folder, only whether recordings can be uploaded
+    settings: role === 'admin' ? view(s) : { has_token: Boolean(s.token), enabled: s.enabled },
     items: PHRASES.map(([key, text, group, where]) => {
       const r = byKey.get(key);
       return { key, text, group, where, file: fileName(key), recorded: Boolean(r), paused: r?.paused === 1, error: r?.error ?? null, updated_at: r?.updated_at ?? null, changed: Boolean(r && r.text !== text) };
