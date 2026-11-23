@@ -36,9 +36,10 @@ const FILES = {
   delete: async (keys) => [].concat(keys).forEach((k) => files.delete(k)),
 };
 const env = { DB: new D1Shim(), ASSETS, FILES, BASE_PATH: '/zmanim' };
-// ivr-minutes admin page (/zmanim/ivr-minutes/), password: preview
+// ivr-minutes admin page (/zmanim/ivr-minutes/), password: preview (manager: manager)
 await initMinutes(env);
 await setMinutesPassword(env, 'preview');
+await setMinutesPassword(env, 'manager', 'manager'); // the line manager's view: password "manager" (or ?code=manager)
 await env.DB.prepare(`INSERT INTO users (name, email, phone, password_hash, role, is_super) VALUES ('מנהל הדגמה', 'admin@example.com', '0500000000', ?, 'admin', 1)`)
   .bind(await hashPassword('preview')).run();
 // Demo content so the public site has something to show
