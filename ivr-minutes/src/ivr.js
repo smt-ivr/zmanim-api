@@ -4,8 +4,9 @@
 //           inside a blocked window they can change their last update instead)
 //   /total  a caller only hears how much they have accumulated
 //
-// Settings come as request parameters, which Yemot sends from the extension's settings
-// (api_add_0=key=…, api_add_1=max=60 …), together with ApiPhone, ApiCallId and the values read so far.
+// The extension in Yemot needs only the link and the key (api_add_0=key=…). Everything else (maximum,
+// limit, period, what the total line says …) is saved in the database and edited in the admin page.
+// Yemot sends ApiPhone, ApiCallId and the values read so far.
 //
 // Stateless: Yemot sends back every value read earlier in the call (by its name), so the step is
 // known from which names are present. Each question gets a fresh name (a1, a2 …, c1, e<id>_1 …),
@@ -17,6 +18,7 @@
 import { addEntry, deleteEntry, first, getKey, init, isBlocked, listName, listTotal, normalizePhone, periodStart, phoneTotal, recentPhoneEntries, updateEntry } from './data.js';
 import { parsePer, speakPer, windowStart } from './period.js';
 import { loadVoice, P, plainVoice } from './voice.js';
+import { getConfig } from './config.js';
 
 const ATTEMPTS = 3;
 
@@ -46,20 +48,13 @@ export function minutesParts(n) {
 /** The same, as text: "45 דקות". */
 export const speakMinutes = (n) => minutesParts(n).map((p) => (typeof p === 'object' ? p.text : p)).join(' ');
 
-// ------------------------------------------------------------------ parameters (from the extension's settings)
-const int = (v, lo, hi, dflt) => (v != null && /^\d{1,5}$/.test(String(v).trim()) && +v >= lo && +v <= hi ? +v : dflt);
-
-export function settings(p) {
-  return {
-    list: listName(p.list),
-    max: int(p.max, 1, 99999, 60),
-    times: int(p.times, 1, 999, 1),
-    per: parsePer(p.per),
-    edit: p.edit !== 'no',
-    showMax: p.show_max !== 'no', // say the maximum before typing
-    // total line: all = only the total of everyone (default), both = everyone's and then hers, mine = only hers
-    say: ['all', 'both', 'mine'].includes(p.say) ? p.say : p.all === '1' ? 'both' : 'all',
-  };
+// ------------------------------------------------------------------ settings: from the database (config.js), edited in the admin page
+/** The list's saved settings. Request parameters other than key (and list, for extra lists) are ignored. */
+export async function settings(env, p) {
+  const list = listName(p.list);
+  const c = await getConfig(env, list);
+  // say: all = only the total of everyone, both = everyone's and then hers, mine = only hers
+  return { list, max: c.max, times: c.times, per: parsePer(c.per), edit: c.edit, showMax: c.showMax, say: c.say };
 }
 
 // ------------------------------------------------------------------ entry
@@ -89,7 +84,7 @@ export async function handleIvr(request, env, mode, nowMs = Date.now()) {
     await init(env);
     v = await loadVoice(env);
     if (!p.key || p.key !== (await getKey(env))) return textReply(end(v, [[P('blocked')]]));
-    const s = settings(p);
+    const s = await settings(env, p);
     const phone = normalizePhone(p.ApiPhone);
     const c = { env, p, phone, v, s, nowMs, start: await periodStart(env, s.list) }; // totals count only since the last reset
     if (mode === 'total' && s.say === 'all') return textReply(await total(c)); // no need to know who is calling

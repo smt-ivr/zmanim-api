@@ -5,6 +5,8 @@ import { handleIvr, speakMinutes } from '../src/ivr.js';
 import { parsePer, windowStart } from '../src/period.js';
 import { D1Shim } from './d1-shim.mjs';
 import { setPassword } from '../src/auth.js';
+import { DEFAULTS, saveConfig } from '../src/config.js';
+import { listName } from '../src/data.js';
 
 const fresh = () => ({ DB: new D1Shim() });
 const PHONE = '0501234567';
@@ -16,12 +18,22 @@ async function keyOf(env) {
     ?? (await (await import('../src/data.js')).getKey(env));
 }
 
-/** One call: each step sends all values so far, like Yemot does. */
+/**
+ * One call: each step sends all values so far, like Yemot does. The settings `q` (max, times, per, edit,
+ * show_max, say) are saved to the database first, as the admin page does; the request carries only the key.
+ */
 function caller(env, key, mode, q, { phone = PHONE, callId = 'call-' + Math.random(), now } = {}) {
   const vals = {};
+  const { list, ...cfg } = q;
+  const config = {
+    ...DEFAULTS,
+    ...(cfg.max ? { max: Number(cfg.max) } : {}), ...(cfg.times ? { times: Number(cfg.times) } : {}), ...(cfg.per ? { per: cfg.per } : {}),
+    ...(cfg.edit === 'no' ? { edit: false } : {}), ...(cfg.show_max === 'no' ? { showMax: false } : {}), ...(cfg.say ? { say: cfg.say } : {}),
+  };
   return async (name, value) => {
     if (name) vals[name] = value;
-    const p = new URLSearchParams({ key, ApiPhone: phone, ApiCallId: callId, ...q, ...vals });
+    await saveConfig(env, listName(list), config);
+    const p = new URLSearchParams({ key, ApiPhone: phone, ApiCallId: callId, ...(list ? { list } : {}), ...vals });
     return (await handleIvr(new Request('http://x/add?' + p), env, mode, now)).text();
   };
 }
@@ -376,4 +388,33 @@ test('reset: the count starts over without deleting; past periods stay; undo', a
   assert.equal((await call('DELETE', '/api/reset?list=main', null, mgr)).status, 404);
   const log = (await call('GET', '/api/log?list=main', null, mgr)).data.map((l) => l.action);
   assert.deepEqual(log.slice(0, 2), ['unreset', 'reset']);
+});
+
+test('settings live in the database: parameters in the extension are ignored; both roles edit them', async () => {
+  const env = fresh();
+  const key = await keyOf(env);
+  await setPassword(env, '7777777', 'manager');
+  const call = async (method, path, b, token) => {
+    const res = await handle(new Request('http://x/zmanim/ivr-minutes' + path, {
+      method, headers: { ...(token ? { Authorization: 'Bearer ' + token } : {}), 'Content-Type': 'application/json' }, body: b ? JSON.stringify(b) : undefined,
+    }), env, path.split('?')[0]);
+    return { status: res.status, data: await res.json() };
+  };
+  const raw = async (mode, extra) => (await handleIvr(new Request('http://x/?' + new URLSearchParams({ key, ApiPhone: PHONE, ApiCallId: 'c' + Math.random(), ...extra })), env, mode)).text();
+  const mgr = (await call('POST', '/api/login', { password: '7777777' })).data.token;
+
+  assert.deepEqual((await call('GET', '/api/config?list=main', null, mgr)).data, DEFAULTS);
+  const saved = (await call('PUT', '/api/config', { list: 'other', max: 30, times: 2, per: 'day', edit: false, showMax: false, say: 'both' }, mgr)).data;
+  assert.deepEqual(saved, { max: 30, times: 2, per: 'day', edit: false, showMax: false, say: 'both' }); // the manager's list is always main
+  assert.deepEqual((await call('GET', '/api/config?list=main', null, mgr)).data, saved);
+  // invalid values change nothing
+  assert.equal((await call('PUT', '/api/config', { per: 'nonsense', max: -5 }, mgr)).data.per, 'day');
+  assert.equal((await call('PUT', '/api/config', { per: '12h' }, mgr)).data.per, '12h');
+  await call('PUT', '/api/config', { per: 'day' }, mgr);
+
+  // parameters sent by the extension change nothing
+  assert.match(await raw('add', { max: '500', show_max: 'yes' }), /^read=t-הקישי את מספר הדקות של תוספת שבת שאת מקבלת על עצמך ובסיום הקישי סולמית=a1,no,2,/);
+  assert.match(await raw('total', { say: 'all' }), /ואת עדיין לא קיבלת/);
+  await call('PUT', '/api/config', { showMax: true }, mgr);
+  assert.match(await raw('add', {}), /עד 30 ובסיום/);
 });
