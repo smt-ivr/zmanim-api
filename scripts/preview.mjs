@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { hashPassword } from '../api/src/auth.js';
 import worker from '../api/src/index.js';
 import { D1Shim } from '../api/test/d1-shim.mjs';
+import { setPassword as setMinutesPassword } from '../ivr-minutes/src/auth.js';
+import { init as initMinutes } from '../ivr-minutes/src/data.js';
 
 const root = fileURLToPath(new URL('../web/', import.meta.url));
 const port = Number(process.argv[2] || 8787);
@@ -33,7 +35,10 @@ const FILES = {
   get: async (k) => (files.has(k) ? { body: new Response(files.get(k)).body, arrayBuffer: async () => files.get(k).buffer } : null),
   delete: async (keys) => [].concat(keys).forEach((k) => files.delete(k)),
 };
-const env = { DB: new D1Shim(), ASSETS, FILES, BASE_PATH: '/zmanim', MINUTES_PASSWORD: 'preview' }; // ivr-minutes admin page: /zmanim/ivr-minutes/
+const env = { DB: new D1Shim(), ASSETS, FILES, BASE_PATH: '/zmanim' };
+// ivr-minutes admin page (/zmanim/ivr-minutes/), password: preview
+await initMinutes(env);
+await setMinutesPassword(env, 'preview');
 await env.DB.prepare(`INSERT INTO users (name, email, phone, password_hash, role, is_super) VALUES ('מנהל הדגמה', 'admin@example.com', '0500000000', ?, 'admin', 1)`)
   .bind(await hashPassword('preview')).run();
 // Demo content so the public site has something to show

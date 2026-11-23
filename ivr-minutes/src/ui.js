@@ -86,7 +86,7 @@ function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.ad
 async function api(path, { method = 'GET', body } = {}) {
   const res = await fetch(API + path, { method, headers: { ...(token ? { Authorization: 'Bearer ' + token } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
   const data = res.headers.get('Content-Type')?.includes('json') ? await res.json() : await res.text();
-  if (res.status === 401 && path !== 'login') { token = null; store.set('minutes_token', null); render(); throw new Error(data.error); }
+  if (res.status === 401 && path !== 'login' && path !== 'password') { token = null; store.set('minutes_token', null); render(); throw new Error(data.error); }
   if (!res.ok) throw new Error(data.error || 'שגיאה');
   return data;
 }
@@ -97,7 +97,7 @@ async function renderLogin() {
   try { configured = (await api('status')).configured; } catch {}
   $('#app').innerHTML = '<div class="login card"><h1>תוספת דקות · כניסה</h1>' + (configured
     ? '<form id="lf"><div class="row"><input id="pw" type="password" class="grow" placeholder="סיסמה" autocomplete="current-password" required autofocus><button class="btn primary">כניסה</button></div><p class="err" id="le"></p></form>'
-    : '<p>עדיין לא הוגדרה סיסמת ניהול.</p><p class="muted small">יש להוסיף ב-Cloudflare ל-Worker סוד (Secret) בשם <b dir="ltr">MINUTES_PASSWORD</b> עם הסיסמה הרצויה, ואז לרענן את הדף.</p>') + '</div>';
+    : '<p>עדיין לא הוגדרה סיסמת ניהול במסד הנתונים.</p>') + '</div>';
   const f = $('#lf');
   if (f) f.onsubmit = async (e) => {
     e.preventDefault();
@@ -309,6 +309,15 @@ async function viewSetup() {
     <p class="muted small">המפתח נכלל בקישורים שלמעלה, ובלעדיו השלוחה חסומה. החלפת המפתח משביתה את הקישורים הישנים עד שתעדכנו אותם בימות המשיח.</p>
     <div class="row"><code dir="ltr">\${esc(key)}</code><button class="btn danger" id="rotate">החלפת מפתח</button></div>
   </div>
+  <div class="card">
+    <h3 style="margin-top:0">סיסמת הממשק</h3>
+    <form id="pwf" class="row">
+      <input id="pw_cur" type="password" placeholder="הסיסמה הנוכחית" autocomplete="current-password" required>
+      <input id="pw_new" type="password" placeholder="סיסמה חדשה" autocomplete="new-password" minlength="4" required>
+      <button class="btn">החלפת סיסמה</button>
+    </form>
+    <p class="hint">אחרי ההחלפה כל שאר המחוברים מתנתקים.</p>
+  </div>
   <div class="card small muted">
     <b>איך זה עובד:</b> כל מתקשר מזוהה לפי מספר הטלפון שלו. בשלוחת העדכון הוא שומע כמה צבר, מקיש כמה דקות להוסיף ומאשר.
     אם כבר עדכן את מספר הפעמים המותר בפרק הזמן, הוא יכול לשנות את העדכון האחרון (או לבטל אותו בהקשת 0).
@@ -329,6 +338,13 @@ async function viewSetup() {
   };
   $('#view').oninput = update; $('#view').onchange = update;
   update();
+  $('#pwf').onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      token = (await api('password', { method: 'POST', body: { current: $('#pw_cur').value, next: $('#pw_new').value } })).token;
+      store.set('minutes_token', token); e.target.reset(); toast('הסיסמה הוחלפה');
+    } catch (err) { alert(err.message); }
+  };
   $('#view').onclick = async (e) => {
     const id = e.target.dataset.copy;
     if (id) { try { await navigator.clipboard.writeText($('#' + id).textContent); toast('הועתק'); } catch { toast('לא ניתן להעתיק'); } }

@@ -4,12 +4,14 @@ import { handle } from '../src/index.js';
 import { handleIvr, speakMinutes } from '../src/ivr.js';
 import { parsePer, windowStart } from '../src/period.js';
 import { D1Shim } from './d1-shim.mjs';
+import { setPassword } from '../src/auth.js';
 
-const fresh = () => ({ DB: new D1Shim(), MINUTES_PASSWORD: 'secret' });
+const fresh = () => ({ DB: new D1Shim() });
 const PHONE = '0501234567';
 
 async function keyOf(env) {
   await handle(new Request('http://x/ivr-minutes/api/status'), env, '/api/status');
+  await setPassword(env, 'secret');
   return env.DB.db.prepare(`SELECT value FROM minutes_settings WHERE key = 'ivr_key'`).get()?.value
     ?? (await (await import('../src/data.js')).getKey(env));
 }
@@ -119,8 +121,10 @@ test('admin API: login, people, edit, log, export', async () => {
     return { status: res.status, data: res.headers.get('Content-Type').includes('json') ? await res.json() : await res.text() };
   };
   assert.equal((await call('GET', '/api/people')).status, 401);
+  const status = await call('GET', '/api/status');
+  assert.equal(status.data.configured, true);
   assert.equal((await call('POST', '/api/login', { password: 'nope' })).status, 401);
-  const { data: { token } } = await call('POST', '/api/login', { password: 'secret' });
+  let { data: { token } } = await call('POST', '/api/login', { password: 'secret' });
   assert.ok(token);
 
   let r = await call('GET', '/api/people?list=main', null, token);
@@ -138,6 +142,13 @@ test('admin API: login, people, edit, log, export', async () => {
   assert.deepEqual(r.data.map((l) => l.action), ['edit', 'add', 'add']);
   r = await call('GET', '/api/export?list=main', null, token);
   assert.match(r.data, /0501234567,משה,35,2,/);
+  // password change: wrong current refused; afterwards the old token and password stop working
+  assert.equal((await call('POST', '/api/password', { current: 'bad', next: '9999' }, token)).status, 401);
+  const { data: { token: t2 } } = await call('POST', '/api/password', { current: 'secret', next: '9999' }, token);
+  assert.equal((await call('GET', '/api/lists', null, token)).status, 401);
+  assert.equal((await call('POST', '/api/login', { password: 'secret' })).status, 401);
+  assert.equal((await call('POST', '/api/login', { password: '9999' })).status, 200);
+  token = t2;
   r = await call('GET', '/api/settings', null, token);
   assert.equal(r.data.key, key);
   r = await call('POST', '/api/settings/rotate-key', null, token);

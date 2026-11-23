@@ -1,62 +1,8 @@
-// JSON API for the admin page. One password (the MINUTES_PASSWORD secret) -> a signed token for 30 days.
-// Changing the secret logs everyone out.
-import { addEntry, all, db, deleteEntry, first, getKey, listName, normalizePhone, nowSec, rotateKey, run, TZ, updateEntry } from './data.js';
+// JSON API for the admin page (login and password: auth.js).
+import { changePassword, checkToken, HttpError, login, setting } from './auth.js';
+import { addEntry, all, db, deleteEntry, first, getKey, listName, normalizePhone, rotateKey, run, TZ, updateEntry } from './data.js';
 
-const TOKEN_DAYS = 30;
-const LOGIN_LIMIT = { fails: 8, window: 15 * 60 };
-
-class HttpError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
-}
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } });
-
-// ------------------------------------------------------------------ token
-const enc = new TextEncoder();
-const b64url = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-
-async function sign(secret, data) {
-  const key = await crypto.subtle.importKey('raw', enc.encode('ivr-minutes:' + secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  return b64url(await crypto.subtle.sign('HMAC', key, enc.encode(data)));
-}
-
-function sameText(a, b) {
-  const x = enc.encode(String(a)), y = enc.encode(String(b));
-  let diff = x.length ^ y.length;
-  for (let i = 0; i < Math.max(x.length, y.length); i++) diff |= (x[i] ?? 0) ^ (y[i] ?? 0);
-  return diff === 0;
-}
-
-async function makeToken(secret) {
-  const exp = String(nowSec() + TOKEN_DAYS * 86400);
-  return `${exp}.${await sign(secret, exp)}`;
-}
-
-async function checkToken(env, request) {
-  const secret = env.MINUTES_PASSWORD;
-  if (!secret) throw new HttpError(503, 'לא הוגדרה סיסמת ניהול');
-  const token = (request.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
-  const [exp, sig] = token.split('.');
-  if (!exp || !sig || +exp < nowSec() || !sameText(sig, await sign(secret, exp))) throw new HttpError(401, 'יש להתחבר מחדש');
-}
-
-async function login(env, request) {
-  const secret = env.MINUTES_PASSWORD;
-  if (!secret) throw new HttpError(503, 'לא הוגדרה סיסמת ניהול');
-  const ip = request.headers.get('CF-Connecting-IP') || 'local';
-  const t = nowSec();
-  const row = await first(env, `SELECT * FROM minutes_logins WHERE ip = ?`, ip);
-  const fresh = row && row.first_at > t - LOGIN_LIMIT.window;
-  if (fresh && row.fails >= LOGIN_LIMIT.fails) throw new HttpError(429, 'יותר מדי ניסיונות. נסו שוב בעוד רבע שעה');
-  const body = await request.json().catch(() => ({}));
-  if (!sameText(body.password ?? '', secret)) {
-    await run(env, `INSERT INTO minutes_logins (ip, fails, first_at) VALUES (?, 1, ?)
-      ON CONFLICT(ip) DO UPDATE SET fails = CASE WHEN first_at > ? THEN fails + 1 ELSE 1 END, first_at = CASE WHEN first_at > ? THEN first_at ELSE excluded.first_at END`,
-    ip, t, t - LOGIN_LIMIT.window, t - LOGIN_LIMIT.window);
-    throw new HttpError(401, 'סיסמה שגויה');
-  }
-  await run(env, `DELETE FROM minutes_logins WHERE ip = ? OR first_at < ?`, ip, t - 86400);
-  return json({ token: await makeToken(secret) });
-}
 
 // ------------------------------------------------------------------ helpers
 function israelDayStart(nowMs = Date.now()) {
@@ -89,8 +35,9 @@ const csvCell = (v) => (/[",\n]/.test(String(v ?? '')) ? `"${String(v).replace(/
 
 // ------------------------------------------------------------------ routes
 const ROUTES = [
-  ['GET', /^status$/, async (env) => json({ configured: !!env.MINUTES_PASSWORD }), { open: true }],
-  ['POST', /^login$/, (env, req) => login(env, req), { open: true }],
+  ['GET', /^status$/, async (env) => json({ configured: !!(await setting(env, 'admin_password')) }), { open: true }],
+  ['POST', /^login$/, async (env, req) => json({ token: await login(env, req) }), { open: true }],
+  ['POST', /^password$/, async (env, req) => json({ token: await changePassword(env, req) })],
 
   ['GET', /^lists$/, async (env) => {
     const rows = await all(env, `SELECT list, COUNT(DISTINCT phone) AS phones, COUNT(*) AS entries, COALESCE(SUM(minutes), 0) AS minutes FROM minutes_entries GROUP BY list ORDER BY list`);
