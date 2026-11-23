@@ -34,6 +34,12 @@ export const SCHEMA = [
   `CREATE INDEX IF NOT EXISTS minutes_log_list ON minutes_log (list, at)`,
   `CREATE TABLE IF NOT EXISTS minutes_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS minutes_logins (ip TEXT PRIMARY KEY, fails INTEGER NOT NULL, first_at INTEGER NOT NULL)`,
+  // Numbers blocked from adding (they can still hear the totals). For every list.
+  `CREATE TABLE IF NOT EXISTS minutes_blocked (
+    phone TEXT PRIMARY KEY,
+    note TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL
+  )`,
   // Recordings uploaded to Yemot from the admin page; a phrase with one plays it instead of text-to-speech.
   `CREATE TABLE IF NOT EXISTS minutes_recordings (
     key TEXT PRIMARY KEY,                   -- phrase key (voice.js)

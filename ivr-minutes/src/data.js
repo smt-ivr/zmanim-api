@@ -65,9 +65,11 @@ export async function listTotal(env, list) {
   return r.t;
 }
 
-/** Updates made by phone since `since` (epoch seconds), newest first. */
+/** Updates made by phone (also ones imported from the old Yemot extension) since `since` (epoch seconds), newest first. */
 export const recentPhoneEntries = (env, list, phone, since) =>
-  all(env, `SELECT * FROM minutes_entries WHERE list = ? AND phone = ? AND source = 'phone' AND created_at >= ? ORDER BY created_at DESC, id DESC`, list, phone, since);
+  all(env, `SELECT * FROM minutes_entries WHERE list = ? AND phone = ? AND source IN ('phone', 'import') AND created_at >= ? ORDER BY created_at DESC, id DESC`, list, phone, since);
+
+export const isBlocked = async (env, phone) => Boolean(await first(env, `SELECT 1 AS x FROM minutes_blocked WHERE phone = ?`, phone));
 
 // ------------------------------------------------------------------ changes (each one also goes to the log)
 const logStmt = (env, { list, phone, action, by, minutes = null, before = null, entryId = null }) =>
