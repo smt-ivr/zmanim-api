@@ -75,6 +75,12 @@ main{max-width:1180px;margin:0 auto;padding:18px 16px 60px}
 .stat.hero span{color:rgba(255,255,255,.82)}
 .stat.hero .ico{background:rgba(255,255,255,.16);color:#ffd166}
 
+/* period bar */
+.period{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:10px 14px;margin-bottom:14px;box-shadow:var(--shadow)}
+.period .lbl{display:flex;align-items:center;gap:8px;font-weight:600}
+.period select{padding:6px 10px;border-radius:10px;font-size:14px;max-width:100%}
+.period.past{border-color:var(--gold);background:var(--gold-soft)}
+
 /* buttons */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:10px;padding:8px 13px;cursor:pointer;font-weight:550;white-space:nowrap;transition:background .15s,border-color .15s,transform .05s;text-decoration:none;font-size:14.5px}
 .btn:hover{background:var(--panel-2);border-color:color-mix(in srgb,var(--line) 60%,var(--muted))}
@@ -245,7 +251,7 @@ const ic = (n, extra = '') => '<svg class="i" viewBox="0 0 24 24" aria-hidden="t
 let token = store.get('minutes_token');
 const me = { role: null, manager_set: false };
 const isAdmin = () => me.role === 'admin';
-const state = { list: store.get('minutes_list') || 'main', tab: store.get('minutes_tab') || 'people', q: '', filter: 'all', sort: 'minutes', dir: -1, page: 0, logBy: 'all' };
+const state = { list: store.get('minutes_list') || 'main', tab: store.get('minutes_tab') || 'people', q: '', filter: 'all', sort: 'minutes', dir: -1, page: 0, logBy: 'all', period: 'current' };
 const PAGE_SIZE = 50;
 const WHO = { phone: ['טלפון', ''], admin: ['מנהל ראשי', 'accent'], manager: ['מנהלת', 'gold'] };
 
@@ -337,7 +343,7 @@ async function render() {
     '<span class="role ' + me.role + '">' + ic(isAdmin() ? 'shield' : 'users') + (isAdmin() ? 'מנהל ראשי' : 'מנהלת הקו') + '</span>' +
     '<button class="btn ghost icon" id="logout" title="יציאה">' + ic('logout') + '</button>' +
     '</div><nav class="nav" id="tabs">' + TABS.map(([k, label, icon]) => '<button data-tab="' + k + '">' + ic(icon) + label + '<span class="count" id="cnt-' + k + '" hidden></span></button>').join('') + '</nav></header>' +
-    '<main><div class="stats" id="stats">' + '<div class="stat"><div class="skel" style="width:100%"></div></div>'.repeat(4) + '</div><div id="view"></div></main>';
+    '<main><div id="period"></div><div class="stats" id="stats">' + '<div class="stat"><div class="skel" style="width:100%"></div></div>'.repeat(4) + '</div><div id="view"></div></main>';
   $('#logout').onclick = async () => { if (await ask({ title: 'יציאה מהממשק', text: 'לצאת מהחשבון בדפדפן הזה?', ok: 'יציאה' })) logout(); };
   if (isAdmin()) {
     $('#newList').onclick = async () => {
@@ -360,13 +366,13 @@ async function loadLists() {
   $('#list').innerHTML = lists.map((l) => '<option value="' + esc(l.list) + '"' + (l.list === state.list ? ' selected' : '') + '>' + esc(l.list === 'main' ? 'רשימה ראשית' : l.list) + '</option>').join('');
 }
 
-function setList(name) { state.list = name; state.page = 0; store.set('minutes_list', name); if (isAdmin()) loadLists(); showTab(); }
-const L = () => 'list=' + encodeURIComponent(state.list);
+function setList(name) { state.list = name; state.page = 0; state.period = 'current'; store.set('minutes_list', name); if (isAdmin()) loadLists(); showTab(); }
+const L = () => 'list=' + encodeURIComponent(state.list) + (state.period !== 'current' ? '&period=' + state.period : '');
 
 async function loadStats() {
   const s = await api('summary?' + L());
   $('#stats').innerHTML =
-    '<div class="stat hero"><div class="ico">' + ic('flame') + '</div><div><b>' + fmtMin(s.minutes) + '</b><span>סך הכל תוספת שבת</span></div></div>' +
+    '<div class="stat hero"><div class="ico">' + ic('flame') + '</div><div><b>' + fmtMin(s.minutes) + '</b><span>' + (state.period === 'all' ? 'סך הכל בכל הזמן' : state.period === 'current' ? 'סך הכל בתקופה הנוכחית' : 'סך הכל בתקופה הזו') + '</span></div></div>' +
     '<div class="stat"><div class="ico t-gold">' + ic('week') + '</div><div><b>' + fmtMin(s.week_minutes) + '</b><span>השבוע · ' + num(s.week_phones) + ' משתתפות</span></div></div>' +
     '<div class="stat"><div class="ico t-ok">' + ic('today') + '</div><div><b>' + fmtMin(s.today_minutes) + '</b><span>היום · ' + num(s.today_phones) + ' משתתפות</span></div></div>' +
     '<div class="stat"><div class="ico t-accent">' + ic('users') + '</div><div><b>' + num(s.phones) + '</b><span>משתתפות · ' + num(s.entries) + ' עדכונים</span></div></div>';
@@ -378,9 +384,47 @@ function showTab() {
   const view = $('#view'); view.onclick = view.oninput = view.onchange = null;
   stopPlaying();
   loadStats().catch(fail);
+  loadPeriods().catch(fail);
   view.innerHTML = '<div class="card"><div class="card-b"><div class="skel" style="width:40%"></div><div class="skel"></div><div class="skel" style="width:80%"></div></div></div>';
   (({ people: viewPeople, log: viewLog, blocked: viewBlocked, recordings: viewRecordings, setup: viewSetup })[state.tab] || viewPeople)()
     .catch((e) => { view.innerHTML = '<div class="card"><div class="card-b err">' + esc(e.message) + '</div></div>'; });
+}
+
+// ------------------------------------------------------------------ periods: reset starts the count over (nothing is deleted)
+async function loadPeriods() {
+  const el = $('#period');
+  if (!el) return;
+  if (!['people', 'blocked'].includes(state.tab) && state.period === 'current') { el.innerHTML = ''; el.className = ''; }
+  const p = await api('periods?list=' + encodeURIComponent(state.list));
+  if (!['people', 'blocked'].includes(state.tab) && state.period === 'current') return;
+  const range = (from, to) => (from ? fmtDate(from).split(',')[0] : 'ההתחלה') + ' – ' + (to ? fmtDate(to).split(',')[0] : 'היום');
+  const opts = '<option value="current">תקופה נוכחית · מאז ' + (p.current.from ? fmtDate(p.current.from).split(',')[0] : 'ההתחלה') + '</option>' +
+    p.past.map((x) => '<option value="' + x.id + '">' + range(x.from, x.to) + ' · ' + fmtMin(x.minutes) + (x.note ? ' · ' + esc(x.note) : '') + '</option>').join('') +
+    (p.past.length ? '<option value="all">כל הזמן</option>' : '');
+  const viewingPast = state.period !== 'current';
+  el.className = 'period' + (viewingPast ? ' past' : '');
+  el.innerHTML = '<span class="lbl">' + ic('week') + (viewingPast ? 'מוצגת תקופה קודמת' : 'תקופה') + '</span>' +
+    '<select id="per_sel">' + opts + '</select><span class="grow"></span>' +
+    (viewingPast ? '<button class="btn sm" id="per_back">חזרה לתקופה הנוכחית</button>'
+      : '<button class="btn sm" id="per_reset">' + ic('history') + ' איפוס והתחלה מחדש</button>' +
+        (p.past.length ? '<button class="btn sm ghost" id="per_undo" title="מבטל את האיפוס האחרון: הסכום חוזר להיות כמו לפניו">ביטול האיפוס האחרון</button>' : ''));
+  $('#per_sel').value = state.period;
+  $('#per_sel').onchange = (e) => { state.period = e.target.value; state.page = 0; showTab(); };
+  const back = $('#per_back'); if (back) back.onclick = () => { state.period = 'current'; showTab(); };
+  const reset = $('#per_reset');
+  if (reset) reset.onclick = async () => {
+    const r = await ask({ title: 'איפוס והתחלה מחדש', ok: 'איפוס', danger: true,
+      text: 'הספירה תתחיל מאפס: בשלוחה ובממשק ייספר רק מה שיעודכן מעכשיו, וכל אחת תוכל לעדכן שוב. <b>שום נתון לא נמחק</b>: התקופה שנסגרת (' + fmtMin(p.current.minutes) + ', ' + num(p.current.phones) + ' משתתפות) נשמרת ואפשר לצפות בה מכאן. אפשר גם לבטל את האיפוס.',
+      form: '<label class="f">שם לתקופה שנסגרת (לא חובה)<input name="note" maxlength="200" placeholder="למשל: חשוון תשפ״ז"></label>' });
+    if (!r) return;
+    try { await api('reset', { method: 'POST', body: { list: state.list, note: r.note } }); toast('אופס. הספירה התחילה מחדש'); state.period = 'current'; showTab(); } catch (err) { fail(err); }
+  };
+  const undo = $('#per_undo');
+  if (undo) undo.onclick = async () => {
+    const last = p.past[0];
+    if (!(await ask({ title: 'ביטול האיפוס האחרון', text: 'האיפוס מ־' + fmtDate(last.to) + ' יבוטל, והתקופה הקודמת (' + fmtMin(last.minutes) + ') תתחבר חזרה לתקופה הנוכחית.', ok: 'ביטול האיפוס' }))) return;
+    try { await api('reset?list=' + encodeURIComponent(state.list), { method: 'DELETE' }); toast('האיפוס בוטל'); showTab(); } catch (err) { fail(err); }
+  };
 }
 
 // ------------------------------------------------------------------ people
@@ -461,7 +505,7 @@ async function openPerson(phone) {
   const src = (e) => ({ phone: '<span class="chip">' + ic('phone', ' style="width:12px;height:12px"') + 'טלפון</span>', import: '<span class="chip warn">ייבוא</span>', admin: '<span class="chip accent">ידני</span>' }[e.source] || esc(e.source));
   const d = dialog('<span class="phone">' + esc(phone) + '</span>' + (p.name ? ' <span class="muted" style="font-weight:500">· ' + esc(p.name) + '</span>' : '') + (p.blocked ? ' <span class="chip danger">חסום</span>' : ''),
     (p.blocked ? '<div class="note-box danger">' + ic('ban') + '<div><b>המספר חסום</b> ולא יכול לעדכן בטלפון' + (p.blocked_note ? ' · ' + esc(p.blocked_note) : '') + '</div></div>' : '') +
-    '<div class="person-total"><b>' + num(p.minutes) + '</b><span class="muted">דקות תוספת שבת · ' + num(p.entries.length) + ' עדכונים</span></div>' +
+    '<div class="person-total"><b>' + num(p.minutes) + '</b><span class="muted">דקות תוספת שבת' + (state.period === 'current' ? ' בתקופה הנוכחית' : state.period === 'all' ? '' : ' בתקופה הזו') + ' · ' + num(p.entries.length) + ' עדכונים' + (p.ever !== p.minutes ? ' · בכל הזמן: ' + fmtMin(p.ever) : '') + '</span></div>' +
     '<div class="row" style="margin-bottom:16px"><input id="pname" class="grow" placeholder="שם לזיהוי (נראה רק בממשק)" value="' + esc(p.name) + '" maxlength="80"><button class="btn" id="saveName">' + ic('check') + ' שמירת שם</button></div>' +
     '<div class="card" style="margin:0"><div class="table-wrap">' + (p.entries.length ? '<table><thead><tr><th>מתי</th><th>דקות</th><th>מקור</th><th class="hide-sm">הערה</th><th></th></tr></thead><tbody>' +
       p.entries.map((e) => '<tr data-id="' + e.id + '"><td class="small">' + fmtDate(e.created_at) + (e.updated_at !== e.created_at ? '<div class="muted">שונה ' + fmtDate(e.updated_at) + '</div>' : '') + '</td>' +
@@ -570,8 +614,8 @@ async function viewBlocked() {
 async function viewLog() {
   const q = state.logBy === 'all' ? '' : '&by=' + state.logBy;
   const rows = await api('log?' + L() + '&limit=500' + q);
-  const act = (r) => ({ add: ['הוספה', 'ok'], edit: ['שינוי', 'accent'], delete: ['מחיקה', 'danger'], import: ['ייבוא', 'warn'] }[r.action] || [r.action, '']);
-  const what = (r) => r.action === 'import' ? '<span class="pos">+' + num(r.minutes) + '</span> <span class="small muted">(' + num(r.before) + ' רישומים)</span>'
+  const act = (r) => ({ add: ['הוספה', 'ok'], edit: ['שינוי', 'accent'], delete: ['מחיקה', 'danger'], import: ['ייבוא', 'warn'], reset: ['איפוס', 'gold'], unreset: ['ביטול איפוס', 'gold'] }[r.action] || [r.action, '']);
+  const what = (r) => r.action === 'reset' || r.action === 'unreset' ? '<span class="small">' + (r.action === 'reset' ? 'נסגרה תקופה של ' : 'חזרה תקופה של ') + fmtMin(r.minutes) + ' (' + num(r.before) + ' משתתפות)</span>' : r.action === 'import' ? '<span class="pos">+' + num(r.minutes) + '</span> <span class="small muted">(' + num(r.before) + ' רישומים)</span>'
     : r.action === 'add' ? '<span class="' + (r.minutes < 0 ? 'neg' : 'pos') + '">' + (r.minutes > 0 ? '+' : '') + num(r.minutes) + '</span>'
     : r.action === 'edit' ? num(r.before) + ' ← <b>' + num(r.minutes) + '</b>' : '<span class="neg">−' + num(r.before) + '</span>';
   const who = (by) => { const [t, c] = WHO[by] || [by, '']; return '<span class="chip ' + c + '">' + t + '</span>'; };
