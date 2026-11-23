@@ -81,9 +81,14 @@ test('add, limit per day, change the last update, total line', async () => {
   // total line
   const other = caller(env, key, 'add', q, { phone: '0529999999' });
   await other(); await other('a1', '15');
-  assert.equal(await caller(env, key, 'total', {})(), 'id_list_message=t-עד כה קיבלת על עצמך תוספת שבת של 45 דקות&');
-  assert.equal(await caller(env, key, 'total', { all: '1', hours: '1' })(), 'id_list_message=t-עד כה קיבלת על עצמך תוספת שבת של 45 דקות.t-ובסך הכל קיבלו כל המשתתפות תוספת שבת של שעה אחת&');
-  assert.equal(await caller(env, key, 'total', {}, { phone: '0531111111' })(), 'id_list_message=t-עדיין לא קיבלת על עצמך תוספת שבת&');
+  // default: only everyone's total (even from a hidden number)
+  assert.equal(await caller(env, key, 'total', {})(), 'id_list_message=t-עד כה קיבלו על עצמן כל המשתתפות תוספת שבת של 60 דקות&');
+  assert.equal(await caller(env, key, 'total', {}, { phone: '' })(), 'id_list_message=t-עד כה קיבלו על עצמן כל המשתתפות תוספת שבת של 60 דקות&');
+  assert.equal(await caller(env, key, 'total', { say: 'mine' })(), 'id_list_message=t-עד כה קיבלת על עצמך תוספת שבת של 45 דקות&');
+  assert.equal(await caller(env, key, 'total', { say: 'both', hours: '1' })(), 'id_list_message=t-עד כה קיבלו על עצמן כל המשתתפות תוספת שבת של שעה אחת.t-ואת קיבלת על עצמך תוספת שבת של 45 דקות&');
+  assert.equal(await caller(env, key, 'total', { say: 'both' }, { phone: '0531111111' })(), 'id_list_message=t-עד כה קיבלו על עצמן כל המשתתפות תוספת שבת של 60 דקות.t-ואת עדיין לא קיבלת על עצמך תוספת שבת&');
+  assert.equal(await caller(env, key, 'total', { say: 'mine' }, { phone: '0531111111' })(), 'id_list_message=t-עדיין לא קיבלת על עצמך תוספת שבת&');
+  assert.match(await caller(env, key, 'total', { say: 'mine' }, { phone: '' })(), /לא זוהה מספר הטלפון/);
 
   // cancel with 0
   call = caller(env, key, 'add', q);
@@ -197,16 +202,16 @@ test('recordings: upload to Yemot, played instead of text, paused by the error w
 
   // the line plays the recording, the rest stays text
   const c = caller(env, key, 'add', {}); await c(); await c('a1', '30');
-  assert.equal(await caller(env, key, 'total', {})(), 'id_list_message=f-/minutesrec/sofar.t-30 דקות&');
+  assert.equal(await caller(env, key, 'total', { say: 'mine' })(), 'id_list_message=f-/minutesrec/sofar.t-30 דקות&');
   // Yemot numbers
   await req('PATCH', '/api/recordings/settings', { yemot_numbers: true });
-  assert.equal(await caller(env, key, 'total', {})(), 'id_list_message=f-/minutesrec/sofar.n-30.t-דקות&');
+  assert.equal(await caller(env, key, 'total', { say: 'mine' })(), 'id_list_message=f-/minutesrec/sofar.n-30.t-דקות&');
   await req('PATCH', '/api/recordings/settings', { yemot_numbers: false });
 
   // Yemot reports the file failed: paused, back to text
   const hook = await handle(new Request('http://x/zmanim/ivr-minutes/file-error/' + key + '?FilePath=/minutesrec/sofar&Status=Error&Message=file%20audio%20not%20found'), env, '/file-error/' + key);
   assert.equal(hook.status, 200);
-  assert.equal(await caller(env, key, 'total', {})(), 'id_list_message=t-עד כה קיבלת על עצמך תוספת שבת של 30 דקות&');
+  assert.equal(await caller(env, key, 'total', { say: 'mine' })(), 'id_list_message=t-עד כה קיבלת על עצמך תוספת שבת של 30 דקות&');
   list = await (await req('GET', '/api/recordings')).json();
   const item = list.items.find((i) => i.key === 'so_far');
   assert.equal(item.paused, true);
@@ -214,8 +219,64 @@ test('recordings: upload to Yemot, played instead of text, paused by the error w
   assert.equal((await handle(new Request('http://x/file-error/wrong'), env, '/file-error/wrong')).status, 403);
   // resumed by hand
   await req('PATCH', '/api/recordings/so_far', { paused: false });
-  assert.match(await caller(env, key, 'total', {})(), /^id_list_message=f-/);
+  assert.match(await caller(env, key, 'total', { say: 'mine' })(), /^id_list_message=f-/);
   // recordings switched off
   await req('PATCH', '/api/recordings/settings', { enabled: false });
-  assert.equal(await caller(env, key, 'total', {})(), 'id_list_message=t-עד כה קיבלת על עצמך תוספת שבת של 30 דקות&');
+  assert.equal(await caller(env, key, 'total', { say: 'mine' })(), 'id_list_message=t-עד כה קיבלת על עצמך תוספת שבת של 30 דקות&');
+});
+
+
+test('blocked numbers cannot add, can still hear; import from the Yemot log', async () => {
+  const env = fresh();
+  const key = await keyOf(env);
+  const r = await handle(new Request('http://x/zmanim/ivr-minutes/api/login', { method: 'POST', body: JSON.stringify({ password: 'secret' }) }), env, '/api/login');
+  const { token } = await r.json();
+  const req = async (method, path, body) => {
+    const res = await handle(new Request('http://x/zmanim/ivr-minutes' + path.split('?')[0] + (path.includes('?') ? '?' + path.split('?')[1] : ''), {
+      method, headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined,
+    }), env, path.split('?')[0]);
+    return { status: res.status, data: await res.json() };
+  };
+  const row = (phone, date, time, amount) => ({ 'שלוחה': '9', 'טלפון': phone, 'תאריך': date, 'שעה': time, 'תרומה נוכחית': amount, 'סוג התשלום': 'מזומן' });
+  const log = [
+    row('0521110001', '11/12/2024', '11:18:04', '10'),
+    row('0521110001', '20/04/2025', '15:34:33', '200'),          // over the max
+    row('041110002', '22/11/2026', '13:17:19', '20'),            // a Sunday: counts as this week's update
+    row('0501110003', '16/10/2026', '10:26:13', '99999999999999999999'),
+    row('0501110003', '24/07/2025', '22:03:00', '5'),
+    row('', '24/07/2025', '22:03:00', '5'),                      // invalid
+  ];
+  // block the one who made a mess, then import
+  let b = await req('POST', '/api/blocked', { phone: '0501110003', note: 'סכומים מטורפים' });
+  assert.equal(b.status, 200);
+  let res = await req('POST', '/api/import', { list: 'main', max: 120, rows: log });
+  assert.deepEqual([res.data.added, res.data.over_max, res.data.blocked, res.data.invalid, res.data.minutes], [2, 1, 2, 1, 30]);
+  assert.equal(res.data.over_max_rows[0].minutes, '200');
+  // the time is kept: 11/12/2024 11:18:04 Israel = 09:18:04 UTC
+  const e = env.DB.db.prepare(`SELECT * FROM minutes_entries WHERE phone = '0521110001'`).get();
+  assert.equal(e.created_at, Date.parse('2024-12-11T09:18:04Z') / 1000);
+  assert.equal(e.source, 'import');
+  // importing again adds nothing
+  res = await req('POST', '/api/import', { list: 'main', max: 120, rows: log });
+  assert.deepEqual([res.data.added, res.data.already], [0, 2]);
+
+  // the blocked number: cannot add, hears the total
+  assert.equal(await caller(env, key, 'add', {}, { phone: '0501110003' })(), 'id_list_message=t-לא ניתן לעדכן ממספר טלפון זה&');
+  assert.equal(await caller(env, key, 'total', {}, { phone: '0501110003' })(), 'id_list_message=t-עד כה קיבלו על עצמן כל המשתתפות תוספת שבת של 30 דקות&');
+  // an imported update this week counts toward the weekly limit
+  const sunday = Date.parse('2026-11-23T10:00:00Z');
+  assert.match(await caller(env, key, 'add', {}, { phone: '041110002', now: sunday })(), /כבר עדכנת השבוע תוספת של 20 דקות/);
+
+  // people list shows the block; unblock
+  let people = await req('GET', '/api/people?list=main');
+  assert.equal(people.data.find((p) => p.phone === '041110002').blocked, 0);
+  b = await req('GET', '/api/blocked');
+  assert.deepEqual(b.data.map((x) => x.phone), ['0501110003']);
+  await req('DELETE', '/api/blocked/0501110003');
+  assert.match(await caller(env, key, 'add', {}, { phone: '0501110003' })(), /^read=/);
+
+  // block with deleting the minutes
+  await req('POST', '/api/blocked', { phone: '0521110001', delete_entries: true });
+  people = await req('GET', '/api/people?list=main');
+  assert.ok(!people.data.some((p) => p.phone === '0521110001'));
 });

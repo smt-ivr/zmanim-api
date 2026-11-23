@@ -14,7 +14,7 @@
 //
 // Every sentence is a list of parts: text, numbers and P(key) — fixed phrases that play the
 // administration's recording when there is one (voice.js).
-import { addEntry, deleteEntry, first, getKey, init, listName, listTotal, normalizePhone, phoneTotal, recentPhoneEntries, updateEntry } from './data.js';
+import { addEntry, deleteEntry, first, getKey, init, isBlocked, listName, listTotal, normalizePhone, phoneTotal, recentPhoneEntries, updateEntry } from './data.js';
 import { parsePer, speakPer, windowStart } from './period.js';
 import { loadVoice, P, plainVoice } from './voice.js';
 
@@ -63,7 +63,8 @@ export function settings(p) {
     per: parsePer(p.per),
     edit: p.edit !== 'no',
     hours: p.hours === '1',
-    all: p.all === '1',
+    // total line: all = only the total of everyone (default), both = everyone's and then hers, mine = only hers
+    say: ['all', 'both', 'mine'].includes(p.say) ? p.say : p.all === '1' ? 'both' : 'all',
   };
 }
 
@@ -94,9 +95,12 @@ export async function handleIvr(request, env, mode, nowMs = Date.now()) {
     await init(env);
     v = await loadVoice(env);
     if (!p.key || p.key !== (await getKey(env))) return textReply(end(v, [[P('blocked')]]));
+    const s = settings(p);
     const phone = normalizePhone(p.ApiPhone);
+    const c = { env, p, phone, v, s, nowMs };
+    if (mode === 'total' && s.say === 'all') return textReply(await total(c)); // no need to know who is calling
     if (!phone) return textReply(end(v, [[P('no_phone')]]));
-    const c = { env, p, phone, v, s: settings(p), nowMs };
+    if (mode === 'add' && (await isBlocked(env, phone))) return textReply(end(v, [[P('phone_blocked')]]));
     return textReply(mode === 'total' ? await total(c) : await add(c));
   } catch (err) {
     console.error('[ivr-minutes]', err?.stack || err);
@@ -107,10 +111,11 @@ export async function handleIvr(request, env, mode, nowMs = Date.now()) {
 // ------------------------------------------------------------------ /total
 async function total(c) {
   const { env, s, phone, v } = c;
+  const everyone = s.say !== 'mine' && [P('all_only'), ...minutesParts(await listTotal(env, s.list), s.hours)];
+  if (s.say === 'all') return end(v, [everyone]);
   const mine = await phoneTotal(env, s.list, phone);
-  const lines = [mine ? [P('so_far'), ...minutesParts(mine, s.hours)] : [P('none_yet')]];
-  if (s.all) lines.push([P('all_total'), ...minutesParts(await listTotal(env, s.list), s.hours)]);
-  return end(v, lines);
+  if (s.say === 'mine') return end(v, [mine ? [P('so_far'), ...minutesParts(mine, s.hours)] : [P('none_yet')]]);
+  return end(v, [everyone, mine ? [P('mine_after'), ...minutesParts(mine, s.hours)] : [P('mine_none_after')]]);
 }
 
 // ------------------------------------------------------------------ /add

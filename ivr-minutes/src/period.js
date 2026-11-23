@@ -31,6 +31,12 @@ function localMidnight(y, m, d) {
   return guess - offset(guess - offset(guess));
 }
 
+/** An Israel-time clock reading (e.g. from Yemot's log) as epoch seconds. */
+export function israelToEpoch(y, m, d, h = 0, mi = 0, s = 0) {
+  const guess = Date.UTC(y, m - 1, d, h, mi, s);
+  return Math.floor((guess - offset(guess - offset(guess))) / 1000);
+}
+
 /** Start of the current window, epoch seconds. */
 export function windowStart(per, nowMs = Date.now()) {
   if (per.kind === 'ever') return 0;

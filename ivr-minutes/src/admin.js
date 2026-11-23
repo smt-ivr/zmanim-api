@@ -1,6 +1,7 @@
 // JSON API for the admin page (login and password: auth.js).
 import { changePassword, checkToken, HttpError, login, setting } from './auth.js';
 import * as rec from './recordings.js';
+import { importLog } from './import.js';
 import { addEntry, all, db, deleteEntry, first, getKey, listName, normalizePhone, rotateKey, run, TZ, updateEntry } from './data.js';
 
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } });
@@ -58,7 +59,7 @@ const ROUTES = [
 
   ['GET', /^people$/, async (env, req, url) => {
     const list = listName(url.searchParams.get('list'));
-    const rows = await all(env, `SELECT e.phone, COALESCE(p.name, '') AS name, SUM(e.minutes) AS minutes, COUNT(*) AS entries, MAX(e.created_at) AS last_at
+    const rows = await all(env, `SELECT e.phone, COALESCE(p.name, '') AS name, SUM(e.minutes) AS minutes, COUNT(*) AS entries, MAX(e.created_at) AS last_at, EXISTS(SELECT 1 FROM minutes_blocked b WHERE b.phone = e.phone) AS blocked
       FROM minutes_entries e LEFT JOIN minutes_people p ON p.list = e.list AND p.phone = e.phone
       WHERE e.list = ? GROUP BY e.phone ORDER BY minutes DESC, e.phone`, list);
     // people with a name but no entries (yet)
@@ -73,7 +74,8 @@ const ROUTES = [
       first(env, `SELECT name FROM minutes_people WHERE list = ? AND phone = ?`, list, phone),
       all(env, `SELECT * FROM minutes_entries WHERE list = ? AND phone = ? ORDER BY created_at DESC, id DESC`, list, phone),
     ]);
-    return json({ phone, name: person?.name || '', minutes: entries.reduce((s, e) => s + e.minutes, 0), entries });
+    const blocked = await first(env, `SELECT note FROM minutes_blocked WHERE phone = ?`, phone);
+    return json({ phone, name: person?.name || '', minutes: entries.reduce((s, e) => s + e.minutes, 0), entries, blocked: Boolean(blocked), blocked_note: blocked?.note ?? '' });
   }],
 
   ['PUT', /^people\/(\d+)$/, async (env, req, url, [raw]) => {
@@ -140,6 +142,30 @@ const ROUTES = [
       headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="minutes-${encodeURIComponent(list)}.csv"`, 'Cache-Control': 'no-store' },
     });
   }],
+
+  // blocked numbers: cannot add by phone (can still hear the totals)
+  ['GET', /^blocked$/, async (env) => json(await all(env, `SELECT b.*, (SELECT COALESCE(SUM(minutes), 0) FROM minutes_entries e WHERE e.phone = b.phone) AS minutes
+    FROM minutes_blocked b ORDER BY b.created_at DESC`))],
+  ['POST', /^blocked$/, async (env, req) => {
+    const body = await req.json().catch(() => ({}));
+    const phone = phoneParam(body.phone);
+    await run(env, `INSERT INTO minutes_blocked (phone, note, created_at) VALUES (?, ?, ?) ON CONFLICT(phone) DO UPDATE SET note = excluded.note`,
+      phone, String(body.note ?? '').trim().slice(0, 200), Math.floor(Date.now() / 1000));
+    let deleted = 0;
+    if (body.delete_entries) {
+      const entries = await all(env, `SELECT * FROM minutes_entries WHERE phone = ?`, phone);
+      for (const e of entries) await deleteEntry(env, e, 'admin');
+      deleted = entries.length;
+    }
+    return json({ phone, blocked: true, deleted });
+  }],
+  ['DELETE', /^blocked\/(\d+)$/, async (env, req, url, [raw]) => {
+    await run(env, `DELETE FROM minutes_blocked WHERE phone = ?`, phoneParam(raw));
+    return json({ blocked: false });
+  }],
+
+  // import from the old Yemot extension's log (import.js)
+  ['POST', /^import$/, async (env, req) => json(await importLog(env, req))],
 
   // recordings (recordings.js)
   ['GET', /^recordings$/, (env, req, url) => rec.list(env, req, url, url.pathname.slice(0, url.pathname.lastIndexOf('/api/')))],
