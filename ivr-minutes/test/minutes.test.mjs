@@ -337,3 +337,43 @@ test('manager: main list only, no token / passwords / key / deleting history; ad
   assert.equal((await call('GET', '/api/me', null, mgr.token)).status, 401);
   assert.equal((await call('POST', '/api/login', { password: '8888888' })).data.role, 'manager');
 });
+
+test('reset: the count starts over without deleting; past periods stay; undo', async () => {
+  const env = fresh();
+  const key = await keyOf(env);
+  await setPassword(env, '7777777', 'manager');
+  const call = async (method, path, b, token) => {
+    const res = await handle(new Request('http://x/zmanim/ivr-minutes' + path, {
+      method, headers: { ...(token ? { Authorization: 'Bearer ' + token } : {}), 'Content-Type': 'application/json' }, body: b ? JSON.stringify(b) : undefined,
+    }), env, path.split('?')[0]);
+    return { status: res.status, data: await res.json() };
+  };
+  const mgr = (await call('POST', '/api/login', { password: '7777777' })).data.token;
+  const c1 = caller(env, key, 'add', {}); await c1(); await c1('a1', '30');
+  // entries are stamped with the real clock; move them back a minute so the reset comes after them
+  env.DB.db.exec(`UPDATE minutes_entries SET created_at = created_at - 60`);
+  assert.match(await caller(env, key, 'add', {})(), /כבר עדכנת השבוע/);
+
+  const r = await call('POST', '/api/reset', { note: 'שבת חדשה' }, mgr);
+  assert.deepEqual(r.data.closed, { minutes: 30, phones: 1 });
+  // the phone: zero again, and the weekly limit is open
+  assert.equal(await caller(env, key, 'total', {})(), 'id_list_message=t-עד כה קיבלו על עצמן כל המשתתפות תוספת שבת של 0 דקות&');
+  assert.equal(await caller(env, key, 'total', { say: 'mine' })(), 'id_list_message=t-עדיין לא קיבלת על עצמך תוספת שבת&');
+  assert.match(await caller(env, key, 'add', {})(), /=a1,/);
+  // the page: current period empty, the closed one and "all" still have it
+  const periods = (await call('GET', '/api/periods?list=main', null, mgr)).data;
+  assert.equal(periods.past.length, 1);
+  assert.equal(periods.past[0].minutes, 30);
+  assert.equal(periods.past[0].note, 'שבת חדשה');
+  assert.equal((await call('GET', '/api/summary?list=main', null, mgr)).data.minutes, 0);
+  assert.equal((await call('GET', '/api/summary?list=main&period=all', null, mgr)).data.minutes, 30);
+  assert.equal((await call('GET', '/api/summary?list=main&period=' + periods.past[0].id, null, mgr)).data.minutes, 30);
+  assert.equal((await call('GET', '/api/people?list=main&period=' + periods.past[0].id, null, mgr)).data[0].minutes, 30);
+  assert.equal(env.DB.db.prepare(`SELECT COUNT(*) AS n FROM minutes_entries`).get().n, 1, 'nothing deleted');
+  // undo: back as it was
+  await call('DELETE', '/api/reset?list=main', null, mgr);
+  assert.equal((await call('GET', '/api/summary?list=main', null, mgr)).data.minutes, 30);
+  assert.equal((await call('DELETE', '/api/reset?list=main', null, mgr)).status, 404);
+  const log = (await call('GET', '/api/log?list=main', null, mgr)).data.map((l) => l.action);
+  assert.deepEqual(log.slice(0, 2), ['unreset', 'reset']);
+});

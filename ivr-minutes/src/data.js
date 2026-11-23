@@ -54,14 +54,20 @@ export async function rotateKey(env, onlyIfMissing = false) {
   return key;
 }
 
-// ------------------------------------------------------------------ totals
-export async function phoneTotal(env, list, phone) {
-  const r = await first(env, `SELECT COALESCE(SUM(minutes), 0) AS t FROM minutes_entries WHERE list = ? AND phone = ?`, list, phone);
+// ------------------------------------------------------------------ totals (of the current period: since the list's last reset)
+/** When the current period started: the list's last reset (epoch seconds), 0 when it was never reset. */
+export async function periodStart(env, list) {
+  const r = await first(env, `SELECT MAX(at) AS at FROM minutes_resets WHERE list = ?`, list);
+  return r?.at || 0;
+}
+
+export async function phoneTotal(env, list, phone, since = 0) {
+  const r = await first(env, `SELECT COALESCE(SUM(minutes), 0) AS t FROM minutes_entries WHERE list = ? AND phone = ? AND created_at >= ?`, list, phone, since);
   return r.t;
 }
 
-export async function listTotal(env, list) {
-  const r = await first(env, `SELECT COALESCE(SUM(minutes), 0) AS t FROM minutes_entries WHERE list = ?`, list);
+export async function listTotal(env, list, since = 0) {
+  const r = await first(env, `SELECT COALESCE(SUM(minutes), 0) AS t FROM minutes_entries WHERE list = ? AND created_at >= ?`, list, since);
   return r.t;
 }
 

@@ -14,7 +14,7 @@
 //
 // Every sentence is a list of parts: text, numbers and P(key) — fixed phrases that play the
 // administration's recording when there is one (voice.js).
-import { addEntry, deleteEntry, first, getKey, init, isBlocked, listName, listTotal, normalizePhone, phoneTotal, recentPhoneEntries, updateEntry } from './data.js';
+import { addEntry, deleteEntry, first, getKey, init, isBlocked, listName, listTotal, normalizePhone, periodStart, phoneTotal, recentPhoneEntries, updateEntry } from './data.js';
 import { parsePer, speakPer, windowStart } from './period.js';
 import { loadVoice, P, plainVoice } from './voice.js';
 
@@ -91,7 +91,7 @@ export async function handleIvr(request, env, mode, nowMs = Date.now()) {
     if (!p.key || p.key !== (await getKey(env))) return textReply(end(v, [[P('blocked')]]));
     const s = settings(p);
     const phone = normalizePhone(p.ApiPhone);
-    const c = { env, p, phone, v, s, nowMs };
+    const c = { env, p, phone, v, s, nowMs, start: await periodStart(env, s.list) }; // totals count only since the last reset
     if (mode === 'total' && s.say === 'all') return textReply(await total(c)); // no need to know who is calling
     if (!phone) return textReply(end(v, [[P('no_phone')]]));
     if (mode === 'add' && (await isBlocked(env, phone))) return textReply(end(v, [[P('phone_blocked')]]));
@@ -105,9 +105,9 @@ export async function handleIvr(request, env, mode, nowMs = Date.now()) {
 // ------------------------------------------------------------------ /total
 async function total(c) {
   const { env, s, phone, v } = c;
-  const everyone = s.say !== 'mine' && [P('all_only'), ...minutesParts(await listTotal(env, s.list))];
+  const everyone = s.say !== 'mine' && [P('all_only'), ...minutesParts(await listTotal(env, s.list, c.start))];
   if (s.say === 'all') return end(v, [everyone]);
-  const mine = await phoneTotal(env, s.list, phone);
+  const mine = await phoneTotal(env, s.list, phone, c.start);
   if (s.say === 'mine') return end(v, [mine ? [P('so_far'), ...minutesParts(mine)] : [P('none_yet')]]);
   return end(v, [everyone, mine ? [P('mine_after'), ...minutesParts(mine)] : [P('mine_none_after')]]);
 }
@@ -145,8 +145,8 @@ async function add(c) {
 
 async function status(c) {
   const { env, s, phone, nowMs } = c;
-  const recent = await recentPhoneEntries(env, s.list, phone, windowStart(s.per, nowMs));
-  return { recent, blocked: recent.length >= s.times, total: await phoneTotal(env, s.list, phone) };
+  const recent = await recentPhoneEntries(env, s.list, phone, Math.max(windowStart(s.per, nowMs), c.start)); // a reset opens the limit again
+  return { recent, blocked: recent.length >= s.times, total: await phoneTotal(env, s.list, phone, c.start) };
 }
 
 const mp = (c, n) => minutesParts(n);
@@ -191,12 +191,12 @@ async function onAmount(c, { n, value }) {
   if (callId) {
     // Yemot repeated the request after we already saved: answer the same way
     const done = await first(env, `SELECT minutes FROM minutes_entries WHERE call_id = ?`, callId);
-    if (done) return end(v, [[P('added'), ...mp(c, done.minutes)], totalLine(c, await phoneTotal(env, s.list, phone))]);
+    if (done) return end(v, [[P('added'), ...mp(c, done.minutes)], totalLine(c, await phoneTotal(env, s.list, phone, c.start))]);
   }
   const st = await status(c); // checked again: another call from the same phone may have updated meanwhile
   if (st.blocked) return end(v, [blockedLine(c, st.recent), totalLine(c, st.total)]);
   await addEntry(env, { list: s.list, phone, minutes, source: 'phone', callId });
-  return end(v, [[P('added'), ...mp(c, minutes)], totalLine(c, await phoneTotal(env, s.list, phone))]);
+  return end(v, [[P('added'), ...mp(c, minutes)], totalLine(c, await phoneTotal(env, s.list, phone, c.start))]);
 }
 
 async function onChoice(c, { n, value }) {
@@ -222,9 +222,9 @@ async function onEdit(c, { id, n, value }) {
   }
   if (minutes === 0) {
     if (entry) await deleteEntry(env, entry, 'phone');
-    return end(v, [[P('canceled')], totalLine(c, await phoneTotal(env, s.list, phone))]);
+    return end(v, [[P('canceled')], totalLine(c, await phoneTotal(env, s.list, phone, c.start))]);
   }
-  if (!entry) return end(v, [[P('not_found')], totalLine(c, await phoneTotal(env, s.list, phone))]);
+  if (!entry) return end(v, [[P('not_found')], totalLine(c, await phoneTotal(env, s.list, phone, c.start))]);
   if (entry.minutes !== minutes) await updateEntry(env, entry, { minutes }, 'phone');
-  return end(v, [[P('changed_to'), ...mp(c, minutes)], totalLine(c, await phoneTotal(env, s.list, phone))]);
+  return end(v, [[P('changed_to'), ...mp(c, minutes)], totalLine(c, await phoneTotal(env, s.list, phone, c.start))]);
 }

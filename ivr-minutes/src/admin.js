@@ -38,6 +38,20 @@ async function entryOr404(env, id, ctx) {
   return e;
 }
 
+/**
+ * The period a request looks at (?period=): 'current' (default: since the last reset), 'all', or the id of a
+ * reset (the period that reset closed). Returns { from, to } in epoch seconds (from inclusive, to exclusive).
+ */
+async function range(env, list, period) {
+  if (period === 'all') return { from: 0, to: 4e9 };
+  const resets = await all(env, `SELECT id, at FROM minutes_resets WHERE list = ? ORDER BY at, id`, list);
+  if (!period || period === 'current') return { from: resets.length ? resets[resets.length - 1].at : 0, to: 4e9 };
+  const i = resets.findIndex((r) => String(r.id) === String(period));
+  if (i < 0) throw new HttpError(404, 'התקופה לא נמצאה');
+  return { from: i ? resets[i - 1].at : 0, to: resets[i].at };
+}
+const rangeOf = (env, url) => range(env, listName(url.searchParams.get('list')), url.searchParams.get('period'));
+
 const csvCell = (v) => (/[",\n]/.test(String(v ?? '')) ? `"${String(v).replace(/"/g, '""')}"` : String(v ?? ''));
 const body = (req) => req.json().catch(() => ({}));
 const LOG_BY = ['admin', 'manager', 'phone'];
@@ -60,6 +74,7 @@ const ROUTES = [
 
   ['GET', /^summary$/, async (env, req, url) => {
     const list = listName(url.searchParams.get('list'));
+    const { from, to } = await rangeOf(env, url);
     const day = israelDayStart();
     const week = day - new Date(Date.now() + 3 * 3600e3).getUTCDay() * 86400; // from Sunday (approximately, Israel time)
     const r = await first(env, `SELECT COALESCE(SUM(minutes), 0) AS minutes, COUNT(DISTINCT phone) AS phones, COUNT(*) AS entries,
@@ -67,30 +82,34 @@ const ROUTES = [
       COUNT(DISTINCT CASE WHEN created_at >= ? THEN phone END) AS today_phones,
       COALESCE(SUM(CASE WHEN created_at >= ? THEN minutes END), 0) AS week_minutes,
       COUNT(DISTINCT CASE WHEN created_at >= ? THEN phone END) AS week_phones
-      FROM minutes_entries WHERE list = ?`, day, day, week, week, list);
+      FROM minutes_entries WHERE list = ? AND created_at >= ? AND created_at < ?`, day, day, week, week, list, from, to);
+    r.period_from = from;
     r.blocked = (await first(env, `SELECT COUNT(*) AS n FROM minutes_blocked`)).n;
     return json(r);
   }],
 
   ['GET', /^people$/, async (env, req, url) => {
     const list = listName(url.searchParams.get('list'));
+    const { from, to } = await rangeOf(env, url);
     const rows = await all(env, `SELECT e.phone, COALESCE(p.name, '') AS name, SUM(e.minutes) AS minutes, COUNT(*) AS entries, MAX(e.created_at) AS last_at, EXISTS(SELECT 1 FROM minutes_blocked b WHERE b.phone = e.phone) AS blocked
       FROM minutes_entries e LEFT JOIN minutes_people p ON p.list = e.list AND p.phone = e.phone
-      WHERE e.list = ? GROUP BY e.phone ORDER BY minutes DESC, e.phone`, list);
+      WHERE e.list = ? AND e.created_at >= ? AND e.created_at < ? GROUP BY e.phone ORDER BY minutes DESC, e.phone`, list, from, to);
     // people with a name but no entries (yet)
-    const named = await all(env, `SELECT phone, name FROM minutes_people WHERE list = ? AND phone NOT IN (SELECT phone FROM minutes_entries WHERE list = ?)`, list, list);
+    const named = await all(env, `SELECT phone, name FROM minutes_people WHERE list = ? AND phone NOT IN (SELECT phone FROM minutes_entries WHERE list = ? AND created_at >= ? AND created_at < ?)`, list, list, from, to);
     return json([...rows, ...named.map((n) => ({ ...n, minutes: 0, entries: 0, last_at: null, blocked: 0 }))]);
   }],
 
   ['GET', /^people\/(\d+)$/, async (env, req, url, [raw]) => {
     const list = listName(url.searchParams.get('list'));
     const phone = phoneParam(raw);
-    const [person, entries, blocked] = await Promise.all([
+    const { from, to } = await rangeOf(env, url);
+    const [person, entries, blocked, ever] = await Promise.all([
       first(env, `SELECT name FROM minutes_people WHERE list = ? AND phone = ?`, list, phone),
-      all(env, `SELECT * FROM minutes_entries WHERE list = ? AND phone = ? ORDER BY created_at DESC, id DESC`, list, phone),
+      all(env, `SELECT * FROM minutes_entries WHERE list = ? AND phone = ? AND created_at >= ? AND created_at < ? ORDER BY created_at DESC, id DESC`, list, phone, from, to),
       first(env, `SELECT note FROM minutes_blocked WHERE phone = ?`, phone),
+      first(env, `SELECT COALESCE(SUM(minutes), 0) AS t FROM minutes_entries WHERE list = ? AND phone = ?`, list, phone),
     ]);
-    return json({ phone, name: person?.name || '', minutes: entries.reduce((s, e) => s + e.minutes, 0), entries, blocked: Boolean(blocked), blocked_note: blocked?.note ?? '' });
+    return json({ phone, name: person?.name || '', minutes: entries.reduce((s, e) => s + e.minutes, 0), ever: ever.t, entries, blocked: Boolean(blocked), blocked_note: blocked?.note ?? '' });
   }],
 
   ['PUT', /^people\/(\d+)$/, async (env, req, url, [raw]) => {
@@ -137,6 +156,40 @@ const ROUTES = [
     return json({ ok: true });
   }],
 
+  // periods: a reset starts the count over without deleting anything (both roles; the manager on the main list)
+  ['GET', /^periods$/, async (env, req, url) => {
+    const list = listName(url.searchParams.get('list'));
+    const resets = await all(env, `SELECT * FROM minutes_resets WHERE list = ? ORDER BY at, id`, list);
+    const current = await first(env, `SELECT COALESCE(SUM(minutes), 0) AS minutes, COUNT(DISTINCT phone) AS phones FROM minutes_entries WHERE list = ? AND created_at >= ?`,
+      list, resets.length ? resets[resets.length - 1].at : 0);
+    return json({
+      current: { from: resets.length ? resets[resets.length - 1].at : 0, minutes: current.minutes, phones: current.phones },
+      past: resets.map((r, i) => ({ id: r.id, from: i ? resets[i - 1].at : 0, to: r.at, by: r.by, note: r.note, minutes: r.minutes, phones: r.phones })).reverse(),
+    });
+  }],
+  ['POST', /^reset$/, async (env, req, url, m, ctx) => {
+    const b = await body(req);
+    const list = listName(b.list);
+    const t = Math.floor(Date.now() / 1000);
+    const { from } = await range(env, list, 'current');
+    const cur = await first(env, `SELECT COALESCE(SUM(minutes), 0) AS minutes, COUNT(DISTINCT phone) AS phones FROM minutes_entries WHERE list = ? AND created_at >= ?`, list, from);
+    await db(env).batch([
+      db(env).prepare(`INSERT INTO minutes_resets (list, at, by, note, minutes, phones) VALUES (?, ?, ?, ?, ?, ?)`).bind(list, t, ctx.role, String(b.note ?? '').trim().slice(0, 200), cur.minutes, cur.phones),
+      db(env).prepare(`INSERT INTO minutes_log (at, list, phone, action, by, minutes, before, entry_id) VALUES (?, ?, '', 'reset', ?, ?, ?, NULL)`).bind(t, list, ctx.role, cur.minutes, cur.phones),
+    ]);
+    return json({ ok: true, closed: cur });
+  }],
+  ['DELETE', /^reset$/, async (env, req, url, m, ctx) => {
+    const list = listName(url.searchParams.get('list'));
+    const last = await first(env, `SELECT * FROM minutes_resets WHERE list = ? ORDER BY at DESC, id DESC LIMIT 1`, list);
+    if (!last) throw new HttpError(404, 'אין איפוס לביטול');
+    await db(env).batch([
+      db(env).prepare(`DELETE FROM minutes_resets WHERE id = ?`).bind(last.id),
+      db(env).prepare(`INSERT INTO minutes_log (at, list, phone, action, by, minutes, before, entry_id) VALUES (?, ?, '', 'unreset', ?, ?, ?, NULL)`).bind(Math.floor(Date.now() / 1000), list, ctx.role, last.minutes, last.phones),
+    ]);
+    return json({ ok: true });
+  }],
+
   // history: everyone sees it (by=admin|manager|phone filters), only the admin deletes it
   ['GET', /^log$/, async (env, req, url) => {
     const list = listName(url.searchParams.get('list'));
@@ -170,8 +223,9 @@ const ROUTES = [
 
   ['GET', /^export$/, async (env, req, url) => {
     const list = listName(url.searchParams.get('list'));
+    const { from, to } = await rangeOf(env, url);
     const rows = await all(env, `SELECT e.phone, COALESCE(p.name, '') AS name, SUM(e.minutes) AS minutes, COUNT(*) AS entries, MAX(e.created_at) AS last_at
-      FROM minutes_entries e LEFT JOIN minutes_people p ON p.list = e.list AND p.phone = e.phone WHERE e.list = ? GROUP BY e.phone ORDER BY minutes DESC`, list);
+      FROM minutes_entries e LEFT JOIN minutes_people p ON p.list = e.list AND p.phone = e.phone WHERE e.list = ? AND e.created_at >= ? AND e.created_at < ? GROUP BY e.phone ORDER BY minutes DESC`, list, from, to);
     const fmt = (s) => (s ? new Date(s * 1000).toLocaleString('he-IL', { timeZone: TZ }) : '');
     const lines = [['טלפון', 'שם', 'דקות', 'עדכונים', 'עדכון אחרון'], ...rows.map((r) => [r.phone, r.name, r.minutes, r.entries, fmt(r.last_at)])];
     return new Response('﻿' + lines.map((l) => l.map(csvCell).join(',')).join('\r\n'), {

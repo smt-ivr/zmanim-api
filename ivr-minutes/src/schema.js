@@ -34,6 +34,18 @@ export const SCHEMA = [
   `CREATE INDEX IF NOT EXISTS minutes_log_list ON minutes_log (list, at)`,
   `CREATE TABLE IF NOT EXISTS minutes_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS minutes_logins (ip TEXT PRIMARY KEY, fails INTEGER NOT NULL, first_at INTEGER NOT NULL)`,
+  // Resets: a reset starts the count over without deleting anything. The totals (phone and page)
+  // count only entries made after the list's last reset; earlier periods stay viewable.
+  `CREATE TABLE IF NOT EXISTS minutes_resets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    list TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    by TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    minutes INTEGER NOT NULL DEFAULT 0,     -- the closed period's total, for the record
+    phones INTEGER NOT NULL DEFAULT 0
+  )`,
+  `CREATE INDEX IF NOT EXISTS minutes_resets_list ON minutes_resets (list, at)`,
   // Numbers blocked from adding (they can still hear the totals). For every list.
   `CREATE TABLE IF NOT EXISTS minutes_blocked (
     phone TEXT PRIMARY KEY,
