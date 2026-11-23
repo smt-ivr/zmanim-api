@@ -772,22 +772,26 @@ async function viewRecordings() {
 
 // ------------------------------------------------------------------ settings
 async function viewSetup() {
-  const { key } = await api('settings');
-  const saved = JSON.parse(store.get('minutes_setup') || '{}');
-  const v = { max: 60, times: 1, per: 'week', perN: 12, perUnit: 'h', edit: true, showMax: true, say: 'all', ...saved };
+  const [{ key }, cfg] = await Promise.all([api('settings'), api('config?list=' + encodeURIComponent(state.list))]);
+  const rolling = /^\d+[mhd]$/.test(cfg.per);
   const copyBtn = (id) => '<button class="btn sm" data-copy="' + id + '">' + ic('copy') + ' העתקה</button>';
   $('#view').innerHTML =
-    '<div class="card"><div class="card-h"><h3>' + ic('phone') + ' שלוחת עדכון דקות</h3>' + copyBtn('addIni') + '</div><div class="card-b">' +
-    '<div class="grid2"><label class="f">כמה דקות לכל היותר בעדכון אחד<input id="s_max" type="number" min="1" max="99999" value="' + v.max + '"></label>' +
-    '<label class="f">כמה עדכונים מותרים<input id="s_times" type="number" min="1" max="999" value="' + v.times + '"></label>' +
+    '<form class="card" id="cfgf"><div class="card-h"><h3>' + ic('sliders') + ' הגדרות השלוחות</h3><span class="chip ok" id="cfg_state">' + ic('check', ' style="width:12px;height:12px"') + 'שמור</span></div><div class="card-b">' +
+    '<p class="muted small" style="margin-top:0">ההגדרות נשמרות כאן וחלות מיד, מהשיחה הבאה. אין צורך לשנות שום דבר בימות המשיח.</p>' +
+    '<h4 style="margin:4px 0 10px">' + ic('phone', ' style="width:15px;height:15px;vertical-align:-2px"') + ' שלוחת העדכון</h4>' +
+    '<div class="grid2"><label class="f">כמה דקות לכל היותר בעדכון אחד<input id="s_max" type="number" min="1" max="99999" required value="' + cfg.max + '"></label>' +
+    '<label class="f">כמה עדכונים מותרים<input id="s_times" type="number" min="1" max="999" required value="' + cfg.times + '"></label>' +
     '<label class="f">בכל<select id="s_per"><option value="day">יום (לפי התאריך)</option><option value="week">שבוע (מיום ראשון)</option><option value="month">חודש</option><option value="rolling">פרק זמן מתגלגל…</option><option value="ever">בכל הזמן (בלי איפוס)</option></select></label>' +
-    '<label class="f" id="rollWrap">פרק הזמן<span class="row"><input id="s_n" type="number" min="1" max="9999" value="' + v.perN + '" style="width:90px"><select id="s_unit"><option value="m">דקות</option><option value="h">שעות</option><option value="d">ימים</option></select></span></label></div>' +
-    '<div class="row" style="margin-top:14px;gap:20px"><label class="chk"><input type="checkbox" id="s_edit"' + (v.edit ? ' checked' : '') + '> אפשר לשנות את העדכון האחרון כשהגיעו למגבלה</label>' +
-    '<label class="chk"><input type="checkbox" id="s_showmax"' + (v.showMax !== false ? ' checked' : '') + '> להשמיע לפני ההקשה מה המקסימום</label></div>' +
-    '<p class="hint">הגדרות השלוחה בימות המשיח:</p><pre id="addIni"></pre></div></div>' +
-    '<div class="card"><div class="card-h"><h3>' + ic('flame') + ' שלוחת שמיעת הסכום</h3>' + copyBtn('totalIni') + '</div><div class="card-b">' +
+    '<label class="f" id="rollWrap">פרק הזמן<span class="row"><input id="s_n" type="number" min="1" max="9999" value="' + (rolling ? parseInt(cfg.per, 10) : 12) + '" style="width:90px"><select id="s_unit"><option value="m">דקות</option><option value="h">שעות</option><option value="d">ימים</option></select></span></label></div>' +
+    '<div class="row" style="margin-top:14px;gap:20px"><label class="chk"><input type="checkbox" id="s_edit"' + (cfg.edit ? ' checked' : '') + '> אפשר לשנות את העדכון האחרון כשהגיעו למגבלה</label>' +
+    '<label class="chk"><input type="checkbox" id="s_showmax"' + (cfg.showMax ? ' checked' : '') + '> להשמיע לפני ההקשה מה המקסימום</label></div>' +
+    '<h4 style="margin:20px 0 10px">' + ic('flame', ' style="width:15px;height:15px;vertical-align:-2px"') + ' שלוחת שמיעת הסכום</h4>' +
     '<label class="f" style="max-width:380px">מה שומעים<select id="s_say"><option value="all">רק הסכום הכללי של כל המשתתפות</option><option value="both">הסכום הכללי, ואחריו הסכום האישי</option><option value="mine">רק הסכום האישי</option></select></label>' +
-    '<pre id="totalIni"></pre></div></div>' +
+    '</div><div class="dlg-foot" style="border-radius:0 0 var(--radius) var(--radius)"><button class="btn primary" id="cfg_save">' + ic('check') + ' שמירת ההגדרות</button><span class="muted small" id="cfg_hint" style="align-self:center"></span></div></form>' +
+    '<div class="card"><div class="card-h"><h3>' + ic('link') + ' הגדרות בימות המשיח</h3></div><div class="card-b">' +
+    '<p class="muted small" style="margin-top:0">מגדירים פעם אחת בימות המשיח: רק הקישור והמפתח. כל השאר נקבע בהגדרות שלמעלה' + (state.list !== 'main' ? ' (ברשימה הזו השלוחה כוללת גם את שם הרשימה)' : '') + '.</p>' +
+    '<div class="row" style="justify-content:space-between"><b>שלוחת העדכון</b>' + copyBtn('addIni') + '</div><pre id="addIni"></pre>' +
+    '<div class="row" style="justify-content:space-between;margin-top:12px"><b>שלוחת שמיעת הסכום</b>' + copyBtn('totalIni') + '</div><pre id="totalIni"></pre></div></div>' +
     (isAdmin()
       ? '<div class="card"><div class="card-h"><h3>' + ic('users') + ' כניסה למנהלת הקו</h3><span class="chip ' + (me.manager_set ? 'ok' : 'warn') + '">' + (me.manager_set ? 'מוגדרת סיסמה' : 'אין סיסמה') + '</span></div><div class="card-b">' +
         '<p class="muted small" style="margin-top:0">עם הסיסמה הזו המנהלת רואה ומנהלת רק את הרשימה הראשית: משתתפות, חסומים, היסטוריה (בלי מחיקה) והקלטות. היא לא רואה את הטוקן של ימות המשיח, לא מחליפה סיסמאות ולא יוצרת רשימות.</p>' +
@@ -803,23 +807,36 @@ async function viewSetup() {
       : '') +
     '<div class="card"><div class="card-b small muted"><b style="color:var(--ink)">איך זה עובד:</b> כל משתתפת מזוהה לפי מספר הטלפון שלה. בשלוחת העדכון היא שומעת כמה תוספת שבת קיבלה על עצמה עד כה, מקישה כמה דקות היא מקבלת על עצמה ומאשרת, והדקות מצטברות. ' +
     'אם כבר עדכנה את מספר הפעמים המותר בפרק הזמן (ברירת המחדל: פעם בשבוע), היא יכולה לשנות את העדכון האחרון (או לבטל אותו בהקשת 0). מספר חסוי לא יכול לעדכן.</div></div>';
-  $('#s_per').value = v.per; $('#s_unit').value = v.perUnit; $('#s_say').value = v.say || 'all';
+  $('#s_per').value = rolling ? 'rolling' : cfg.per; $('#s_unit').value = rolling ? cfg.per.slice(-1) : 'h'; $('#s_say').value = cfg.say;
   const origin = location.origin + BASE;
-  const update = () => {
-    const c = { max: +$('#s_max').value || 60, times: +$('#s_times').value || 1, per: $('#s_per').value, perN: +$('#s_n').value || 1, perUnit: $('#s_unit').value, edit: $('#s_edit').checked, showMax: $('#s_showmax').checked, say: $('#s_say').value };
-    store.set('minutes_setup', JSON.stringify(c));
-    $('#rollWrap').style.display = c.per === 'rolling' ? '' : 'none';
-    // Yemot does not take parameters in api_link: fixed values go in api_add_0, api_add_1 … (numbered from 0, no gaps)
-    const common = ['key=' + key, ...(state.list !== 'main' ? ['list=' + state.list] : [])];
-    const addQ = [...common, 'max=' + c.max, 'times=' + c.times, 'per=' + (c.per === 'rolling' ? c.perN + c.perUnit : c.per), ...(c.edit ? [] : ['edit=no']), ...(c.showMax ? [] : ['show_max=no'])];
-    const totQ = [...common, ...(c.say !== 'all' ? ['say=' + c.say] : [])];
-    const ini = (path, q) => ['type=api', 'api_link=' + origin + path, ...q.map((x, i) => 'api_add_' + i + '=' + x), 'api_hangup_send=no', 'api_send_webhook_error_link=' + origin + 'file-error/' + key].join('\n');
-    $('#addIni').textContent = ini('add', addQ);
-    $('#totalIni').textContent = ini('total', totQ);
+  const ini = (path) => ['type=api', 'api_link=' + origin + path, 'api_add_0=key=' + key, ...(state.list !== 'main' ? ['api_add_1=list=' + state.list] : []),
+    'api_hangup_send=no', 'api_send_webhook_error_link=' + origin + 'file-error/' + key].join('\n');
+  $('#addIni').textContent = ini('add');
+  $('#totalIni').textContent = ini('total');
+  const read = () => ({
+    max: Number($('#s_max').value), times: Number($('#s_times').value),
+    per: $('#s_per').value === 'rolling' ? (Number($('#s_n').value) || 1) + $('#s_unit').value : $('#s_per').value,
+    edit: $('#s_edit').checked, showMax: $('#s_showmax').checked, say: $('#s_say').value,
+  });
+  let savedJson = JSON.stringify(read());
+  const mark = () => {
+    $('#rollWrap').style.display = $('#s_per').value === 'rolling' ? '' : 'none';
+    const dirty = JSON.stringify(read()) !== savedJson;
+    const st = $('#cfg_state');
+    st.className = 'chip ' + (dirty ? 'warn' : 'ok');
+    st.innerHTML = dirty ? 'יש שינויים שלא נשמרו' : ic('check', ' style="width:12px;height:12px"') + 'שמור';
   };
-  $('#view').oninput = (e) => { if (e.target.closest('#mpf, #pwf')) return; update(); };
-  $('#view').onchange = $('#view').oninput;
-  update();
+  $('#cfgf').oninput = mark; $('#cfgf').onchange = mark;
+  mark();
+  $('#cfgf').onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const saved = await api('config', { method: 'PUT', body: { list: state.list, ...read() } });
+      savedJson = JSON.stringify(read());
+      $('#s_max').value = saved.max; $('#s_times').value = saved.times;
+      mark(); toast('ההגדרות נשמרו וחלות מהשיחה הבאה');
+    } catch (err) { fail(err); }
+  };
   if (isAdmin()) {
     $('#pwf').onsubmit = async (e) => {
       e.preventDefault();

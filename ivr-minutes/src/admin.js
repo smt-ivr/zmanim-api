@@ -7,6 +7,7 @@
 import { changePassword, checkToken, HttpError, login, removeManagerPassword, ROLES, setManagerPassword, setting } from './auth.js';
 import { all, db, deleteEntry, first, getKey, listName, normalizePhone, rotateKey, run, TZ, updateEntry } from './data.js';
 import { importLog } from './import.js';
+import { getConfig, saveConfig } from './config.js';
 import * as rec from './recordings.js';
 
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } });
@@ -267,6 +268,13 @@ const ROUTES = [
   ['PATCH', /^recordings\/([a-z0-9_]+)$/, (env, req, url, [key]) => rec.setPaused(env, req, key)],
   ['DELETE', /^recordings\/([a-z0-9_]+)$/, (env, req, url, [key]) => rec.remove(env, key)],
   ['GET', /^recordings\/([a-z0-9_]+)\/audio$/, (env, req, url, [key]) => rec.audio(env, key)],
+
+  // the extensions' settings (config.js): both roles; the manager on the main list
+  ['GET', /^config$/, async (env, req, url) => json(await getConfig(env, listName(url.searchParams.get('list'))))],
+  ['PUT', /^config$/, async (env, req) => {
+    const b = await body(req);
+    return json(await saveConfig(env, listName(b.list), b));
+  }],
 
   ['GET', /^settings$/, async (env) => json({ key: await getKey(env) })],
   ['POST', /^settings\/rotate-key$/, async (env) => json({ key: await rotateKey(env) }), { admin: true }],
