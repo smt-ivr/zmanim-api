@@ -30,13 +30,16 @@ export async function importLog(env, request) {
   if (rows.length > 50000) throw new HttpError(400, 'הקובץ גדול מדי (עד 50,000 שורות)');
   const list = listName(body.list);
   const max = Number(body.max) > 0 ? Number(body.max) : Infinity;
+  const sm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(body.since || ''));
+  const since = sm ? israelToEpoch(+sm[1], +sm[2], +sm[3]) : 0; // rows before this date are not imported
   const blocked = body.skip_blocked === false ? new Set() : new Set((await all(env, `SELECT phone FROM minutes_blocked`)).map((r) => r.phone));
 
-  const out = { rows: rows.length, added: 0, already: 0, over_max: 0, blocked: 0, invalid: 0, minutes: 0, over_max_rows: [] };
+  const out = { rows: rows.length, added: 0, already: 0, before: 0, over_max: 0, blocked: 0, invalid: 0, minutes: 0, over_max_rows: [] };
   const take = [];
   for (const r of rows) {
     const x = parseRow(r || {});
     if (x.skip) { out.invalid += 1; continue; }
+    if (x.at < since) { out.before += 1; continue; }
     if (blocked.has(x.phone)) { out.blocked += 1; continue; }
     if (x.minutes > max || !Number.isInteger(x.minutes) || x.minutes > 999999) {
       out.over_max += 1;

@@ -81,7 +81,7 @@ const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} } };
 const fmtDate = (s) => s ? new Date(s * 1000).toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem', day: 'numeric', month: 'numeric', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
-const fmtMin = (n) => { n = Number(n) || 0; const a = Math.abs(n), h = Math.floor(a / 60), m = a % 60; return (n < 0 ? '-' : '') + (h ? h + ':' + String(m).padStart(2, '0') + ' ש׳' : m + ' ד׳'); };
+const fmtMin = (n) => num(n) + ' דקות';
 const num = (n) => Number(n || 0).toLocaleString('he-IL');
 
 let token = store.get('minutes_token');
@@ -127,6 +127,7 @@ async function render() {
   <div class="tabs" id="tabs">
     <button data-tab="people">משתתפות</button>
     <button data-tab="log">פעילות</button>
+    <button data-tab="blocked">חסומים</button>
     <button data-tab="recordings">הקלטות</button>
     <button data-tab="setup">הגדרת שלוחות</button>
   </div>
@@ -156,7 +157,7 @@ function setList(name) { state.list = name; store.set('minutes_list', name); loa
 async function loadStats() {
   const s = await api('summary?list=' + encodeURIComponent(state.list));
   $('#stats').innerHTML = [
-    [fmtMin(s.minutes), 'סך הכל תוספת שבת (' + num(s.minutes) + ' דקות)'],
+    [fmtMin(s.minutes), 'סך הכל תוספת שבת'],
     [num(s.phones), 'משתתפות'],
     [num(s.entries), 'עדכונים'],
     [fmtMin(s.today_minutes), 'נוסף היום · ' + num(s.today_phones) + ' משתתפות'],
@@ -168,7 +169,7 @@ function showTab() {
   const view = $('#view'); view.onclick = view.oninput = view.onchange = null;
   stopPlaying();
   loadStats().catch((e) => toast(e.message));
-  (({ people: viewPeople, log: viewLog, recordings: viewRecordings, setup: viewSetup })[state.tab] || viewPeople)().catch((e) => { $('#view').innerHTML = '<div class="card err">' + esc(e.message) + '</div>'; });
+  (({ people: viewPeople, log: viewLog, blocked: viewBlocked, recordings: viewRecordings, setup: viewSetup })[state.tab] || viewPeople)().catch((e) => { $('#view').innerHTML = '<div class="card err">' + esc(e.message) + '</div>'; });
 }
 
 // ------------------------------------------------------------------ people
@@ -186,8 +187,8 @@ async function viewPeople() {
   const draw = () => {
     const q = state.q.trim();
     const shown = q ? rows.filter((r) => r.phone.includes(q.replace(/\\D/g, '') || '\\u0000') || r.name.includes(q)) : rows;
-    $('#ptable').innerHTML = shown.length ? '<table><thead><tr><th>#</th><th>טלפון</th><th>שם</th><th>נצבר</th><th>דקות</th><th>עדכונים</th><th>עדכון אחרון</th></tr></thead><tbody>' +
-      shown.map((r, i) => '<tr class="click" data-phone="' + esc(r.phone) + '"><td class="muted">' + (i + 1) + '</td><td dir="ltr" style="text-align:right">' + esc(r.phone) + '</td><td>' + esc(r.name) + (r.blocked ? ' <span class="tag neg">חסום</span>' : '') + '</td><td class="num"><b>' + fmtMin(r.minutes) + '</b></td><td class="num">' + num(r.minutes) + '</td><td class="num">' + num(r.entries) + '</td><td class="muted small">' + fmtDate(r.last_at) + '</td></tr>').join('') +
+    $('#ptable').innerHTML = shown.length ? '<table><thead><tr><th>#</th><th>טלפון</th><th>שם</th><th>דקות</th><th>עדכונים</th><th>עדכון אחרון</th></tr></thead><tbody>' +
+      shown.map((r, i) => '<tr class="click" data-phone="' + esc(r.phone) + '"><td class="muted">' + (i + 1) + '</td><td dir="ltr" style="text-align:right">' + esc(r.phone) + '</td><td>' + esc(r.name) + (r.blocked ? ' <span class="tag neg">חסום</span>' : '') + '</td><td class="num"><b>' + num(r.minutes) + '</b></td><td class="num">' + num(r.entries) + '</td><td class="muted small">' + fmtDate(r.last_at) + '</td></tr>').join('') +
       '</tbody></table>' : '<p class="empty">' + (rows.length ? 'לא נמצאו תוצאות' : 'עדיין אין עדכונים ברשימה זו') + '</p>';
   };
   draw();
@@ -241,7 +242,7 @@ async function openPerson(phone) {
       <button class="btn" id="saveName">שמירת שם</button>
     </div>
     \${p.blocked ? '<p class="neg"><b>המספר חסום</b> ולא יכול לעדכן בטלפון' + (p.blocked_note ? ' · ' + esc(p.blocked_note) : '') + '</p>' : ''}
-    <p>סך הכל: <b>\${fmtMin(p.minutes)}</b> <span class="muted">(\${num(p.minutes)} דקות)</span></p>
+    <p>סך הכל: <b>\${fmtMin(p.minutes)}</b></p>
     <div class="table-wrap">\${p.entries.length ? '<table><thead><tr><th>מתי</th><th>דקות</th><th>מקור</th><th>הערה</th><th></th></tr></thead><tbody>' +
       p.entries.map((e) => '<tr data-id="' + e.id + '"><td class="small">' + fmtDate(e.created_at) + (e.updated_at !== e.created_at ? '<br><span class="muted">שונה ' + fmtDate(e.updated_at) + '</span>' : '') + '</td><td class="num"><b>' + num(e.minutes) + '</b></td><td>' + src(e) + '</td><td class="small">' + esc(e.note) + '</td><td><button class="link" data-act="edit">עריכה</button> · <button class="link" data-act="del" style="color:var(--danger)">מחיקה</button></td></tr>').join('') +
       '</tbody></table>' : '<p class="empty">אין עדכונים</p>'}</div>
@@ -291,6 +292,7 @@ function openImport() {
     'אפשר לייבא שוב קובץ חדש יותר: שורות שכבר יובאו לא ייספרו פעמיים.</p>' +
     '<form id="impf" class="grid2">' +
     '<label class="f" style="grid-column:1/-1">קובץ JSON<input type="file" name="file" accept=".json,application/json" required></label>' +
+    '<label class="f">לייבא רק מתאריך (המונה בשלוחה הישנה אופס ב־17/10/2026)<input type="date" name="since" value="2026-10-17"></label>' +
     '<label class="f">לא לספור רישום של יותר מ־ (דקות)<input type="number" name="max" min="1" value="10000" required></label>' +
     '<label class="chk"><input type="checkbox" name="skip" checked> לדלג על מספרים חסומים</label>' +
     '<div class="row" style="grid-column:1/-1"><button class="btn primary">ייבוא</button><span class="err" id="ie"></span></div></form><div id="ires"></div>');
@@ -306,9 +308,9 @@ function openImport() {
     } catch { $('#ie', d).textContent = 'הקובץ אינו לוג JSON של ימות המשיח'; return; }
     const btn = e.target.querySelector('button'); btn.disabled = true; btn.textContent = 'מייבא…';
     try {
-      const r = await api('import', { method: 'POST', body: { list: state.list, max: Number(f.get('max')), skip_blocked: f.get('skip') === 'on', rows } });
+      const r = await api('import', { method: 'POST', body: { list: state.list, max: Number(f.get('max')), skip_blocked: f.get('skip') === 'on', since: f.get('since'), rows } });
       $('#ires', d).innerHTML = '<div class="card" style="margin:12px 0 0"><b>יובאו ' + num(r.added) + ' רישומים (' + num(r.minutes) + ' דקות)</b><br>' +
-        '<span class="small muted">מתוך ' + num(r.rows) + ' שורות · כבר יובאו קודם: ' + num(r.already) + ' · מעל המקסימום: ' + num(r.over_max) + ' · ממספרים חסומים: ' + num(r.blocked) + ' · לא תקינות: ' + num(r.invalid) + '</span>' +
+        '<span class="small muted">מתוך ' + num(r.rows) + ' שורות · לפני התאריך: ' + num(r.before) + ' · כבר יובאו קודם: ' + num(r.already) + ' · מעל המקסימום: ' + num(r.over_max) + ' · ממספרים חסומים: ' + num(r.blocked) + ' · לא תקינות: ' + num(r.invalid) + '</span>' +
         (r.over_max_rows.length ? '<p class="small" style="margin-bottom:0">לא נספרו (מעל המקסימום):</p><div class="table-wrap"><table><tbody>' +
           r.over_max_rows.map((x) => '<tr><td dir="ltr" style="text-align:right">' + esc(x.phone) + '</td><td class="small">' + fmtDate(x.at) + '</td><td class="num neg">' + esc(x.minutes) + '</td></tr>').join('') + '</tbody></table></div>' : '') + '</div>';
       showTab();
@@ -318,9 +320,13 @@ function openImport() {
 }
 
 // ------------------------------------------------------------------ blocked numbers
-async function openBlocked() {
+async function viewBlocked() { return openBlocked($('#view')); }
+
+async function openBlocked(inPage) {
   const rows = await api('blocked');
-  const d = dialog('מספרים חסומים',
+  const show = (title, body) => { if (!inPage) return dialog(title, body); inPage.innerHTML = '<div class="card"><div class="dlg-body" style="padding:0;max-height:none">' + body + '</div></div>'; return inPage; };
+  const again = () => (inPage ? viewBlocked() : openBlocked());
+  const d = show('מספרים חסומים',
     '<p class="small muted" style="margin-top:0">מספר חסום לא יכול לעדכן דקות בטלפון (ושומע "לא ניתן לעדכן ממספר טלפון זה"). שמיעת הסכום ממשיכה לעבוד.</p>' +
     '<form id="bf" class="row" style="margin-bottom:12px"><input name="phone" dir="ltr" inputmode="tel" placeholder="מספר טלפון" required>' +
     '<input name="note" class="grow" placeholder="סיבה (לא חובה)" maxlength="200"><label class="chk small"><input type="checkbox" name="del"> למחוק גם את הדקות שלו</label><button class="btn primary">חסימה</button></form>' +
@@ -330,12 +336,12 @@ async function openBlocked() {
   $('#bf', d).onsubmit = async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
-    try { await api('blocked', { method: 'POST', body: { phone: f.get('phone'), note: f.get('note'), delete_entries: f.get('del') === 'on' } }); toast('נחסם'); openBlocked(); showTab(); }
+    try { await api('blocked', { method: 'POST', body: { phone: f.get('phone'), note: f.get('note'), delete_entries: f.get('del') === 'on' } }); toast('נחסם'); again(); if (!inPage) showTab(); else loadStats(); }
     catch (err) { alert(err.message); }
   };
   d.querySelector('.dlg-body').onclick = async (e) => {
     const p = e.target.dataset.unblock; if (!p) return;
-    try { await api('blocked/' + p, { method: 'DELETE' }); toast('החסימה בוטלה'); openBlocked(); showTab(); } catch (err) { alert(err.message); }
+    try { await api('blocked/' + p, { method: 'DELETE' }); toast('החסימה בוטלה'); again(); if (!inPage) showTab(); else loadStats(); } catch (err) { alert(err.message); }
   };
 }
 
@@ -477,7 +483,7 @@ async function viewRecordings() {
 async function viewSetup() {
   const { key } = await api('settings');
   const saved = JSON.parse(store.get('minutes_setup') || '{}');
-  const v = { max: 60, times: 1, per: 'week', perN: 12, perUnit: 'h', edit: true, hours: false, say: 'all', ...saved };
+  const v = { max: 60, times: 1, per: 'week', perN: 12, perUnit: 'h', edit: true, say: 'all', ...saved };
   $('#view').innerHTML = \`
   <div class="card">
     <h3 style="margin-top:0">שלוחת עדכון דקות</h3>
@@ -494,7 +500,6 @@ async function viewSetup() {
     </div>
     <div class="row" style="margin-top:12px;gap:18px">
       <label class="chk"><input type="checkbox" id="s_edit" \${v.edit ? 'checked' : ''}> אפשר לשנות את העדכון האחרון כשהגיעו למגבלה</label>
-      <label class="chk"><input type="checkbox" id="s_hours" \${v.hours ? 'checked' : ''}> להשמיע בשעות ודקות</label>
     </div>
     <p class="hint">הגדרות השלוחה בימות המשיח (ext.ini):</p>
     <pre id="addIni"></pre>
@@ -533,11 +538,11 @@ async function viewSetup() {
   $('#s_per').value = v.per; $('#s_unit').value = v.perUnit; $('#s_say').value = v.say || 'all';
   const origin = location.origin + BASE;
   const update = () => {
-    const c = { max: +$('#s_max').value || 60, times: +$('#s_times').value || 1, per: $('#s_per').value, perN: +$('#s_n').value || 1, perUnit: $('#s_unit').value, edit: $('#s_edit').checked, hours: $('#s_hours').checked, say: $('#s_say').value };
+    const c = { max: +$('#s_max').value || 60, times: +$('#s_times').value || 1, per: $('#s_per').value, perN: +$('#s_n').value || 1, perUnit: $('#s_unit').value, edit: $('#s_edit').checked, say: $('#s_say').value };
     store.set('minutes_setup', JSON.stringify(c));
     $('#rollWrap').style.display = c.per === 'rolling' ? '' : 'none';
     // Yemot does not take parameters in api_link: fixed values go in api_add_0, api_add_1 … (numbered from 0, no gaps)
-    const common = ['key=' + key, ...(state.list !== 'main' ? ['list=' + state.list] : []), ...(c.hours ? ['hours=1'] : [])];
+    const common = ['key=' + key, ...(state.list !== 'main' ? ['list=' + state.list] : [])];
     const addQ = [...common, 'max=' + c.max, 'times=' + c.times, 'per=' + (c.per === 'rolling' ? c.perN + c.perUnit : c.per), ...(c.edit ? [] : ['edit=no'])];
     const totQ = [...common, ...(c.say !== 'all' ? ['say=' + c.say] : [])];
     const ini = (path, q) => ['type=api', 'api_link=' + origin + path, ...q.map((x, i) => 'api_add_' + i + '=' + x),

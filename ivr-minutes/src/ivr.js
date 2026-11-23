@@ -35,22 +35,16 @@ function read(v, lines, val, { maxDigits = '', minDigits = 1, amount = false } =
   return `read=${say(v, lines)}=${ops.join(',')}`;
 }
 
-/** 1 -> "דקה אחת", 45 -> "45 דקות"; with hours: 135 -> "שעתיים ו 15 דקות". As sentence parts. */
-export function minutesParts(n, hours = false) {
-  const mins = (k) => (k === 1 ? [P('one_minute')] : [String(k), P('minutes')]);
+/** 1 -> "דקה אחת", 45 -> "45 דקות" (always minutes). As sentence parts. */
+export function minutesParts(n) {
   const neg = n < 0;
   n = Math.abs(n);
-  let parts;
-  if (!hours || n < 60) parts = mins(n);
-  else {
-    const h = Math.floor(n / 60), m = n % 60;
-    parts = [...(h === 1 ? [P('one_hour')] : h === 2 ? [P('two_hours')] : [String(h), P('hours')]), ...(m ? [P('and'), ...mins(m)] : [])];
-  }
+  const parts = n === 1 ? [P('one_minute')] : [String(n), P('minutes')];
   return neg ? [P('minus'), ...parts] : parts;
 }
 
-/** The same, as text: "שעתיים ו 15 דקות". */
-export const speakMinutes = (n, hours = false) => minutesParts(n, hours).map((p) => (typeof p === 'object' ? p.text : p)).join(' ');
+/** The same, as text: "45 דקות". */
+export const speakMinutes = (n) => minutesParts(n).map((p) => (typeof p === 'object' ? p.text : p)).join(' ');
 
 // ------------------------------------------------------------------ parameters (from the extension's settings)
 const int = (v, lo, hi, dflt) => (v != null && /^\d{1,5}$/.test(String(v).trim()) && +v >= lo && +v <= hi ? +v : dflt);
@@ -62,7 +56,6 @@ export function settings(p) {
     times: int(p.times, 1, 999, 1),
     per: parsePer(p.per),
     edit: p.edit !== 'no',
-    hours: p.hours === '1',
     // total line: all = only the total of everyone (default), both = everyone's and then hers, mine = only hers
     say: ['all', 'both', 'mine'].includes(p.say) ? p.say : p.all === '1' ? 'both' : 'all',
   };
@@ -111,11 +104,11 @@ export async function handleIvr(request, env, mode, nowMs = Date.now()) {
 // ------------------------------------------------------------------ /total
 async function total(c) {
   const { env, s, phone, v } = c;
-  const everyone = s.say !== 'mine' && [P('all_only'), ...minutesParts(await listTotal(env, s.list), s.hours)];
+  const everyone = s.say !== 'mine' && [P('all_only'), ...minutesParts(await listTotal(env, s.list))];
   if (s.say === 'all') return end(v, [everyone]);
   const mine = await phoneTotal(env, s.list, phone);
-  if (s.say === 'mine') return end(v, [mine ? [P('so_far'), ...minutesParts(mine, s.hours)] : [P('none_yet')]]);
-  return end(v, [everyone, mine ? [P('mine_after'), ...minutesParts(mine, s.hours)] : [P('mine_none_after')]]);
+  if (s.say === 'mine') return end(v, [mine ? [P('so_far'), ...minutesParts(mine)] : [P('none_yet')]]);
+  return end(v, [everyone, mine ? [P('mine_after'), ...minutesParts(mine)] : [P('mine_none_after')]]);
 }
 
 // ------------------------------------------------------------------ /add
@@ -155,7 +148,7 @@ async function status(c) {
   return { recent, blocked: recent.length >= s.times, total: await phoneTotal(env, s.list, phone) };
 }
 
-const mp = (c, n) => minutesParts(n, c.s.hours);
+const mp = (c, n) => minutesParts(n);
 const totalLine = (c, t) => (t ? [P('total_is'), ...mp(c, t)] : [P('none_yet')]);
 const amountPrompt = (c) => [P('add_prompt'), String(c.s.max), P('end_hash')];
 const editPrompt = (c) => [P('edit_prompt'), String(c.s.max), P('edit_cancel'), P('end_hash')];
